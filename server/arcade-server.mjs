@@ -296,6 +296,43 @@ async function serveEjs(req, res, rel) {
   } catch (e) { res.writeHead(502, CORS).end("ejs proxy: " + e.message); }
 }
 
+// ---- libretro-thumbnails proxy ----------------------------------------
+// Best-effort: serve from the disk cache if we have it, otherwise 302 the
+// browser straight to raw.githubusercontent.com (never make the user wait on
+// our fetch) and warm the cache in the background at low concurrency.
+const THUMBS = path.join(DATA, "thumb-cache");
+try { fs.mkdirSync(THUMBS, { recursive: true }); } catch { /* */ }
+const thumbDisk = (rel) => path.join(THUMBS, rel.replace(/[^A-Za-z0-9._/%() -]/g, "_"));
+let warmActive = 0; const warmSeen = new Set();
+async function warmThumb(rel) {
+  if (warmActive >= 3 || warmSeen.has(rel)) return;
+  warmSeen.add(rel); warmActive++;
+  try {
+    const r = await fetch("https://raw.githubusercontent.com/libretro-thumbnails/" + rel,
+      { signal: AbortSignal.timeout(20000) });
+    if (r.ok) {
+      const buf = Buffer.from(await r.arrayBuffer());
+      const disk = thumbDisk(rel);
+      fs.mkdirSync(path.dirname(disk), { recursive: true });
+      fs.writeFileSync(disk, buf);
+    } else if (r.status !== 429) { warmSeen.add(rel); }  // permanent miss
+  } catch { warmSeen.delete(rel); }                       // transient — allow a retry later
+  finally { warmActive--; }
+}
+function serveThumb(req, res, rel) {
+  if (rel.includes("..") || !rel.endsWith(".png")) { res.writeHead(400, CORS).end("bad"); return; }
+  const disk = thumbDisk(rel);
+  try {
+    const buf = fs.readFileSync(disk);
+    res.writeHead(200, { ...CORS, "content-type": "image/png", "content-length": buf.length,
+      "cache-control": "public, max-age=2592000" }).end(req.method === "HEAD" ? undefined : buf);
+    return;
+  } catch { /* miss */ }
+  warmThumb(rel);
+  res.writeHead(302, { ...CORS, location: "https://raw.githubusercontent.com/libretro-thumbnails/" + rel,
+    "cache-control": "no-store" }).end();
+}
+
 // ---- server-side search over docs/data/search.json ----------------------
 let SEARCH = null;
 function loadSearch() {
@@ -448,6 +485,8 @@ http.createServer((req, res) => {
     if (P === "/search" && req.method === "GET") { serveSearch(req, res, u0); return; }
     const ejs = P.match(/^\/emulatorjs\/(.+)$/);
     if (ejs && (req.method === "GET" || req.method === "HEAD")) { serveEjs(req, res, decodeURIComponent(ejs[1])); return; }
+    const th = P.match(/^\/thumb\/(.+)$/);
+    if (th && (req.method === "GET" || req.method === "HEAD")) { serveThumb(req, res, th[1]); return; }
     const jf = P.match(/^\/jellyfin\/(.*)$/);
     if (jf && (req.method === "GET" || req.method === "HEAD")) { jellyfinProxy(req, res, jf[1], u0); return; }
   }

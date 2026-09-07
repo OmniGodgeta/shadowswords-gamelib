@@ -61,6 +61,21 @@ const COLLAGE_SYSTEMS = ["atari2600", "archimedes", "3do", "wii", "xbox", "gba",
 const view = $("#view");
 const state = { sys: null, systems: {}, cache: {}, search: null, render: 0 };
 
+// route hot-linked libretro art through the self-host proxy (rate-limit + cache);
+// public mirror keeps the raw URL and leans on the onerror fallback below.
+const LR_RAW = "https://raw.githubusercontent.com/libretro-thumbnails/";
+const artUrl = (u) => (SELF_HOSTED && u && u.startsWith(LR_RAW)) ? "/thumb/" + u.slice(LR_RAW.length) : u;
+// when box art 404s (GH raw throttling, dead link), swap in the text placeholder
+document.addEventListener("error", (e) => {
+  const img = e.target;
+  if (img.tagName !== "IMG" || img.dataset.fb) return;
+  img.dataset.fb = "1";
+  const box = img.closest(".tile-art, .hero-art, .coll-cover");
+  if (!box) { img.style.visibility = "hidden"; return; }
+  if (box.classList.contains("coll-cover")) { img.remove(); return; }
+  img.replaceWith(el("div", { className: "ph", textContent: img.alt || "" }));
+}, true);
+
 /* ---- local prefs: favorites + recently played --------------------- */
 const LS = {
   get(k, d) { try { const v = localStorage.getItem("ssw:" + k); return v == null ? d : JSON.parse(v); } catch { return d; } },
@@ -181,7 +196,7 @@ function heartBtn(g) {
 }
 function gameTile(g, { play = false } = {}) {
   const art = el("div", { className: "tile-art" });
-  if (g.img) art.append(el("img", { src: g.img, loading: "lazy", alt: g.name }));
+  if (g.img) art.append(el("img", { src: artUrl(g.img), loading: "lazy", alt: g.name }));
   else art.append(el("div", { className: "ph", textContent: g.name }));
   if (play) art.append(el("span", { className: "badge", textContent: "Play" }));
   if (g.id) art.append(heartBtn(g));
@@ -237,7 +252,7 @@ async function routeHome() {
     title: "Continue playing", count: recent.length,
     tiles: recent.map((r) => {
       const art = el("div", { className: "tile-art" });
-      if (r.img) art.append(el("img", { src: r.img, loading: "lazy", alt: r.name }));
+      if (r.img) art.append(el("img", { src: artUrl(r.img), loading: "lazy", alt: r.name }));
       else art.append(el("div", { className: "ph", textContent: r.name }));
       art.append(el("span", { className: "badge", textContent: "Resume" }));
       return el("a", { className: "tile wide",
@@ -273,7 +288,7 @@ async function routeHome() {
     if (fr && fr.length) bits.append(shelf({ title: "Franchises", count: fr.length, moreHref: "#/franchises",
       tiles: fr.slice(0, 24).map((f) => {
         const cover = el("div", { className: "tile-art console coll-cover" });
-        (f.items.filter((i) => i[3]).slice(0, 4)).forEach((i) => cover.append(el("img", { src: i[3], loading: "lazy", alt: "" })));
+        (f.items.filter((i) => i[3]).slice(0, 4)).forEach((i) => cover.append(el("img", { src: artUrl(i[3]), loading: "lazy", alt: "" })));
         cover.append(el("span", { className: "coll-label", textContent: f.title }));
         return el("a", { className: "tile", href: `#/franchise/${f.id}` }, cover,
           el("div", { className: "tile-cap" }, el("div", { className: "t", textContent: f.title }),
@@ -412,7 +427,7 @@ async function routeGame(sysId, gid) {
     desc: g.desc || "No description scraped for this title.",
     meta: [g.developer && `Dev: ${g.developer}`, g.publisher && `Pub: ${g.publisher}`,
       g.players && `${g.players} players`].filter(Boolean).join("   ·   "),
-    art: g.img ? el("img", { src: g.img, alt: g.name })
+    art: g.img ? el("img", { src: artUrl(g.img), alt: g.name })
       : (games.filter((x) => x.img).length ? collage(games.filter((x) => x.img).slice(0, 16).map((x) => x.img))
         : sysArt(m)),
     actions,
@@ -484,6 +499,9 @@ async function routePlaySystem(id) {
     neogeo: "Neo Geo needs a matching FBNeo romset + neogeo.zip BIOS. Hit-or-miss.",
     amiga: "Amiga (PUAE) is experimental in EmulatorJS and often won't boot — WHDLoad/ADF quirks.",
     satellaview: "Satellaview .bs files load via the BS-X BIOS; some titles still drop to the emulator menu.",
+    pcecd: "PC Engine CD boots via the syscard3 BIOS, but multi-track / .cue disc images are hit-or-miss in the mednafen core — a black screen usually means the disc format, not a missing file.",
+    "tg-cd": "TurboGrafx-CD boots via the syscard3 BIOS, but multi-track / .cue disc images are hit-or-miss in the mednafen core.",
+    segacd: "Sega CD needs the region BIOS; multi-track .cue images sometimes hang at a black screen.",
   }[id];
   if (NOTE) frag.append(el("div", { className: "note" }, el("b", { textContent: "Heads up: " }), NOTE));
   const fText = el("input", { type: "search", placeholder: "Filter titles…" });
@@ -1017,7 +1035,7 @@ function refTile(r) {
   const [name, sys, gid, img] = r;
   const playable = meta(sys).playable;
   const art = el("div", { className: "tile-art" });
-  if (img) art.append(el("img", { src: img, loading: "lazy", alt: name }));
+  if (img) art.append(el("img", { src: artUrl(img), loading: "lazy", alt: name }));
   else art.append(el("div", { className: "ph", textContent: name }));
   if (playable) art.append(el("span", { className: "badge", textContent: "Play" }));
   art.append(heartBtn({ _sys: sys, id: gid, name, img: img || null }));
@@ -1047,7 +1065,7 @@ async function routeCollections() {
   const grid = el("div", { className: "tile-grid", style: "padding:0 var(--pad) 30px;max-width:1600px;margin:0 auto" });
   for (const c of cols) {
     const cover = el("div", { className: "tile-art console coll-cover" });
-    (c.items.filter((i) => i[3]).slice(0, 4)).forEach((i) => cover.append(el("img", { src: i[3], loading: "lazy", alt: "" })));
+    (c.items.filter((i) => i[3]).slice(0, 4)).forEach((i) => cover.append(el("img", { src: artUrl(i[3]), loading: "lazy", alt: "" })));
     cover.append(el("span", { className: "coll-label", textContent: c.title }));
     grid.append(el("a", { className: "tile", href: `#/collection/${c.id}` }, cover,
       el("div", { className: "tile-cap" }, el("div", { className: "t", textContent: c.title }),
@@ -1081,7 +1099,7 @@ async function routeFranchises() {
   const grid = el("div", { className: "tile-grid", style: "padding:0 var(--pad) 30px;max-width:1600px;margin:0 auto" });
   for (const f of fr) {
     const cover = el("div", { className: "tile-art console coll-cover" });
-    (f.items.filter((i) => i[3]).slice(0, 4)).forEach((i) => cover.append(el("img", { src: i[3], loading: "lazy", alt: "" })));
+    (f.items.filter((i) => i[3]).slice(0, 4)).forEach((i) => cover.append(el("img", { src: artUrl(i[3]), loading: "lazy", alt: "" })));
     cover.append(el("span", { className: "coll-label", textContent: f.title }));
     grid.append(el("a", { className: "tile", href: `#/franchise/${f.id}` }, cover,
       el("div", { className: "tile-cap" }, el("div", { className: "t", textContent: f.title }),
@@ -1097,7 +1115,7 @@ async function routeFranchises() {
 function favTile(f) {
   const play = !!f.file;
   const art = el("div", { className: "tile-art" });
-  if (f.img) art.append(el("img", { src: f.img, loading: "lazy", alt: f.name }));
+  if (f.img) art.append(el("img", { src: artUrl(f.img), loading: "lazy", alt: f.name }));
   else art.append(el("div", { className: "ph", textContent: f.name }));
   if (play) art.append(el("span", { className: "badge", textContent: "Play" }));
   art.append(heartBtn({ _sys: f.sys, id: f.id, name: f.name, img: f.img, file: f.file, year: f.year, genre: f.genre }));
@@ -1154,7 +1172,7 @@ async function routeSaves() {
     saves.sort((a, b) => b.mtime - a.mtime).forEach((s) => {
       const gm = (state.cache[s.sys] || []).find((x) => x.file === s.file);
       const art = el("div", { className: "tile-art" });
-      if (gm && gm.img) art.append(el("img", { src: gm.img, loading: "lazy", alt: s.name }));
+      if (gm && gm.img) art.append(el("img", { src: artUrl(gm.img), loading: "lazy", alt: s.name }));
       else art.append(el("div", { className: "ph", textContent: s.name }));
       art.append(el("span", { className: "badge", textContent: "Resume" }));
       grid.append(el("a", { className: "tile wide",
