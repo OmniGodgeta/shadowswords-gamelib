@@ -3,7 +3,6 @@
 /* ========================================================================
    shadowswords arcade
    ======================================================================== */
-
 const $ = (s, r = document) => r.querySelector(s);
 const $$ = (s, r = document) => [...r.querySelectorAll(s)];
 const el = (tag, props = {}, ...kids) => {
@@ -13,28 +12,27 @@ const el = (tag, props = {}, ...kids) => {
 };
 const debounce = (fn, ms) => { let t; return (...a) => { clearTimeout(t); t = setTimeout(() => fn(...a), ms); }; };
 
-/* ---- config ------------------------------------------------------------ */
-// Movie library (Jellyfin) and playable-ROM server, both fronted by Tailscale.
-const MOVIES_URL = "https://shadow-1.tail51f9d6.ts.net/";
-const ROM_BASE   = "https://shadow-1.tail51f9d6.ts.net:8443/";
-const EMU_DATA   = "https://cdn.emulatorjs.org/stable/data/";
-const PLAY_SYSTEMS = { nes: "Nintendo Entertainment System", snes: "Super Nintendo" };
-const EMU_CORE = { nes: "nes", snes: "snes" };
-const COLLAGE_SYSTEMS = ["atari2600", "archimedes", "3do", "wii", "xbox", "gba"];
+/* ---- config --------------------------------------------------------- */
+const TS = "https://shadow-1.tail51f9d6.ts.net";
+const SELF_HOSTED = location.hostname.endsWith(".ts.net");
+const ROM_BASE = SELF_HOSTED ? "/roms/" : TS + "/roms/";       // needs Funnel when off-tailnet
+const MOVIES_URL = TS + ":8443/";                               // opens in a new tab
+const EMU_DATA = "https://cdn.emulatorjs.org/stable/data/";
 const PAGE = 90;
+const COLLAGE_SYSTEMS = ["atari2600", "archimedes", "3do", "wii", "xbox", "gba", "psx", "gc"];
 
 const view = $("#view");
-const state = { index: null, systems: {}, cache: {}, search: null, catalog: undefined, render: 0 };
+const state = { sys: null, systems: {}, cache: {}, search: null, render: 0 };
 
-/* ---- data ------------------------------------------------------------- */
-async function getIndex() {
-  if (!state.index) {
-    state.index = await fetch("data/index.json").then((r) => r.json());
-    for (const s of state.index.systems) state.systems[s.id] = s;
+/* ---- data ---------------------------------------------------------- */
+async function getSystems() {
+  if (!state.sys) {
+    state.sys = await fetch("data/systems.json").then((r) => r.json());
+    for (const s of state.sys.systems) state.systems[s.id] = s;
     $("#footcount").textContent =
-      `${state.index.total.toLocaleString()} games · ${state.index.systems.length} systems`;
+      `${state.sys.total.toLocaleString()} games · ${state.sys.systems.length} systems`;
   }
-  return state.index;
+  return state.sys;
 }
 async function getSystem(id) {
   if (!state.cache[id]) {
@@ -47,188 +45,180 @@ async function getSearch() {
   if (!state.search) state.search = await fetch("data/search.json").then((r) => r.json());
   return state.search;
 }
-// ROM catalog from the tailnet server: { nes:[{name,file,size}], snes:[...] }  — null if unreachable
-async function getCatalog() {
-  if (state.catalog === undefined) {
-    state.catalog = await fetch(ROM_BASE + "catalog.json", { mode: "cors" })
-      .then((r) => (r.ok ? r.json() : null)).catch(() => null);
-  }
-  return state.catalog;
-}
+const meta = (id) => state.systems[id] || { id, name: id };
+const sysName = (id) => meta(id).name;
 
-const sysName = (id) => state.systems[id]?.name || PLAY_SYSTEMS[id] || id;
-
-/* ---- components ------------------------------------------------------- */
+/* ---- components --------------------------------------------------- */
 function collage(imgs) {
   const c = el("div", { className: "collage" });
   imgs.slice(0, 24).forEach((src) => c.append(el("img", { src, loading: "lazy", alt: "" })));
   return c;
 }
+async function collageArt(n = 20) {
+  const picks = [];
+  for (const id of COLLAGE_SYSTEMS) {
+    try { for (const g of await getSystem(id)) if (g.img) picks.push(g.img); } catch { /**/ }
+    if (picks.length > n * 3) break;
+  }
+  for (let i = picks.length - 1; i > 0; i--) { const j = (Math.random() * (i + 1)) | 0;[picks[i], picks[j]] = [picks[j], picks[i]]; }
+  return picks.length ? collage(picks.slice(0, n)) : null;
+}
 
-function hero({ kicker, title, desc, meta, art, actions = [] }) {
+function hero({ kicker, title, desc, meta: metaLine, art, actions = [] }) {
   const artBox = el("div", { className: "hero-art" });
   if (art) artBox.append(art);
-  const body = el("div", { className: "hero-body" },
-    kicker && el("p", { className: "hero-kicker", textContent: kicker }),
-    el("h1", { className: "hero-title", textContent: title }),
-    desc && el("p", { className: "hero-desc", textContent: desc }),
-    el("div", { className: "hero-actions" },
-      ...actions.map((a) => el("a", {
-        className: "btn " + (a.primary ? "btn-primary" : "btn-ghost"),
-        href: a.href || "javascript:void 0",
-        target: a.blank ? "_blank" : null, rel: a.blank ? "noopener" : null,
-        onclick: a.onClick || null,
-        textContent: a.label,
-      }))),
-    meta && el("p", { className: "hero-meta", textContent: meta }));
-  return el("section", { className: "hero" }, artBox, body);
+  return el("section", { className: "hero" }, artBox,
+    el("div", { className: "hero-body" },
+      kicker && el("p", { className: "hero-kicker", textContent: kicker }),
+      el("h1", { className: "hero-title", textContent: title }),
+      desc && el("p", { className: "hero-desc", textContent: desc }),
+      el("div", { className: "hero-actions" },
+        ...actions.map((a) => el("a", {
+          className: "btn " + (a.primary ? "btn-primary" : "btn-ghost"),
+          href: a.href || "javascript:void 0",
+          target: a.blank ? "_blank" : null, rel: a.blank ? "noopener" : null,
+          onclick: a.onClick || null, textContent: a.label,
+        }))),
+      metaLine && el("p", { className: "hero-meta", textContent: metaLine })));
 }
 
 function shelf({ title, count, moreHref, tiles }) {
   const track = el("div", { className: "shelf-track" }, ...tiles);
-  const scroll = (dir) => track.scrollBy({ left: dir * track.clientWidth * 0.8, behavior: "smooth" });
+  const scroll = (d) => track.scrollBy({ left: d * track.clientWidth * 0.85, behavior: "smooth" });
   return el("section", { className: "shelf" },
     el("div", { className: "shelf-head" },
       el("h2", { textContent: title }),
-      count != null && el("span", { className: "count", textContent: `${count.toLocaleString()}` }),
+      count != null && el("span", { className: "count", textContent: count.toLocaleString() }),
       moreHref && el("a", { href: moreHref, textContent: "See all ›" })),
     track,
-    el("button", { className: "shelf-nav prev", ariaLabel: "Scroll left", textContent: "‹",
-      onclick: () => scroll(-1) }),
-    el("button", { className: "shelf-nav next", ariaLabel: "Scroll right", textContent: "›",
-      onclick: () => scroll(1) }));
+    el("button", { className: "shelf-nav prev", ariaLabel: "left", textContent: "‹", onclick: () => scroll(-1) }),
+    el("button", { className: "shelf-nav next", ariaLabel: "right", textContent: "›", onclick: () => scroll(1) }));
 }
 
-function consoleTile(s) {
-  return el("a", { className: "tile", href: `#/s/${s.id}` },
-    el("div", { className: "tile-art console" },
-      el("div", { className: "ph", textContent: s.name })),
+function consoleTile(s, { play = false } = {}) {
+  const art = el("div", { className: "tile-art console" });
+  if (s.logo) art.append(el("img", { className: "console-logo", src: s.logo, loading: "lazy", alt: s.name }));
+  else art.append(el("div", { className: "ph", textContent: s.name }));
+  if (play && s.playable) art.append(el("span", { className: "badge", textContent: "Play" }));
+  return el("a", { className: "tile", href: play ? `#/play/${s.id}` : `#/s/${s.id}` },
+    art,
     el("div", { className: "tile-cap" },
       el("div", { className: "t", textContent: s.name }),
       el("div", { className: "s", textContent: `${s.count.toLocaleString()} games` })));
 }
 
-function gameTile(g, { wide = true, badge } = {}) {
-  const art = el("div", { className: "tile-art" + (wide ? "" : "") });
+function gameTile(g, { play = false } = {}) {
+  const art = el("div", { className: "tile-art" });
   if (g.img) art.append(el("img", { src: g.img, loading: "lazy", alt: g.name }));
   else art.append(el("div", { className: "ph", textContent: g.name }));
-  if (badge) art.append(el("span", { className: "badge", textContent: badge }));
-  return el("a", { className: "tile" + (wide ? " wide" : ""), href: `#/g/${g._sys}/${g.id}` },
+  if (play) art.append(el("span", { className: "badge", textContent: "Play" }));
+  const href = play ? `#/play/${g._sys}/${g.file.split("/").map(encodeURIComponent).join("/")}`
+    : `#/g/${g._sys}/${g.id}`;
+  return el("a", { className: "tile wide", href },
     art,
     el("div", { className: "tile-cap" },
       el("div", { className: "t", textContent: g.name }),
-      el("div", { className: "s", textContent: [g.year, g.genre].filter(Boolean).join(" · ") })));
-}
-
-function playTile(sys, rom) {
-  return el("a", { className: "tile wide", href: `#/play/${sys}/${encodeURIComponent(rom.file)}` },
-    el("div", { className: "tile-art console" },
-      el("div", { className: "ph", textContent: rom.name }),
-      el("span", { className: "badge", textContent: "Play" })),
-    el("div", { className: "tile-cap" },
-      el("div", { className: "t", textContent: rom.name }),
-      el("div", { className: "s", textContent: PLAY_SYSTEMS[sys] })));
+      el("div", { className: "s", textContent: [g.year, g.genre].filter(Boolean).join(" · ") || (play ? sysName(g._sys) : "") })));
 }
 
 const spinner = () => view.replaceChildren(el("div", { className: "spinner", textContent: "Loading…" }));
 
-async function collageArt(n = 18) {
-  const picks = [];
-  for (const id of COLLAGE_SYSTEMS) {
-    try {
-      const g = await getSystem(id);
-      for (const x of g) if (x.img) picks.push(x.img);
-    } catch { /* skip */ }
-    if (picks.length > n * 3) break;
-  }
-  for (let i = picks.length - 1; i > 0; i--) {
-    const j = (Math.random() * (i + 1)) | 0;[picks[i], picks[j]] = [picks[j], picks[i]];
-  }
-  return picks.length ? collage(picks.slice(0, n)) : null;
+function tileGrid(container, list, shown, opts = {}) {
+  const grid = el("div", { className: "tile-grid" });
+  list.slice(0, shown).forEach((g) => grid.append(gameTile(g, opts)));
+  const parts = [grid];
+  if (list.length > shown) parts.push(el("button", {
+    className: "more",
+    textContent: `Show more · ${(list.length - shown).toLocaleString()} left`,
+    onclick: () => tileGrid(container, list, shown + PAGE, opts),
+  }));
+  else if (!list.length) { parts.length = 0; parts.push(el("div", { className: "empty-state", textContent: "Nothing here." })); }
+  container.replaceChildren(...parts);
 }
 
-/* ---- routes: browse ------------------------------------------------- */
+/* ---- routes: browse --------------------------------------------- */
 async function routeHome() {
   const token = ++state.render;
   spinner();
-  await getIndex();
-  const cat = await getCatalog();
+  await getSystems();
   if (token !== state.render) return;
+  const { systems, total } = state.sys;
+  const playable = systems.filter((s) => s.playable).sort((a, b) => b.count - a.count);
 
   const frag = document.createDocumentFragment();
   frag.append(hero({
-    kicker: "shadowswords",
-    title: "The whole collection, one place",
-    desc: "Browse 4,350 games across 38 systems, play NES & SNES right in the browser, and stream the movie library — no installs.",
-    art: await collageArt(20),
-    actions: [
-      { label: "▶ Play now", href: "#/play", primary: true },
-      { label: "Movies", href: "#/movies" },
-    ],
+    kicker: "shadowswords arcade",
+    title: "Every console. Every game.",
+    desc: `${total.toLocaleString()} games across ${systems.length} systems — browse the lot, play ${playable.length} of them right in your browser, and stream the movie library.`,
+    art: await collageArt(22),
+    actions: [{ label: "▶ Play now", href: "#/play", primary: true }, { label: "Browse all", href: "#/browse" }],
   }));
   if (token !== state.render) return;
 
-  // Play-now shelf
-  const playTiles = [];
-  for (const sys of Object.keys(PLAY_SYSTEMS)) {
-    const list = cat?.[sys] || [];
-    list.slice(0, 12).forEach((r) => playTiles.push(playTile(sys, r)));
-  }
-  playTiles.push(el("a", { className: "tile wide", href: "#/play" },
-    el("div", { className: "tile-art console" }, el("div", { className: "ph", textContent: "＋ Upload a ROM / see all" })),
-    el("div", { className: "tile-cap" }, el("div", { className: "t", textContent: "Play library" }))));
-  frag.append(shelf({ title: "Play now", moreHref: "#/play", tiles: playTiles }));
-
-  // Consoles shelf(s)
-  const withArt = state.index.systems.filter((s) => s.withArt > 0);
-  const noArt = state.index.systems.filter((s) => s.withArt === 0);
   frag.append(shelf({
-    title: "Consoles", count: state.index.systems.length, moreHref: "#/browse",
-    tiles: [...withArt, ...noArt].map(consoleTile),
+    title: "Play now", count: playable.length, moreHref: "#/play",
+    tiles: playable.slice(0, 24).map((s) => consoleTile(s, { play: true })),
   }));
-
+  const withLogo = systems.filter((s) => s.logo);
+  const rest = systems.filter((s) => !s.logo);
+  frag.append(shelf({
+    title: "All consoles", count: systems.length, moreHref: "#/browse",
+    tiles: [...withLogo, ...rest].map((s) => consoleTile(s)),
+  }));
+  frag.append(el("div", { className: "shelf" },
+    el("div", { className: "shelf-head" }, el("h2", { textContent: "Movies" })),
+    el("div", { className: "shelf-track" },
+      el("a", { className: "tile", href: "#/movies" },
+        el("div", { className: "tile-art console" }, el("div", { className: "ph", textContent: "🎬  Movie library" })),
+        el("div", { className: "tile-cap" }, el("div", { className: "t", textContent: "Jellyfin" }))))));
   view.replaceChildren(frag);
 }
 
 async function routeBrowse() {
   ++state.render;
-  await getIndex();
+  await getSystems();
+  const q = el("input", { type: "search", placeholder: "Filter consoles…" });
+  const grid = el("div", { className: "tile-grid" });
+  const draw = () => {
+    const t = q.value.trim().toLowerCase();
+    grid.replaceChildren(...state.sys.systems
+      .filter((s) => !t || s.name.toLowerCase().includes(t) || s.id.includes(t))
+      .map((s) => consoleTile(s)));
+  };
+  q.oninput = debounce(draw, 120);
   view.replaceChildren(el("div", { className: "wrap" },
-    el("section", { className: "shelf", style: "padding-left:0;padding-right:0" },
+    el("section", { className: "shelf", style: "padding:24px 0 0" },
       el("div", { className: "shelf-head" }, el("h2", { textContent: "All consoles" }),
-        el("span", { className: "count", textContent: `${state.index.systems.length}` })),
-      el("div", { className: "tile-grid", style: "padding:0" },
-        ...state.index.systems.map(consoleTile)))));
+        el("span", { className: "count", textContent: `${state.sys.systems.length}` })),
+      el("div", { className: "grid-tools", style: "padding:0" }, q),
+      grid)));
+  draw();
 }
 
 async function routeSystem(id) {
   const token = ++state.render;
   spinner();
-  await getIndex();
+  await getSystems();
   const games = await getSystem(id).catch(() => []);
   if (token !== state.render) return;
-  const meta = state.systems[id] || { name: id };
+  const m = meta(id);
   const genres = [...new Set(games.map((g) => g.genre).filter(Boolean))].sort();
   const arty = games.filter((g) => g.img).slice(0, 20).map((g) => g.img);
 
   const frag = document.createDocumentFragment();
   frag.append(hero({
-    kicker: "Console",
-    title: meta.name,
-    desc: `${games.length.toLocaleString()} games in the collection${meta.withArt ? `, ${meta.withArt} with box art` : ""}.`,
-    art: arty.length ? collage(arty) : null,
-    actions: PLAY_SYSTEMS[id] ? [{ label: "▶ Play these", href: `#/play/${id}`, primary: true }] : [],
+    kicker: "Console", title: m.name,
+    desc: `${games.length.toLocaleString()} games${m.withArt ? `, ${m.withArt} with box art` : ""}${m.playable ? " · playable in your browser" : ""}.`,
+    art: arty.length ? collage(arty) : (m.logo ? el("img", { src: m.logo, alt: m.name, style: "object-fit:contain;padding:8%" }) : null),
+    actions: m.playable ? [{ label: "▶ Play these", href: `#/play/${id}`, primary: true }] : [],
   }));
 
   const fText = el("input", { type: "search", placeholder: "Filter titles…" });
   const fGenre = el("select", {}, el("option", { value: "", textContent: "All genres" }),
     ...genres.map((x) => el("option", { value: x, textContent: x })));
   const fSort = el("select", {},
-    el("option", { value: "name", textContent: "A–Z" }),
-    el("option", { value: "-name", textContent: "Z–A" }),
-    el("option", { value: "-year", textContent: "Newest" }),
-    el("option", { value: "year", textContent: "Oldest" }),
-    el("option", { value: "art", textContent: "Box art first" }));
+    el("option", { value: "name", textContent: "A–Z" }), el("option", { value: "-name", textContent: "Z–A" }),
+    el("option", { value: "-year", textContent: "Newest" }), el("option", { value: "art", textContent: "Box art first" }));
   frag.append(el("div", { className: "grid-tools" }, fText, fGenre, fSort));
   const box = el("div", {});
   frag.append(box);
@@ -238,107 +228,115 @@ async function routeSystem(id) {
     const q = fText.value.trim().toLowerCase(), gv = fGenre.value;
     let list = games.filter((g) => (!q || g.name.toLowerCase().includes(q)) && (!gv || g.genre === gv));
     const cmp = {
-      "name": (a, b) => a.name.localeCompare(b.name),
-      "-name": (a, b) => b.name.localeCompare(a.name),
+      "name": (a, b) => a.name.localeCompare(b.name), "-name": (a, b) => b.name.localeCompare(a.name),
       "-year": (a, b) => (b.year || 0) - (a.year || 0) || a.name.localeCompare(b.name),
-      "year": (a, b) => (a.year || 9999) - (b.year || 9999) || a.name.localeCompare(b.name),
       "art": (a, b) => (b.img ? 1 : 0) - (a.img ? 1 : 0) || a.name.localeCompare(b.name),
     }[fSort.value];
-    renderTileGrid(box, [...list].sort(cmp), PAGE);
+    tileGrid(box, [...list].sort(cmp), PAGE);
   };
   fText.oninput = debounce(apply, 150);
   fGenre.onchange = fSort.onchange = apply;
   apply();
 }
 
-function renderTileGrid(container, list, shown) {
-  const grid = el("div", { className: "tile-grid" });
-  list.slice(0, shown).forEach((g) => grid.append(gameTile(g, { wide: true })));
-  const parts = [grid];
-  if (list.length > shown) {
-    parts.push(el("button", {
-      className: "more",
-      textContent: `Show ${Math.min(PAGE, list.length - shown)} more · ${(list.length - shown).toLocaleString()} left`,
-      onclick: (e) => { e.target.remove(); renderTileGrid(container, list, shown + PAGE); },
-    }));
-  } else if (!list.length) {
-    parts.length = 0; parts.push(el("div", { className: "empty-state", textContent: "Nothing matches." }));
-  }
-  container.replaceChildren(...parts);
-}
-
 async function routeGame(sysId, gid) {
   const token = ++state.render;
   spinner();
-  await getIndex();
+  await getSystems();
   const games = await getSystem(sysId).catch(() => []);
   const g = games.find((x) => x.id === gid);
   if (token !== state.render) return;
   if (!g) { location.hash = `#/s/${sysId}`; return; }
+  const m = meta(sysId);
 
   const actions = [];
-  if (PLAY_SYSTEMS[sysId]) actions.push({ label: "▶ Play", primary: true, href: `#/play/${sysId}` });
-  actions.push({ label: `All ${sysName(sysId)}`, href: `#/s/${sysId}` });
+  if (m.playable) actions.push({ label: "▶ Play", primary: true,
+    href: `#/play/${sysId}/${g.file.split("/").map(encodeURIComponent).join("/")}` });
+  actions.push({ label: `All ${m.name}`, href: `#/s/${sysId}` });
 
   view.replaceChildren(hero({
-    kicker: [sysName(sysId), g.year].filter(Boolean).join(" · "),
+    kicker: [m.name, g.year].filter(Boolean).join(" · "),
     title: g.name,
     desc: g.desc || "No description scraped for this title.",
-    meta: [g.developer && `Developer: ${g.developer}`, g.publisher && `Publisher: ${g.publisher}`,
-      g.players && `Players: ${g.players}`, g.rating && `Rating ${g.rating}/5`].filter(Boolean).join("   ·   "),
-    art: g.img ? el("img", { src: g.img, alt: g.name }) : (games.filter((x) => x.img).length
-      ? collage(games.filter((x) => x.img).slice(0, 16).map((x) => x.img)) : null),
+    meta: [g.developer && `Dev: ${g.developer}`, g.publisher && `Pub: ${g.publisher}`,
+      g.players && `${g.players} players`].filter(Boolean).join("   ·   "),
+    art: g.img ? el("img", { src: g.img, alt: g.name })
+      : (games.filter((x) => x.img).length ? collage(games.filter((x) => x.img).slice(0, 16).map((x) => x.img))
+        : (m.logo ? el("img", { src: m.logo, style: "object-fit:contain;padding:9%" }) : null)),
     actions,
   }));
 }
 
-/* ---- routes: play -------------------------------------------------- */
-async function routePlay(onlySys) {
-  const token = ++state.render;
-  spinner();
-  const cat = await getCatalog();
-  if (token !== state.render) return;
-
-  const frag = document.createDocumentFragment();
-  const total = cat ? Object.values(cat).reduce((n, a) => n + a.length, 0) : 0;
-  frag.append(hero({
-    kicker: "Play",
-    title: "Play in your browser",
-    desc: cat
-      ? `${total.toLocaleString()} NES & SNES games, streamed from the home server and emulated right here. Or drop in a ROM from your own device below.`
-      : "Load a NES (.nes) or SNES (.sfc/.smc) ROM from your device and play it instantly — no server needed. Connect to the tailnet to reach the full home library.",
-    art: null,
-    actions: [{ label: "Pick a ROM file", primary: true, onClick: () => $("#rom-input")?.click() }],
-  }));
-
-  // upload dropzone
+/* ---- routes: play --------------------------------------------- */
+function dropzone() {
   const drop = el("label", { className: "drop", htmlFor: "rom-input" },
-    el("input", { id: "rom-input", type: "file", accept: ".nes,.sfc,.smc,.fig,.bin,.zip" }),
-    el("div", {}, el("strong", { textContent: "Drop a ROM here" }), " or click to browse — ",
-      "it plays locally in your browser and is never uploaded."));
+    el("input", { id: "rom-input", type: "file", accept: ".nes,.sfc,.smc,.fig,.gb,.gbc,.gba,.n64,.z64,.md,.gen,.smd,.sms,.gg,.pce,.a26,.a78,.lnx,.ws,.wsc,.col,.vb,.zip,.bin,.iso,.cue,.chd" }),
+    el("div", {}, el("strong", { textContent: "Drop a ROM here" }), " or click — plays locally, never uploaded."));
   const input = drop.querySelector("input");
   input.onchange = () => input.files[0] && startUpload(input.files[0]);
   ["dragover", "dragenter"].forEach((e) => drop.addEventListener(e, (ev) => { ev.preventDefault(); drop.classList.add("hot"); }));
   ["dragleave", "drop"].forEach((e) => drop.addEventListener(e, () => drop.classList.remove("hot")));
   drop.addEventListener("drop", (ev) => { ev.preventDefault(); ev.dataTransfer.files[0] && startUpload(ev.dataTransfer.files[0]); });
-  frag.append(el("div", { className: "wrap", style: "padding-bottom:8px" }, drop));
+  return drop;
+}
 
-  const systems = onlySys ? [onlySys] : Object.keys(PLAY_SYSTEMS);
-  for (const sys of systems) {
-    const list = (cat?.[sys] || []).slice().sort((a, b) => a.name.localeCompare(b.name));
-    if (list.length) {
-      frag.append(shelf({ title: PLAY_SYSTEMS[sys], count: list.length, tiles: list.slice(0, 60).map((r) => playTile(sys, r)) }));
-    }
-  }
-  if (!cat) {
-    frag.append(el("div", { className: "wrap" }, el("p", { className: "hint",
-      style: "border:0;text-align:center;color:var(--dim)",
-      textContent: `Home game server (${new URL(ROM_BASE).host}) isn't reachable right now — join your Tailscale network to browse the full library, or use the ROM picker above.` })));
-  }
+async function routePlay() {
+  const token = ++state.render;
+  spinner();
+  await getSystems();
+  if (token !== state.render) return;
+  const playable = state.sys.systems.filter((s) => s.playable).sort((a, b) => b.count - a.count);
+  const total = playable.reduce((n, s) => n + s.count, 0);
+
+  const frag = document.createDocumentFragment();
+  frag.append(hero({
+    kicker: "Play",
+    title: "Play in your browser",
+    desc: `${total.toLocaleString()} games across ${playable.length} systems, emulated right here. Pick a console below, or drop in a ROM from your device.`,
+    art: null,
+    actions: [{ label: "Pick a ROM file", primary: true, onClick: () => $("#rom-input")?.click() }],
+  }));
+  frag.append(el("div", { className: "wrap", style: "padding-bottom:6px" }, dropzone()));
+  frag.append(el("div", { className: "shelf" },
+    el("div", { className: "shelf-head" }, el("h2", { textContent: "Playable consoles" }),
+      el("span", { className: "count", textContent: `${playable.length}` })),
+    el("div", { className: "tile-grid", style: "padding:0" },
+      ...playable.map((s) => consoleTile(s, { play: true })))));
   view.replaceChildren(frag);
 }
 
-// --- tiny IndexedDB stash so an uploaded ROM survives the reload into the player
+async function routePlaySystem(id) {
+  const token = ++state.render;
+  spinner();
+  await getSystems();
+  const m = meta(id);
+  if (!m.playable) { location.hash = `#/s/${id}`; return; }
+  const games = await getSystem(id).catch(() => []);
+  if (token !== state.render) return;
+
+  const frag = document.createDocumentFragment();
+  frag.append(hero({
+    kicker: "Play", title: m.name,
+    desc: `${games.length.toLocaleString()} games, ready to run. Streamed from the home server — pick one.`,
+    art: m.logo ? el("img", { src: m.logo, style: "object-fit:contain;padding:8%" }) : null,
+    actions: [{ label: "Or upload a ROM", onClick: () => $("#rom-input")?.click() }],
+  }));
+  frag.append(el("div", { className: "wrap", style: "padding-bottom:6px" }, dropzone()));
+  const fText = el("input", { type: "search", placeholder: "Filter titles…" });
+  frag.append(el("div", { className: "grid-tools" }, fText));
+  const box = el("div", {});
+  frag.append(box);
+  view.replaceChildren(frag);
+
+  const apply = () => {
+    const q = fText.value.trim().toLowerCase();
+    tileGrid(box, games.filter((g) => !q || g.name.toLowerCase().includes(q)), PAGE, { play: true });
+  };
+  fText.oninput = debounce(apply, 150);
+  apply();
+}
+
+// --- IndexedDB stash so an uploaded ROM survives the player's reload
 function idb() {
   return new Promise((res, rej) => {
     const r = indexedDB.open("ssw-arcade", 1);
@@ -346,34 +344,31 @@ function idb() {
     r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error);
   });
 }
-async function idbPut(key, val) {
-  const db = await idb();
-  return new Promise((res, rej) => {
-    const t = db.transaction("rom", "readwrite"); t.objectStore("rom").put(val, key);
-    t.oncomplete = res; t.onerror = () => rej(t.error);
-  });
-}
-async function idbGet(key) {
-  const db = await idb();
-  return new Promise((res, rej) => {
-    const g = db.transaction("rom", "readonly").objectStore("rom").get(key);
-    g.onsuccess = () => res(g.result); g.onerror = () => rej(g.error);
-  });
-}
+const idbPut = async (k, v) => { const db = await idb(); return new Promise((res, rej) => { const t = db.transaction("rom", "readwrite"); t.objectStore("rom").put(v, k); t.oncomplete = res; t.onerror = () => rej(t.error); }); };
+const idbGet = async (k) => { const db = await idb(); return new Promise((res, rej) => { const g = db.transaction("rom", "readonly").objectStore("rom").get(k); g.onsuccess = () => res(g.result); g.onerror = () => rej(g.error); }); };
 
+const EXT_CORE = {
+  nes: "nes", fds: "nes", unf: "nes", sfc: "snes", smc: "snes", fig: "snes",
+  gb: "gb", gbc: "gb", gba: "gba", n64: "n64", z64: "n64", v64: "n64",
+  md: "segaMD", gen: "segaMD", smd: "segaMD", bin: "segaMD", sms: "segaMS",
+  gg: "segaGG", pce: "pce", sgx: "pce", a26: "atari2600", a52: "atari5200",
+  a78: "atari7800", lnx: "lynx", j64: "jaguar", jag: "jaguar", ws: "ws", wsc: "ws",
+  ngp: "ngp", ngc: "ngp", vb: "vb", col: "coleco", d64: "vice_x64sc",
+  iso: "psx", cue: "psx", chd: "psx", pbp: "psx", zip: "arcade",
+};
 async function startUpload(file) {
   const ext = file.name.split(".").pop().toLowerCase();
-  const sys = ext === "nes" ? "nes" : ["sfc", "smc", "fig"].includes(ext) ? "snes" : null;
-  if (!sys && ext !== "zip") { alert("Unsupported file — pick a .nes, .sfc or .smc ROM."); return; }
-  await idbPut("upload", { name: file.name, sys: sys || "snes", blob: file });
+  const core = EXT_CORE[ext];
+  if (!core) { alert("Unsupported ROM type: ." + ext); return; }
+  await idbPut("upload", { name: file.name, core, blob: file });
   location.hash = `#/play/upload/${encodeURIComponent(file.name)}`;
 }
 
 async function routePlayGame(sys, romParam) {
   ++state.render;
-  // The emulator can't be cleanly re-created in place; if one is already up, reload into this hash.
   if (window.__emuUp) { location.reload(); return; }
   window.__emuUp = true;
+  await getSystems().catch(() => {});
 
   const shell = el("div", { className: "player" },
     el("div", { className: "player-bar" },
@@ -389,16 +384,17 @@ async function routePlayGame(sys, romParam) {
   try {
     if (sys === "upload") {
       const u = await idbGet("upload");
-      if (!u) throw new Error("no upload");
-      romUrl = URL.createObjectURL(u.blob); romName = u.name; core = EMU_CORE[u.sys];
+      if (!u) throw 0;
+      romUrl = URL.createObjectURL(u.blob); romName = u.name.replace(/\.[^.]+$/, ""); core = u.core;
     } else {
-      const file = decodeURIComponent(romParam);
-      romName = file.replace(/\.[^.]+$/, "");
-      romUrl = ROM_BASE + "rom/" + sys + "/" + encodeURIComponent(file);
-      core = EMU_CORE[sys];
+      const file = romParam;
+      romName = file.split("/").pop().replace(/\.[^.]+$/, "");
+      core = meta(sys).core || EXT_CORE[file.split(".").pop().toLowerCase()];
+      romUrl = ROM_BASE + "rom/" + encodeURIComponent(sys) + "/" + file.split("/").map(encodeURIComponent).join("/");
     }
+    if (!core) throw 0;
   } catch {
-    $("#player-load").textContent = "Couldn't load that ROM. Go back and pick another.";
+    $("#player-load").textContent = "Couldn't load that ROM — go back and try another.";
     return;
   }
   $("#player-title").textContent = romName;
@@ -409,20 +405,15 @@ async function routePlayGame(sys, romParam) {
   window.EJS_gameName = romName;
   window.EJS_pathtodata = EMU_DATA;
   window.EJS_startOnLoaded = true;
-  window.EJS_Buttons = { restart: true, settings: true, fullscreen: true, saveState: true, loadState: true };
+  window.EJS_Buttons = { restart: true, settings: true, fullscreen: true, saveState: true, loadState: true, gamepad: true };
   window.EJS_onGameStart = () => $("#player-load")?.remove();
-
   const s = el("script", { src: EMU_DATA + "loader.js" });
-  s.onerror = () => { $("#player-load").textContent = "Emulator failed to load (network / CDN blocked)."; };
+  s.onerror = () => { const l = $("#player-load"); if (l) l.textContent = "Emulator failed to load (CDN blocked?)."; };
   document.body.append(s);
 }
-function exitPlayer() {
-  window.__emuUp = false;
-  location.hash = "#/play";
-  location.reload();
-}
+function exitPlayer() { window.__emuUp = false; location.hash = "#/play"; location.reload(); }
 
-/* ---- routes: movies ---------------------------------------------- */
+/* ---- routes: movies + search --------------------------------- */
 function routeMovies() {
   ++state.render;
   const host = (() => { try { return new URL(MOVIES_URL).host; } catch { return MOVIES_URL; } })();
@@ -430,60 +421,54 @@ function routeMovies() {
     el("div", { className: "big-emoji", textContent: "🎬" }),
     el("h1", { textContent: "Movie library" }),
     el("p", { textContent: "The full film & TV collection, streamed from the home server. Opens the Jellyfin player in a new tab — sign in with the shared account." }),
-    el("a", { className: "btn btn-primary", href: MOVIES_URL, target: "_blank", rel: "noopener",
-      textContent: "Open the movie library ↗" }),
-    el("div", { className: "hint" }, "Powered by Jellyfin at ", el("code", { textContent: host }),
-      ". If it doesn't load, the server may be offline or you're not on the tailnet.")));
+    el("a", { className: "btn btn-primary", href: MOVIES_URL, target: "_blank", rel: "noopener", textContent: "Open the movie library ↗" }),
+    el("div", { className: "hint" }, "Jellyfin at ", el("code", { textContent: host }),
+      " — if it doesn't load, the server may be off or you're not on the tailnet.")));
 }
 
-/* ---- search ----------------------------------------------------- */
 async function routeSearch(qRaw) {
   const token = ++state.render;
   const q = qRaw.trim().toLowerCase();
   spinner();
-  await getIndex();
+  await getSystems();
   const rows = await getSearch();
   if (token !== state.render) return;
   const terms = q.split(/\s+/).filter(Boolean);
   let hits = rows.filter((r) => terms.every((t) => r[0].toLowerCase().includes(t)))
     .sort((a, b) => b[4] - a[4] || a[0].localeCompare(b[0])).slice(0, 600);
-
   const need = [...new Set(hits.slice(0, PAGE).map((r) => r[1]))];
   await Promise.all(need.map((id) => getSystem(id).catch(() => [])));
   if (token !== state.render) return;
-  const toGame = (r) => (state.cache[r[1]] || []).find((x) => x.id === r[2])
-    || { name: r[0], id: r[2], _sys: r[1], year: r[3] || null };
+  const toGame = (r) => (state.cache[r[1]] || []).find((x) => x.id === r[2]) || { name: r[0], id: r[2], _sys: r[1], year: r[3] || null };
 
   const box = el("div", {});
   view.replaceChildren(el("div", { className: "wrap" },
-    el("section", { className: "shelf", style: "padding-left:0;padding-right:0" },
-      el("div", { className: "shelf-head" },
-        el("h2", { textContent: `Search: “${qRaw}”` }),
+    el("section", { className: "shelf", style: "padding:22px 0 0" },
+      el("div", { className: "shelf-head" }, el("h2", { textContent: `“${qRaw}”` }),
         el("span", { className: "count", textContent: `${hits.length}${hits.length === 600 ? "+" : ""} results` })),
       box)));
-  renderTileGrid(box, hits.map(toGame), PAGE);
+  tileGrid(box, hits.map(toGame), PAGE);
 }
 
-/* ---- router --------------------------------------------------- */
+/* ---- router ------------------------------------------------- */
 function parseHash() {
   return location.hash.replace(/^#\/?/, "").split(/[/?]/).map((s) => { try { return decodeURIComponent(s); } catch { return s; } });
 }
 function setNav(name) {
   $$(".bar-link").forEach((a) => a.classList.toggle("active", a.dataset.nav === name));
-  // left slot holds EITHER the nav (top-level routes) OR a back button (deep routes) — never both
-  const topLevel = name === "home" || name === "play" || name === "movies";
-  $("#bar-nav").hidden = !topLevel;
-  $("#back-btn").hidden = topLevel;
+  const top = name === "home" || name === "play" || name === "movies";
+  $("#bar-nav").hidden = !top;
+  $("#back-btn").hidden = top;
 }
 async function router() {
-  // leaving the player? (any hash change while it's up triggers a reload via routePlayGame)
-  const [a, b, c] = parseHash();
-  if (a !== "q") { $("#bar-search").hidden = true; }
+  const parts = parseHash();
+  const [a, b] = parts;
+  if (a !== "q") $("#bar-search").hidden = true;
   window.scrollTo(0, 0);
   if (a === "s" && b) { setNav(null); return routeSystem(b); }
-  if (a === "g" && b && c) { setNav(null); return routeGame(b, c); }
-  if (a === "play" && b && c) { setNav("play"); return routePlayGame(b, c); }
-  if (a === "play" && b) { setNav("play"); return routePlay(PLAY_SYSTEMS[b] ? b : null); }
+  if (a === "g" && b && parts[2]) { setNav(null); return routeGame(b, parts[2]); }
+  if (a === "play" && b && parts.length > 2) { setNav("play"); return routePlayGame(b, parts.slice(2).join("/")); }
+  if (a === "play" && b) { setNav("play"); return routePlaySystem(b); }
   if (a === "play") { setNav("play"); return routePlay(); }
   if (a === "movies") { setNav("movies"); return routeMovies(); }
   if (a === "browse") { setNav("home"); return routeBrowse(); }
@@ -492,19 +477,16 @@ async function router() {
 }
 window.addEventListener("hashchange", router);
 
-/* ---- chrome: back + search ----------------------------------- */
+/* ---- chrome ----------------------------------------------- */
 $("#back-btn").onclick = () => (history.length > 1 ? history.back() : (location.hash = "#/"));
-const searchForm = $("#bar-search"), qInput = $("#q");
-$("#search-btn").onclick = () => {
-  searchForm.hidden = !searchForm.hidden;
-  if (!searchForm.hidden) qInput.focus();
-};
-searchForm.onsubmit = (e) => e.preventDefault();
-qInput.addEventListener("input", debounce(() => {
-  const v = qInput.value.trim();
+const sf = $("#bar-search"), qi = $("#q");
+$("#search-btn").onclick = () => { sf.hidden = !sf.hidden; if (!sf.hidden) qi.focus(); };
+sf.onsubmit = (e) => e.preventDefault();
+qi.addEventListener("input", debounce(() => {
+  const v = qi.value.trim();
   if (v.length >= 2) location.hash = `#/q/${encodeURIComponent(v)}`;
   else if (!v && location.hash.startsWith("#/q/")) location.hash = "#/";
 }, 250));
-qInput.addEventListener("keydown", (e) => { if (e.key === "Escape") { searchForm.hidden = true; qInput.blur(); } });
+qi.addEventListener("keydown", (e) => { if (e.key === "Escape") { sf.hidden = true; qi.blur(); } });
 
 router();

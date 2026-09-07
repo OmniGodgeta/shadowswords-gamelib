@@ -1,3 +1,5 @@
 httpd.log
 __pycache__/
 *.pyc
+docs/data/
+docs/media/
