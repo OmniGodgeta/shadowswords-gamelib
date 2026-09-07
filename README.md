@@ -1,113 +1,86 @@
-# shadowswords — arcade
+# shadowswords arcade
 
-A static, browsable **webRcade-style** gallery of the local **ES-DE** library:
-hero banners, horizontal carousels, dark 10-foot UI. Three sections:
+A **webRcade-style** browser for the whole ES-DE library on `shadow` —
+~108 consoles, ~77k games, box art where it's scraped, console logos for every
+system. Three sections:
 
-- **Home / Consoles** — browse 4,350 games across 38 systems (art from ES-DE scrape)
-- **Play** — NES & SNES in-browser via [EmulatorJS]; ROMs stream from the home
-  ROM server over Tailscale, or load-your-own via file picker
-- **Movies** — opens the Jellyfin library (also via Tailscale)
+- **Home / Browse** — every system, filter, search across all of them
+- **Play** — 39 systems emulated in-browser via [EmulatorJS]; ROMs stream from
+  the home server, or load-your-own with the file picker
+- **Movies** — opens the Jellyfin library
 
-Plain HTML/CSS/JS, no build toolchain for the frontend.
-
-**Live:** https://omnigodgeta.github.io/shadowswords-gamelib/
+Dark 10-foot UI, hash-routed vanilla JS, no frontend build step.
 
 [EmulatorJS]: https://emulatorjs.org/
 
-## Play section — the moving parts
+## Where it runs
 
-| Piece | Where | What |
-|-------|-------|------|
-| `~/rom-server.mjs` | `shadow`, `127.0.0.1:8710` | read-only NES/SNES ROM + `catalog.json` server, CORS + Range. systemd user unit `rom-server.service`. |
-| `tailscale serve` | `shadow` | fronts Jellyfin at `:443`, the ROM server at `:8443`, with real HTTPS certs |
-| `tailscale funnel` | `shadow` | makes both public (so non-tailnet visitors can play) |
-| `~/setup-arcade-serving.sh` | `shadow` | one command to wire serve+funnel up (`off` / `lan` args) |
-| `MOVIES_URL`, `ROM_BASE` | `docs/assets/app.js` | the two URLs the frontend points at — change here if the node/tailnet changes |
+| URL | Serves | Notes |
+|-----|--------|-------|
+| `https://shadow-1.tail51f9d6.ts.net/` | the arcade + ROMs (same origin) | **primary.** tailnet always; public if Funnel is on |
+| `https://shadow-1.tail51f9d6.ts.net:8443/` | Jellyfin (movies) | ditto |
+| `https://omnigodgeta.github.io/shadowswords-gamelib/` | public mirror (browse only) | Play needs Funnel; Movies needs Funnel |
 
-The ROM catalog is derived live from `~/Games/roms/{nes,snes}/`; no ROMs are in
-this repo (copyright — GitHub would DMCA them). If `ROM_BASE` is unreachable the
-Play section still works with the file picker.
+The Android app (`~/Work/shadowswords`, another repo) is a WebView wrapper
+pointed at the tailnet URL.
 
-```
-build.py          generator: reads ~/ES-DE, writes docs/data + docs/media
-docs/             the deployable static site  <-- GitHub Pages serves this
-  index.html
-  assets/         style.css, app.js  (hand-written, not generated)
-  data/           index.json, search.json, <system>.json   (generated)
-  media/          optimised .webp art                       (generated)
-```
+## Machine-side pieces (`shadow`)
 
-## Rebuild after scraping more games in ES-DE
+| Piece | What |
+|-------|------|
+| `~/arcade-server.mjs` + `arcade-server.service` (systemd --user) | serves `docs/` at `/` **and** ROMs at `/roms/rom/<sys>/<file>` (Range + CORS + path-safety) from `127.0.0.1:8710`. Reads ROMs live from `~/Games/roms/`. |
+| `~/setup-arcade-serving.sh` | `tailscale serve` the arcade on `:443` + Jellyfin on `:8443`; `tailscale funnel` both. Args: `lan` (no funnel), `off`. |
+| `~/rom-server.mjs` | retired — replaced by `arcade-server.mjs`. |
+
+One-time Tailscale enable (per node): `login.tailscale.com/f/serve?node=nbPLc1nrhS11CNTRL`
+and `.../f/funnel?node=nbPLc1nrhS11CNTRL`.
+
+## Rebuild + deploy
 
 ```sh
 cd ~/Work/shadowswords-gamelib
-python3 build.py                # full rebuild (wipes docs/data + docs/media)
-python3 build.py --keep-media   # faster: keep already-converted images
-git add -A && git commit -m "refresh library" && git push   # redeploys Pages
+python3 build.py     # regenerate docs/data + docs/media from ~/Games/roms + ~/ES-DE
+./deploy.sh          # runs build.py, then force-pushes docs/ to the gh-pages branch
 ```
 
-Needs `python3` and ImageMagick (`magick`). It reads:
+The self-hosted copy needs no deploy — `arcade-server` serves `docs/` live, so
+`python3 build.py` alone refreshes it. `deploy.sh` is only for the public mirror.
 
-- `~/ES-DE/gamelists/<system>/gamelist.xml` — metadata
-- `~/ES-DE/downloaded_media/<system>/…` — ES-DE's own scraped art
-- `~/Games/roms/<system>/…` — ROM-adjacent art referenced by the gamelists
-  (the game drives must be mounted, or those systems just get no art)
+`build.py` enumerates every directory in `~/Games/roms/` as a console, walks it
+(2 levels, dedups format/region/disc variants, folder-of-few-files = one game),
+merges metadata + box art from `~/ES-DE/gamelists/<sys>/` where it was scraped,
+and pulls console logos from `~/ES-DE/themes/cathode-es-de/_inc/systems/logos/`.
+Needs `python3` + ImageMagick.
 
-Current output: ~4,350 games across 38 systems, ~3,650 with art, ~110 MB.
+`docs/data/` and `docs/media/` are **gitignored** — they're build output, not
+source. `main` holds source; `gh-pages` holds the built site.
 
-To add a prettier name for a system, edit `SYSTEM_NAMES` in `build.py`.
+## Frontend config
 
-## Deploy
+`docs/assets/app.js`, top of file:
 
-Already wired up: repo `OmniGodgeta/shadowswords-gamelib`, GitHub Pages set to
-*Deploy from a branch* → `main` / `/docs`. Every `git push` to `main`
-redeploys. `.nojekyll` is in `docs/` so the build is served as-is.
+- `TS` — the tailnet base URL
+- `ROM_BASE` — `/roms/` when self-hosted, `TS + "/roms/"` on the public mirror
+- `MOVIES_URL` — Jellyfin (`TS + ":8443/"`)
+- `EMU_DATA` — EmulatorJS CDN (`cdn.emulatorjs.org/stable/data/`)
 
-The site uses hash routing (`#/s/atari2600`), so it needs no SPA redirect rules
-and works fine from the `/shadowswords-gamelib/` subpath.
+Playable systems + their EmulatorJS core are in `EMU_CORE` in `build.py` (also
+mirrored as `PLAYABLE` in `arcade-server.mjs`); the frontend reads `core` /
+`playable` straight out of `data/systems.json`.
 
-### Preview locally
+## Controller support
 
-```sh
-cd ~/Work/shadowswords-gamelib/docs && python3 -m http.server 8765
-# open http://localhost:8765/
-```
-
-### Custom domain
-
-`shadowswords.xcom` is not a real top-level domain, so it can't be pointed
-anywhere as-is. Register something real (e.g. `shadowswords.com`, or a
-`.gg` / `.games` / `.dev`), then in repo **Settings → Pages → Custom domain**
-enter it — GitHub writes a `docs/CNAME` file. At the registrar:
-
-- apex domain (`example.com`): four `A` records to GitHub's Pages IPs
-  (185.199.108–111.153) plus an `AAAA` set, per GitHub's docs.
-- `www` subdomain: a `CNAME` record → `omnigodgeta.github.io`.
-
-## First-time serving setup (Play + Movies)
-
-On `shadow`, one-time, click **Enable** on each (opens the Tailscale account):
-
-- Serve:  `https://login.tailscale.com/f/serve?node=nbPLc1nrhS11CNTRL`
-- Funnel: `https://login.tailscale.com/f/funnel?node=nbPLc1nrhS11CNTRL`
-
-Then:
-
-```sh
-~/setup-arcade-serving.sh          # serve + public funnel for Jellyfin + ROM server
-~/setup-arcade-serving.sh lan      # tailnet-only (no public funnel)
-~/setup-arcade-serving.sh off      # tear down
-```
-
-`rom-server.service` (systemd --user) starts the ROM server on boot.
-⚠️ Public funnel exposes the full commercial ROM library to the internet from
-this machine — that is ROM distribution; keep it `lan` if that's a concern.
+EmulatorJS has full **Gamepad API** support — plug in a controller and it's
+detected automatically; remap in its in-game settings menu (gear icon). Works
+for keyboard too. The site's own menus are mouse/touch/keyboard (not yet
+gamepad-navigable).
 
 ## Notes / limits
 
-- Frontend is dark-only (webRcade style); the old light theme + modal were removed.
-- Only art actually present on disk is included; NES/SNES have none, so Play tiles
-  and no-art games use a styled name placeholder.
-- `data/search.json` (~340 KB) is fetched once on the first search.
-- Regenerate + `git push` whenever the ES-DE library changes — the browse data is
-  a snapshot. The Play catalog *is* live (read from disk each request).
+- Play covers 8/16-bit + PSX cores that run BIOS-free. Disc systems needing a
+  BIOS (Saturn, Sega CD, 3DO, PC-Engine CD) are browse-only for now.
+- No ROMs in this repo (copyright). The ROM server only exposes `~/Games/roms/`
+  and only for the `PLAYABLE` systems.
+- `data/search.json` is ~6 MB (77k entries) — fetched once on first search.
+- If `shadow` is off, Play (full library) and Movies are unavailable; the file
+  picker still works anywhere.
