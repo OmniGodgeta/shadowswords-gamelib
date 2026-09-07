@@ -37,16 +37,26 @@ img { max-width: 100%; display: block; }
 /* ---------- top bar ---------- */
 .topbar {
   position: sticky; top: 0; z-index: 20;
-  display: flex; align-items: center; gap: 16px;
+  display: flex; align-items: center; gap: 14px; flex-wrap: wrap;
   padding: 12px clamp(12px, 3vw, 28px);
   background: color-mix(in srgb, var(--bg) 88%, transparent);
   backdrop-filter: blur(10px);
   border-bottom: 1px solid var(--line);
 }
-.brand { font-weight: 700; font-size: 18px; letter-spacing: .3px; color: var(--text); }
+.brand { font-weight: 700; font-size: 18px; letter-spacing: .3px; color: var(--text); flex: 0 0 auto; }
 .brand span { color: var(--accent); }
 .brand:hover { text-decoration: none; }
-.search { flex: 1; max-width: 520px; }
+
+.nav { display: flex; gap: 4px; flex: 0 0 auto; }
+.nav-link {
+  padding: 6px 12px; border-radius: 999px;
+  color: var(--muted); font-size: 14px; font-weight: 600;
+  border: 1px solid transparent;
+}
+.nav-link:hover { color: var(--text); text-decoration: none; background: var(--bg-2); }
+.nav-link.active { color: var(--text); background: var(--bg-2); border-color: var(--line); }
+
+.search { flex: 1 1 200px; max-width: 520px; }
 .search input {
   width: 100%; padding: 9px 14px;
   background: var(--bg-2); color: var(--text);
@@ -173,6 +183,29 @@ main { max-width: var(--maxw); margin: 0 auto; padding: clamp(16px, 3vw, 32px); 
 @media (max-width: 560px) {
   .detail { grid-template-columns: 1fr; }
   .detail .art { max-width: 200px; margin: 0 auto; }
+}
+
+/* ---------- movies page ---------- */
+.movies {
+  max-width: 640px; margin: 6vh auto 0; text-align: center;
+}
+.movies .clapper { font-size: 56px; line-height: 1; margin-bottom: 8px; }
+.movies h1 { font-size: clamp(22px, 4vw, 30px); margin: 0 0 10px; }
+.movies p { color: var(--muted); margin: 0 auto 22px; max-width: 46ch; }
+.movies .open-btn {
+  display: inline-flex; align-items: center; gap: 8px;
+  padding: 12px 26px; border-radius: 999px;
+  background: linear-gradient(90deg, var(--accent), var(--accent-2));
+  color: #fff; font-weight: 700; font-size: 15px;
+}
+.movies .open-btn:hover { text-decoration: none; filter: brightness(1.08); }
+.movies .hint {
+  margin-top: 22px; font-size: 12.5px; color: var(--muted);
+  border-top: 1px solid var(--line); padding-top: 16px;
+}
+.movies .hint code {
+  background: var(--bg-2); border: 1px solid var(--line);
+  border-radius: 5px; padding: 1px 6px; font-size: 12px;
 }
 
 .foot {

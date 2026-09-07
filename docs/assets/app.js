@@ -12,6 +12,10 @@ const esc = (s) => (s ?? "").replace(/[&<>"]/g, (c) =>
 const view = $("#view");
 const PAGE = 120;
 
+// Public URL of the Jellyfin movie library (served over Tailscale Funnel).
+// Change this one line if the server address ever changes.
+const MOVIES_URL = "https://shadow-1.tail51f9d6.ts.net/";
+
 const state = {
   index: null,
   systems: {},        // id -> {name,...}
@@ -233,6 +237,22 @@ async function routeSearch(qRaw) {
   renderGrid(box, list, PAGE);
 }
 
+/* ---------- movies ---------- */
+function routeMovies() {
+  ++state.render;
+  const host = (() => { try { return new URL(MOVIES_URL).host; } catch { return MOVIES_URL; } })();
+  view.replaceChildren(el("section", { className: "movies" },
+    el("div", { className: "clapper", textContent: "🎬" }),
+    el("h1", { textContent: "Movie library" }),
+    el("p", { textContent: "The full film & TV collection, streamed straight from the home server. Opens the Jellyfin web player in a new tab — sign in with the shared account." }),
+    el("a", { className: "open-btn", href: MOVIES_URL, target: "_blank", rel: "noopener",
+      textContent: "Open the movie library ↗" }),
+    el("div", { className: "hint" },
+      el("span", { textContent: "Powered by Jellyfin at " }),
+      el("code", { textContent: host }),
+      el("span", { textContent: ". If it doesn't load, the server may be offline." }))));
+}
+
 /* ---------- modal ---------- */
 const modal = $("#modal");
 function openModal() { modal.hidden = false; document.body.style.overflow = "hidden"; }
@@ -249,9 +269,15 @@ function parseHash() {
   const h = location.hash.replace(/^#\/?/, "");
   return h.split("/").map(decodeURIComponent);
 }
+function setActiveNav(name) {
+  document.querySelectorAll(".nav-link").forEach((a) =>
+    a.classList.toggle("active", a.dataset.nav === name));
+}
 async function router() {
   const [a, b, c] = parseHash();
   if (a !== "g" && !modal.hidden) { modal.hidden = true; document.body.style.overflow = ""; }
+  if (a === "movies") { setActiveNav("movies"); return routeMovies(); }
+  setActiveNav("games");
   if (a === "s" && b) return routeSystem(b);
   if (a === "g" && b && c) return routeGame(b, c);
   if (a === "q" && b) return routeSearch(b);
