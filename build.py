@@ -6,12 +6,12 @@ Reads:
   ~/ES-DE/gamelists/<system>/gamelist.xml      metadata
   ~/ES-DE/downloaded_media/<system>/<type>/    scraped art (ES-DE convention)
 
-Writes into ./site :
+Writes into ./docs :
   data/index.json            systems + counts + genres
   data/<system>.json         per-system game records
   media/<system>/<hash>.webp  optimised card + detail art
 
-The HTML/CSS/JS shell in ./site is static and checked in; this script only
+The HTML/CSS/JS shell in ./docs is static and checked in; this script only
 regenerates data/ and media/.
 """
 from __future__ import annotations
@@ -33,7 +33,7 @@ GAMELISTS = ESDE / "gamelists"
 MEDIA_SRC = ESDE / "downloaded_media"
 ROMS = HOME / "Games" / "roms"  # symlink farm -> game drives; holds ROM-adjacent art
 
-OUT = Path(__file__).parent / "site"
+OUT = Path(__file__).parent / "docs"
 DATA_OUT = OUT / "data"
 MEDIA_OUT = OUT / "media"
 
@@ -281,7 +281,7 @@ def main() -> None:
 
     size = sum(f.stat().st_size for f in OUT.rglob("*") if f.is_file())
     print(f"\n{total} games across {len(systems_index)} systems")
-    print(f"site/ is {size/1024/1024:.1f} MB")
+    print(f"docs/ is {size/1024/1024:.1f} MB")
 
 
 if __name__ == "__main__":

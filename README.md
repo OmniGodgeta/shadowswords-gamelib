@@ -5,9 +5,11 @@ A static, browsable web gallery generated from the local **ES-DE**
 across every system, click a game for art + full metadata. Dark/light, works on
 mobile, no server or build toolchain — plain HTML/CSS/JS.
 
+**Live:** https://omnigodgeta.github.io/shadowswords-gamelib/
+
 ```
-build.py          generator: reads ~/ES-DE, writes site/data + site/media
-site/             the deployable static site  <-- this is what you host
+build.py          generator: reads ~/ES-DE, writes docs/data + docs/media
+docs/             the deployable static site  <-- GitHub Pages serves this
   index.html
   assets/         style.css, app.js  (hand-written, not generated)
   data/           index.json, search.json, <system>.json   (generated)
@@ -18,8 +20,9 @@ site/             the deployable static site  <-- this is what you host
 
 ```sh
 cd ~/Work/shadowswords-gamelib
-python3 build.py                # full rebuild (wipes site/data + site/media)
+python3 build.py                # full rebuild (wipes docs/data + docs/media)
 python3 build.py --keep-media   # faster: keep already-converted images
+git add -A && git commit -m "refresh library" && git push   # redeploys Pages
 ```
 
 Needs `python3` and ImageMagick (`magick`). It reads:
@@ -35,42 +38,30 @@ To add a prettier name for a system, edit `SYSTEM_NAMES` in `build.py`.
 
 ## Deploy
 
-The site uses hash routing (`#/s/atari2600`), so **no SPA redirect rules are
-needed** and it works from any subfolder.
+Already wired up: repo `OmniGodgeta/shadowswords-gamelib`, GitHub Pages set to
+*Deploy from a branch* → `main` / `/docs`. Every `git push` to `main`
+redeploys. `.nojekyll` is in `docs/` so the build is served as-is.
 
-### Netlify (drag & drop — no account command line)
+The site uses hash routing (`#/s/atari2600`), so it needs no SPA redirect rules
+and works fine from the `/shadowswords-gamelib/` subpath.
 
-1. Go to https://app.netlify.com/drop
-2. Drag the **`site/`** folder onto the page.
-3. It gets a random `*.netlify.app` URL immediately. Site settings →
-   **Domain management** → add your custom domain there once you own one.
-
-### GitHub Pages
+### Preview locally
 
 ```sh
-cd ~/Work/shadowswords-gamelib
-git init && git add -A && git commit -m "game library site"
-git branch -M main
-git remote add origin git@github.com:<you>/<repo>.git
-git push -u origin main
+cd ~/Work/shadowswords-gamelib/docs && python3 -m http.server 8765
+# open http://localhost:8765/
 ```
-
-Then repo **Settings → Pages → Build and deployment**: Source = *Deploy from a
-branch*, Branch = `main`, folder = `/site`. `.nojekyll` is already in place.
-Add the custom domain under Settings → Pages → Custom domain (this writes a
-`site/CNAME` file for you).
 
 ### Custom domain
 
 `shadowswords.xcom` is not a real top-level domain, so it can't be pointed
 anywhere as-is. Register something real (e.g. `shadowswords.com`, or a
-`.gg` / `.games` / `.dev`), then:
+`.gg` / `.games` / `.dev`), then in repo **Settings → Pages → Custom domain**
+enter it — GitHub writes a `docs/CNAME` file. At the registrar:
 
-- **Netlify**: add the domain in Domain management; it gives you the DNS records
-  (or use Netlify DNS).
-- **Pages**: add it as the Custom domain, then at your registrar create a
-  `CNAME` record for `www` → `<you>.github.io`, and the four `A` records for the
-  apex domain that GitHub documents.
+- apex domain (`example.com`): four `A` records to GitHub's Pages IPs
+  (185.199.108–111.153) plus an `AAAA` set, per GitHub's docs.
+- `www` subdomain: a `CNAME` record → `omnigodgeta.github.io`.
 
 ## Notes / limits
 
