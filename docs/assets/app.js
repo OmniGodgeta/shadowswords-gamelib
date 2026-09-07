@@ -463,6 +463,8 @@ function setNav(name) {
 async function router() {
   const parts = parseHash();
   const [a, b] = parts;
+  // an emulator is live and we're navigating away from it -> hard reset (kills audio/RAF)
+  if (window.__emuUp && !(a === "play" && parts.length > 2)) { window.__emuUp = false; location.reload(); return; }
   if (a !== "q") $("#bar-search").hidden = true;
   window.scrollTo(0, 0);
   if (a === "s" && b) { setNav(null); return routeSystem(b); }
