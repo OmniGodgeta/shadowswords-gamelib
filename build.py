@@ -182,22 +182,22 @@ LOGO_ALIAS = {
     "msx1": "msx", "tg-cd": "pcengine", "n64dd": "n64", "amiga": "amiga",
 }
 
-# EmulatorJS core per system — systems the Play section can actually run in-browser.
-# Values are EmulatorJS core ids. Disc systems that need a BIOS are left out for now
-# (psx runs fine HLE; segaCD/saturn/3do/pcecd would need a bundled BIOS).
+# EmulatorJS "system" value (EJS_core) per ES-DE system. Only systems EmulatorJS
+# actually ships a core for on cdn.emulatorjs.org/stable — verified against its
+# getCores() map + the cores/*.data files. BIOS-heavy systems (amiga, 3do, saturn,
+# segaCD) and ones with no core (atari800, atari5200-800xl, dos, psp, msx) are omitted.
 EMU_CORE = {
-    "nes": "nes", "fds": "nes", "snes": "snes", "sufami": "snes", "satellaview": "snes",
+    "nes": "nes", "fds": "nes",
+    "snes": "snes", "sufami": "snes", "satellaview": "snes",
     "gb": "gb", "gbc": "gb", "gba": "gba", "n64": "n64", "nds": "nds",
-    "genesis": "segaMD", "megadrive": "segaMD", "megadrivejp": "segaMD",
-    "sega32x": "sega32x", "mastersystem": "segaMS", "gamegear": "segaGG", "sg-1000": "segaMS",
-    "pcengine": "pce", "supergrafx": "pce",
-    "atari2600": "atari2600", "atari5200": "atari5200", "atari7800": "atari7800",
-    "atarilynx": "lynx", "atarijaguar": "jaguar",
+    "genesis": "segaMD", "megadrive": "segaMD", "megadrivejp": "segaMD", "sega32x": "sega32x",
+    "mastersystem": "segaMS", "sg-1000": "segaMS", "gamegear": "segaGG",
+    "pcengine": "pce", "supergrafx": "pce", "pcecd": "pce", "tg-cd": "pce", "pcfx": "pcfx",
+    "atari2600": "atari2600", "atari7800": "atari7800", "atarilynx": "lynx", "atarijaguar": "jaguar",
     "wonderswan": "ws", "wonderswancolor": "ws", "ngp": "ngp", "ngpc": "ngp",
     "virtualboy": "vb", "colecovision": "coleco",
-    "c64": "vice_x64sc", "vic20": "vice_xvic", "plus4": "vice_xplus4",
-    "psx": "psx", "neogeo": "arcade", "cps1": "arcade", "cps2": "arcade",
-    "mame": "arcade", "atari800": "atari800",
+    "c64": "c64", "vic20": "vic20", "plus4": "plus4",
+    "psx": "psx", "neogeo": "arcade", "cps1": "arcade", "cps2": "arcade", "mame": "mame",
 }
 
 

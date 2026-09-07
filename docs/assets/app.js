@@ -347,14 +347,15 @@ function idb() {
 const idbPut = async (k, v) => { const db = await idb(); return new Promise((res, rej) => { const t = db.transaction("rom", "readwrite"); t.objectStore("rom").put(v, k); t.oncomplete = res; t.onerror = () => rej(t.error); }); };
 const idbGet = async (k) => { const db = await idb(); return new Promise((res, rej) => { const g = db.transaction("rom", "readonly").objectStore("rom").get(k); g.onsuccess = () => res(g.result); g.onerror = () => rej(g.error); }); };
 
+// file extension -> EmulatorJS system (EJS_core) for uploaded ROMs
 const EXT_CORE = {
   nes: "nes", fds: "nes", unf: "nes", sfc: "snes", smc: "snes", fig: "snes",
   gb: "gb", gbc: "gb", gba: "gba", n64: "n64", z64: "n64", v64: "n64",
-  md: "segaMD", gen: "segaMD", smd: "segaMD", bin: "segaMD", sms: "segaMS",
-  gg: "segaGG", pce: "pce", sgx: "pce", a26: "atari2600", a52: "atari5200",
+  md: "segaMD", gen: "segaMD", smd: "segaMD", sms: "segaMS",
+  gg: "segaGG", pce: "pce", sgx: "pce", a26: "atari2600",
   a78: "atari7800", lnx: "lynx", j64: "jaguar", jag: "jaguar", ws: "ws", wsc: "ws",
-  ngp: "ngp", ngc: "ngp", vb: "vb", col: "coleco", d64: "vice_x64sc",
-  iso: "psx", cue: "psx", chd: "psx", pbp: "psx", zip: "arcade",
+  ngp: "ngp", ngc: "ngp", vb: "vb", col: "coleco", d64: "c64",
+  iso: "psx", cue: "psx", chd: "psx", pbp: "psx", bin: "psx", zip: "arcade",
 };
 async function startUpload(file) {
   const ext = file.name.split(".").pop().toLowerCase();

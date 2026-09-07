@@ -20,11 +20,11 @@ const ROMS = path.join(os.homedir(), "Games", "roms");
 // systems the Play section can emulate (must match EMU_CORE in build.py)
 const PLAYABLE = new Set([
   "nes", "fds", "snes", "sufami", "satellaview", "gb", "gbc", "gba", "n64", "nds",
-  "genesis", "megadrive", "megadrivejp", "sega32x", "mastersystem", "gamegear",
-  "sg-1000", "pcengine", "supergrafx", "atari2600", "atari5200", "atari7800",
-  "atarilynx", "atarijaguar", "wonderswan", "wonderswancolor", "ngp", "ngpc",
-  "virtualboy", "colecovision", "c64", "vic20", "plus4", "psx", "neogeo",
-  "cps1", "cps2", "mame", "atari800",
+  "genesis", "megadrive", "megadrivejp", "sega32x", "mastersystem", "sg-1000",
+  "gamegear", "pcengine", "supergrafx", "pcecd", "tg-cd", "pcfx", "atari2600",
+  "atari7800", "atarilynx", "atarijaguar", "wonderswan", "wonderswancolor",
+  "ngp", "ngpc", "virtualboy", "colecovision", "c64", "vic20", "plus4", "psx",
+  "neogeo", "cps1", "cps2", "mame",
 ]);
 
 const MIME = {
