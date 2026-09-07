@@ -3,35 +3,55 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>shadowswords — arcade</title>
-<meta name="description" content="Browse and play the shadowswords game & movie collection.">
-<meta name="theme-color" content="#08090c">
-<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ctext y='26' font-size='26'%3E%F0%9F%95%B9%EF%B8%8F%3C/text%3E%3C/svg%3E">
+<title>ShadowSwords Arcade</title>
+<meta name="description" content="Browse, play and stream the ShadowSwords game, movie & music collection.">
+<meta name="theme-color" content="#07070d">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ctext y='26' font-size='26'%3E%F0%9F%97%A1%EF%B8%8F%3C/text%3E%3C/svg%3E">
 <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
+<link rel="preconnect" href="https://cdn.emulatorjs.org" crossorigin>
 <link rel="stylesheet" href="assets/style.css">
 </head>
 <body>
+<div class="scanlines" aria-hidden="true"></div>
 <header class="bar" id="bar">
   <button class="bar-btn" id="back-btn" aria-label="Back" hidden>‹</button>
   <nav class="bar-nav" id="bar-nav">
     <a href="#/" data-nav="home" class="bar-link">Home</a>
     <a href="#/play" data-nav="play" class="bar-link">Play</a>
     <a href="#/movies" data-nav="movies" class="bar-link">Movies</a>
+    <a href="#/music" data-nav="music" class="bar-link">Music</a>
+    <a href="#/videos" data-nav="videos" class="bar-link">Videos</a>
+    <a href="#/contact" data-nav="contact" class="bar-link">Contact</a>
   </nav>
-  <a class="wordmark" href="#/">shadow<b>swords</b></a>
+  <a class="brand" href="#/" aria-label="ShadowSwords home">
+    <img class="logo" src="assets/img/logo.webp" alt="ShadowSwords" width="272" height="50">
+  </a>
+  <button class="bar-btn" id="menu-btn" aria-label="Menu">☰</button>
   <button class="bar-btn" id="search-btn" aria-label="Search">⌕</button>
   <form class="bar-search" id="bar-search" hidden>
     <input id="q" type="search" placeholder="Search every system…" autocomplete="off" spellcheck="false">
   </form>
 </header>
 
+<nav class="drawer" id="drawer" hidden>
+  <a href="#/" data-nav="home">Home</a>
+  <a href="#/play" data-nav="play">Play</a>
+  <a href="#/movies" data-nav="movies">Movies</a>
+  <a href="#/music" data-nav="music">Music</a>
+  <a href="#/videos" data-nav="videos">Videos</a>
+  <a href="#/contact" data-nav="contact">Contact</a>
+</nav>
+
 <main id="view" aria-live="polite"></main>
+
+<audio id="player-audio" hidden></audio>
 
 <footer class="foot">
   <span id="footcount"></span>
   <span class="foot-sep">·</span>
-  <a href="https://es-de.org/" rel="noopener">ES-DE</a> library ·
-  <a href="https://emulatorjs.org/" rel="noopener">EmulatorJS</a>
+  <a href="https://es-de.org/" rel="noopener">ES-DE</a> ·
+  <a href="https://emulatorjs.org/" rel="noopener">EmulatorJS</a> ·
+  <a href="https://discord.gg/QnMc35rUdB" rel="noopener">Discord</a>
 </footer>
 
 <script src="assets/app.js"></script>

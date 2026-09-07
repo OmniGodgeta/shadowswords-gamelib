@@ -64,9 +64,28 @@ source. `main` holds source; `gh-pages` holds the built site.
 - `MOVIES_URL` — Jellyfin (`TS + ":8443/"`)
 - `EMU_DATA` — EmulatorJS CDN (`cdn.emulatorjs.org/stable/data/`)
 
-Playable systems + their EmulatorJS core are in `EMU_CORE` in `build.py` (also
-mirrored as `PLAYABLE` in `arcade-server.mjs`); the frontend reads `core` /
-`playable` straight out of `data/systems.json`.
+Playable systems + their EmulatorJS core are in `EMU_CORE` in `build.py`
+(`EJS_core` values, verified against EmulatorJS `getCores()` — get these wrong
+and you get "error downloading core (X-legacy-wasm.data)"). Mirrored as
+`PLAYABLE` in `arcade-server.mjs`; the frontend reads `core` / `playable` /
+`bios` straight out of `data/systems.json`. **~44 playable systems.**
+
+BIOS-dependent cores (FDS, Sega CD, PC-Engine CD, 3DO, Atari 5200, ColecoVision,
+Neo Geo, Amiga, PC-FX) get their BIOS from `~/Games/bios` via
+`/roms/bios/<file>` (`BIOS` map in `build.py`, `BIOS_OK` whitelist in the
+server) and `EJS_biosUrl`.
+
+**Cannot run in a browser** (no WASM core exists): PS2/PS3/PS4/PS5/Vita, PSP,
+GameCube/Wii/Wii U, Switch/3DS, Xbox/360, Dreamcast/NAOMI/Model 2-3, Atari 800,
+X68000, DOS. These stay browse-only — it's a hard EmulatorJS limitation.
+
+## Console images
+
+`build.py` fetches a photo of each console's actual hardware from Wikipedia
+(batched `pageimages` API), cached in `.console-cache/` (gitignored). Wikimedia
+rate-limits image downloads hard, so a fresh cache fills over 2-3 `deploy.sh`
+runs; `.miss` files mark pages with genuinely no image. Falls back to the
+cathode-theme wordmark logo (rendered white) when there's no photo.
 
 ## Controller support
 
@@ -77,10 +96,8 @@ gamepad-navigable).
 
 ## Notes / limits
 
-- Play covers 8/16-bit + PSX cores that run BIOS-free. Disc systems needing a
-  BIOS (Saturn, Sega CD, 3DO, PC-Engine CD) are browse-only for now.
-- No ROMs in this repo (copyright). The ROM server only exposes `~/Games/roms/`
-  and only for the `PLAYABLE` systems.
+- No ROMs or BIOS in this repo (copyright). The server only exposes
+  `~/Games/roms/` (for `PLAYABLE` systems) and the whitelisted BIOS files.
 - `data/search.json` is ~6 MB (77k entries) — fetched once on first search.
 - If `shadow` is off, Play (full library) and Movies are unavailable; the file
   picker still works anywhere.

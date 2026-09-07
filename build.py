@@ -40,7 +40,46 @@ GL_TAGS = ["image", "thumbnail", "marquee"]
 
 IMG_W = 540
 LOGO_W = 480
+PHOTO_W = 560
 WEBP_Q = 76
+
+BIOS_SRC = HOME / "Games" / "bios"
+PHOTO_CACHE = Path(__file__).parent / ".console-cache"
+
+# ES-DE system id -> Wikipedia article title (for a photo of the actual hardware).
+WIKI = {
+    "3do": "3DO_Interactive_Multiplayer", "amiga": "Amiga_500", "amiga500": "Amiga_500",
+    "amstradcpc": "Amstrad_CPC", "apple2": "Apple_II_(original)", "arcadia": "Arcadia_2001",
+    "archimedes": "Acorn_Archimedes", "atari2600": "Atari_2600", "atari5200": "Atari_5200",
+    "atari7800": "Atari_7800", "atari800": "Atari_8-bit_computers", "atarijaguar": "Atari_Jaguar",
+    "atarijaguarcd": "Atari_Jaguar_CD", "atarilynx": "Atari_Lynx", "atarist": "Atari_ST",
+    "atomiswave": "Sammy_Atomiswave", "bbcmicro": "BBC_Micro", "c64": "Commodore_64",
+    "cdtv": "Commodore_CDTV", "channelf": "Fairchild_Channel_F", "coco": "TRS-80_Color_Computer",
+    "colecovision": "ColecoVision", "cps1": "CP_System", "cps2": "CP_System_II",
+    "crvision": "VTech_CreatiVision", "dos": "IBM_Personal_Computer", "dreamcast": "Dreamcast",
+    "electron": "Acorn_Electron", "fds": "Family_Computer_Disk_System", "gamegear": "Game_Gear",
+    "gb": "Game_Boy", "gba": "Game_Boy_Advance", "gbc": "Game_Boy_Color", "gc": "GameCube",
+    "genesis": "Sega_Genesis", "gx4000": "Amstrad_GX4000", "intellivision": "Intellivision",
+    "mame": "Arcade_video_game", "mastersystem": "Master_System", "megadrive": "Sega_Genesis",
+    "megadrivejp": "Sega_Genesis", "megaduck": "Mega_Duck", "model2": "Sega_Model_2",
+    "model3": "Sega_Model_3", "msx": "MSX", "msx1": "MSX", "msx2": "MSX2", "n3ds": "Nintendo_3DS",
+    "n64": "Nintendo_64", "n64dd": "Nintendo_64DD", "naomi": "Sega_NAOMI",
+    "neogeo": "Neo_Geo_(system)", "neogeocd": "Neo_Geo_CD", "nes": "Nintendo_Entertainment_System",
+    "ngage": "N-Gage_(device)", "ngp": "Neo_Geo_Pocket", "ngpc": "Neo_Geo_Pocket_Color",
+    "odyssey2": "Magnavox_Odyssey_2", "oric": "Oric", "pcecd": "TurboGrafx-CD",
+    "pcengine": "TurboGrafx-16", "pcfx": "PC-FX", "pico": "Sega_Pico", "plus4": "Commodore_Plus/4",
+    "pokemini": "Pok%C3%A9mon_Mini", "ps2": "PlayStation_2", "ps3": "PlayStation_3",
+    "ps4": "PlayStation_4", "ps5": "PlayStation_5", "psp": "PlayStation_Portable",
+    "psvita": "PlayStation_Vita", "psx": "PlayStation_(console)", "samcoupe": "SAM_Coup%C3%A9",
+    "satellaview": "Satellaview", "scv": "Super_Cassette_Vision", "sega32x": "32X",
+    "segacd": "Sega_CD", "sg-1000": "SG-1000", "snes": "Super_Nintendo_Entertainment_System",
+    "sufami": "SuFami_Turbo", "supergrafx": "PC_Engine_SuperGrafx", "supervision": "Watara_Supervision",
+    "switch": "Nintendo_Switch", "tg-cd": "TurboGrafx-CD", "vectrex": "Vectrex",
+    "vic20": "Commodore_VIC-20", "videopac": "Magnavox_Odyssey_2", "virtualboy": "Virtual_Boy",
+    "vsmile": "V.Smile", "wii": "Wii", "wiiu": "Wii_U", "wonderswan": "WonderSwan",
+    "wonderswancolor": "WonderSwan_Color", "x68000": "X68000", "xbox": "Xbox_(console)",
+    "xbox360": "Xbox_360", "zxspectrum": "ZX_Spectrum",
+}
 
 # ---- ROM scanning --------------------------------------------------------
 JUNK_EXT = {
@@ -182,22 +221,37 @@ LOGO_ALIAS = {
     "msx1": "msx", "tg-cd": "pcengine", "n64dd": "n64", "amiga": "amiga",
 }
 
-# EmulatorJS "system" value (EJS_core) per ES-DE system. Only systems EmulatorJS
-# actually ships a core for on cdn.emulatorjs.org/stable — verified against its
-# getCores() map + the cores/*.data files. BIOS-heavy systems (amiga, 3do, saturn,
-# segaCD) and ones with no core (atari800, atari5200-800xl, dos, psp, msx) are omitted.
+# EmulatorJS "system" value (EJS_core) per ES-DE system. Verified against
+# EmulatorJS getCores() + the cores/*.data files on cdn.emulatorjs.org/stable.
+# Still impossible in-browser (no WASM core): ps2/ps3/ps4/ps5/psvita, gc/wii/wiiu,
+# switch/n3ds, xbox/xbox360, dreamcast/naomi/model2/3, psp, atari800, x68000, dos.
 EMU_CORE = {
     "nes": "nes", "fds": "nes",
-    "snes": "snes", "sufami": "snes", "satellaview": "snes",
+    "snes": "snes", "satellaview": "snes",
     "gb": "gb", "gbc": "gb", "gba": "gba", "n64": "n64", "nds": "nds",
-    "genesis": "segaMD", "megadrive": "segaMD", "megadrivejp": "segaMD", "sega32x": "sega32x",
+    "genesis": "segaMD", "megadrive": "segaMD", "megadrivejp": "segaMD",
+    "sega32x": "sega32x", "segacd": "segaCD",
     "mastersystem": "segaMS", "sg-1000": "segaMS", "gamegear": "segaGG",
     "pcengine": "pce", "supergrafx": "pce", "pcecd": "pce", "tg-cd": "pce", "pcfx": "pcfx",
-    "atari2600": "atari2600", "atari7800": "atari7800", "atarilynx": "lynx", "atarijaguar": "jaguar",
+    "atari2600": "atari2600", "atari5200": "atari5200", "atari7800": "atari7800",
+    "atarilynx": "lynx", "atarijaguar": "jaguar",
     "wonderswan": "ws", "wonderswancolor": "ws", "ngp": "ngp", "ngpc": "ngp",
     "virtualboy": "vb", "colecovision": "coleco",
     "c64": "c64", "vic20": "vic20", "plus4": "plus4",
-    "psx": "psx", "neogeo": "arcade", "cps1": "arcade", "cps2": "arcade", "mame": "mame",
+    "psx": "psx", "neogeo": "arcade", "cps1": "arcade", "cps2": "arcade",
+    "mame": "mame", "3do": "3do", "amiga": "amiga",
+}
+# 'sufami' dropped: needs the Sufami Turbo base cart (not in the BIOS pack) as a
+# snes9x subsystem load, which EmulatorJS can't do.
+
+# system -> BIOS file (relative to ~/Games/bios), served at /roms/bios/<name>,
+# passed to EmulatorJS as EJS_biosUrl. One file only.
+BIOS = {
+    "fds": "disksys.rom", "pcecd": "syscard3.pce", "tg-cd": "syscard3.pce",
+    "segacd": "bios_CD_U.bin", "3do": "panafz10.bin", "atari5200": "5200.rom",
+    "colecovision": "colecovision.rom", "pcfx": "pcfx.rom", "psx": "scph5501.bin",
+    "neogeo": "neogeo.zip", "amiga": "kick40068.A1200",
+    "atari7800": "7800 BIOS (U).rom", "satellaview": "BS-X.bin",
 }
 
 
@@ -215,6 +269,124 @@ def parse_year(raw):
 
 def slug(s):
     return re.sub(r"[^a-z0-9]+", "-", s.lower()).strip("-") or "x"
+
+
+_UA = "shadowswords-arcade/1.0 (https://github.com/OmniGodgeta/shadowswords-gamelib)"
+
+
+def fetch_console_photos(sids):
+    """Populate .console-cache/ with a photo of each console's hardware, using
+    the batched MediaWiki pageimages API (few requests, no rate-limiting)."""
+    import time
+    import urllib.request
+    import urllib.parse
+    import urllib.error
+    PHOTO_CACHE.mkdir(exist_ok=True)
+
+    want = {}  # title -> [sids]
+    for sid in sids:
+        t = WIKI.get(sid)
+        if not t:
+            continue
+        if next((p for p in PHOTO_CACHE.glob(f"{sid}.*") if p.suffix != ".miss"), None):
+            continue
+        want.setdefault(urllib.parse.unquote(t), []).append(sid)
+    if not want:
+        return
+
+    def get(url):
+        for attempt in range(6):
+            try:
+                return urllib.request.urlopen(
+                    urllib.request.Request(url, headers={"User-Agent": _UA}), timeout=45).read()
+            except urllib.error.HTTPError as e:
+                if e.code == 404:
+                    return None
+                time.sleep(3 * (attempt + 1))       # 429 / 5xx
+            except Exception:
+                time.sleep(2 * (attempt + 1))
+        return b""                                   # exhausted -> transient, don't cache a miss
+
+    titles = list(want)
+    urls, seen = {}, set()
+    for i in range(0, len(titles), 20):
+        q = urllib.parse.urlencode({
+            "action": "query", "format": "json", "formatversion": "2", "redirects": "1",
+            "prop": "pageimages", "piprop": "original|thumbnail",
+            "pithumbsize": "1000", "titles": "|".join(titles[i:i + 20]),
+        })
+        raw = get("https://en.wikipedia.org/w/api.php?" + q)
+        if raw:
+            d = json.loads(raw).get("query", {})
+            # map every returned/resolved title back to the one we asked for
+            chain = {}
+            for hop in d.get("normalized", []) + d.get("redirects", []):
+                chain[hop["to"]] = chain.get(hop["from"], hop["from"])
+            for pg in d.get("pages", []):
+                key = chain.get(pg["title"], pg["title"])
+                seen.add(key)
+                src = (pg.get("original") or pg.get("thumbnail") or {}).get("source")
+                if src:
+                    urls[key] = src
+        time.sleep(1.2)
+
+    for title, sid_list in want.items():
+        src = urls.get(title)
+        if not src:
+            if title in seen:                        # API answered: page has no image
+                for sid in sid_list:
+                    (PHOTO_CACHE / f"{sid}.miss").touch()
+            continue                                 # else transient -> retry next build
+        if src.lower().split("?")[0].endswith(".svg"):
+            for sid in sid_list:
+                (PHOTO_CACHE / f"{sid}.miss").touch()
+            continue
+        src = re.sub(r"\?.*$", "", src)
+        src = re.sub(r"/\d+px-([^/]+)$", r"/1000px-\1", src)
+        ext = ".png" if ".png" in src.lower() else ".jpg"
+        data = get(src)
+        if not data:                                 # transient
+            continue
+        for sid in sid_list:
+            (PHOTO_CACHE / f"{sid}{ext}").write_bytes(data)
+            print(f"  photo {sid:16} <- {title}")
+        time.sleep(1.3)
+
+
+def console_photo_src(sid):
+    return next((p for p in PHOTO_CACHE.glob(f"{sid}.*") if p.suffix != ".miss"), None)
+
+
+YT_CHANNEL_ID = "UCcAaaApMLLJMU4zpfiI7FKA"  # @shadowswordsttv
+
+
+def fetch_youtube_videos():
+    """docs/data/videos.json from the channel RSS feed (no API key). Keeps the
+    last-good file if the fetch fails."""
+    import urllib.request
+    out = DATA_OUT / "videos.json"
+    try:
+        req = urllib.request.Request(
+            f"https://www.youtube.com/feeds/videos.xml?channel_id={YT_CHANNEL_ID}",
+            headers={"User-Agent": _UA})
+        xml = urllib.request.urlopen(req, timeout=20).read().decode("utf-8", "replace")
+        ids = re.findall(r"<yt:videoId>([^<]+)</yt:videoId>", xml)
+        titles = re.findall(r"<media:title>([^<]+)</media:title>", xml)
+        pubs = re.findall(r"<published>([^<]+)</published>", xml)
+        import html as _html
+        vids = [{"id": i, "title": _html.unescape(t), "date": (pubs[n][:10] if n < len(pubs) else "")}
+                for n, (i, t) in enumerate(zip(ids, titles))]
+        if vids:
+            out.write_text(json.dumps(vids, ensure_ascii=False, separators=(",", ":")))
+            print(f"  youtube: {len(vids)} videos")
+            return
+    except Exception as e:
+        sys.stderr.write(f"  youtube fetch failed: {e}\n")
+    old = Path(__file__).parent / "docs" / "data" / "videos.json"
+    if old.is_file() and not out.exists():
+        out.write_bytes(old.read_bytes())
+    elif not out.exists():
+        out.write_text("[]")
 
 
 def load_gamelist(system):
@@ -259,6 +431,36 @@ def find_dl_media(system, stems):
     return None
 
 
+_ROMDIR_MEDIA_CACHE = {}
+
+
+def find_romdir_media(system, stem):
+    """ROM-adjacent art on the game drives: <romdir>/media/{boxes,box2dfront,
+    covers,images}/<stem>*.png  (RetroBat-style, filename has a trailing hash)."""
+    root = _ROMDIR_MEDIA_CACHE.get(system)
+    if root is None:
+        try:
+            root = (ROMS / system).resolve()
+        except OSError:
+            root = False
+        _ROMDIR_MEDIA_CACHE[system] = root
+    if not root:
+        return None
+    for sub in ("media/boxes", "media/box2dfront", "media/covers", "media/images",
+                "media/titlescreen", "images", "boxart"):
+        d = root / sub
+        if not d.is_dir():
+            continue
+        for cand in (f"{stem}.png", f"{stem}.jpg"):
+            p = d / cand
+            if p.is_file():
+                return p
+        hits = sorted(d.glob(f"{stem} *.png")) or sorted(d.glob(f"{stem}*.png"))
+        if hits:
+            return hits[0]
+    return None
+
+
 def convert(src, dst, width):
     if dst.exists():
         return True
@@ -278,11 +480,16 @@ def main():
         shutil.rmtree(DATA_OUT)
     DATA_OUT.mkdir(parents=True)
     (MEDIA_OUT / "logos").mkdir(parents=True, exist_ok=True)
+    (MEDIA_OUT / "consoles").mkdir(parents=True, exist_ok=True)
 
     system_ids = sorted(
         p.name for p in ROMS.iterdir()
         if (p.is_dir() or p.is_symlink()) and not p.name.startswith(".")
     )
+    if "--no-photos" not in sys.argv:
+        fetch_console_photos(system_ids)
+    if "--no-net" not in sys.argv:
+        fetch_youtube_videos()
     systems_index, search_rows, jobs = [], [], []
 
     for sid in system_ids:
@@ -318,19 +525,20 @@ def main():
                         rec[k] = meta[k]
                 if meta["desc"]:
                     rec["desc"] = meta["desc"][:1200]
-                # art
-                src = None
-                img_rel = meta["_image"]
-                if img_rel:
-                    p = Path(os.path.normpath(root / img_rel.lstrip("./")))
-                    if p.is_file():
-                        src = p
-                if not src:
-                    src = find_dl_media(sid, [base_stem])
-                if src:
-                    rec["img"] = f"media/{sid}/{gid}.webp"
-                    jobs.append((src, MEDIA_OUT / sid / f"{gid}.webp", IMG_W))
-                    with_art += 1
+
+            # box art — any system: gamelist <image>, ES-DE downloaded_media, or
+            # ROM-adjacent media/ on the drive.
+            src = None
+            if meta.get("_image"):
+                p = Path(os.path.normpath(root / meta["_image"].lstrip("./")))
+                if p.is_file():
+                    src = p
+            src = src or find_dl_media(sid, [base_stem]) or find_romdir_media(sid, base_stem)
+            if src:
+                rec["img"] = f"media/{sid}/{gid}.webp"
+                jobs.append((src, MEDIA_OUT / sid / f"{gid}.webp", IMG_W))
+                with_art += 1
+
             if rec.get("genre"):
                 genres[rec["genre"]] = genres.get(rec["genre"], 0) + 1
             games.append(rec)
@@ -339,21 +547,31 @@ def main():
         games.sort(key=lambda r: r["name"].lower())
         (DATA_OUT / f"{sid}.json").write_text(json.dumps(games, ensure_ascii=False, separators=(",", ":")))
 
-        # logo
+        # logo (wordmark) + photo (actual hardware)
         logo_src = LOGOS_SRC / f"{LOGO_ALIAS.get(sid, sid)}.webp"
         logo = None
         if logo_src.is_file():
             logo = f"media/logos/{sid}.webp"
             jobs.append((logo_src, MEDIA_OUT / "logos" / f"{sid}.webp", LOGO_W))
+        photo = None
+        psrc = console_photo_src(sid)
+        if psrc:
+            photo = f"media/consoles/{sid}.webp"
+            jobs.append((psrc, MEDIA_OUT / "consoles" / f"{sid}.webp", PHOTO_W))
 
+        bios = BIOS.get(sid) if core else None
+        if bios and not (BIOS_SRC / bios).is_file():
+            bios = None
         systems_index.append({
             "id": sid,
             "name": SYSTEM_NAMES.get(sid, sid.replace("-", " ").title()),
             "count": len(games),
             "withArt": with_art,
             "logo": logo,
+            "photo": photo,
             "playable": bool(core),
             "core": core,
+            "bios": bios,
             "genres": sorted(genres, key=lambda k: -genres[k])[:12],
         })
         print(f"{sid:16} {len(games):6}  art={with_art:<5} {'PLAY' if core else ''}")

@@ -6,7 +6,12 @@
 const $ = (s, r = document) => r.querySelector(s);
 const $$ = (s, r = document) => [...r.querySelectorAll(s)];
 const el = (tag, props = {}, ...kids) => {
-  const n = Object.assign(document.createElement(tag), props);
+  const n = document.createElement(tag);
+  for (const [k, v] of Object.entries(props)) {
+    if (k === "dataset") Object.assign(n.dataset, v);
+    else if (k === "style" && typeof v === "string") n.setAttribute("style", v);
+    else n[k] = v;
+  }
   for (const k of kids) if (k != null && k !== false) n.append(k);
   return n;
 };
@@ -16,8 +21,19 @@ const debounce = (fn, ms) => { let t; return (...a) => { clearTimeout(t); t = se
 const TS = "https://shadow-1.tail51f9d6.ts.net";
 const SELF_HOSTED = location.hostname.endsWith(".ts.net");
 const ROM_BASE = SELF_HOSTED ? "/roms/" : TS + "/roms/";       // needs Funnel when off-tailnet
+const MUSIC_BASE = SELF_HOSTED ? "/music/" : TS + "/music/";
 const MOVIES_URL = TS + ":8443/";                               // opens in a new tab
 const EMU_DATA = "https://cdn.emulatorjs.org/stable/data/";
+const YT_CHANNEL = "https://www.youtube.com/@shadowswordsttv";
+const SOCIALS = [
+  ["Facebook", "https://www.facebook.com/ShadowSwordsQc", "f", "#1877f2"],
+  ["Instagram", "https://www.instagram.com/1shadowswords/", "◎", "#e1306c"],
+  ["YouTube", "https://www.youtube.com/@shadowswordsttv", "▶", "#ff0000"],
+  ["TikTok", "https://www.tiktok.com/@1shadowswords", "♪", "#25f4ee"],
+  ["X", "https://x.com/XEricChalifoux", "𝕏", "#ffffff"],
+  ["Rumble", "https://rumble.com/c/c-7883882", "▲", "#85c742"],
+];
+const DISCORD = "https://discord.gg/QnMc35rUdB";
 const PAGE = 90;
 const COLLAGE_SYSTEMS = ["atari2600", "archimedes", "3do", "wii", "xbox", "gba", "psx", "gc"];
 
@@ -47,6 +63,10 @@ async function getSearch() {
 }
 const meta = (id) => state.systems[id] || { id, name: id };
 const sysName = (id) => meta(id).name;
+// hero art fallback for a system: hardware photo, else white wordmark
+const sysArt = (m) => m.photo
+  ? el("img", { src: m.photo, alt: m.name, style: "object-fit:contain;padding:6%" })
+  : (m.logo ? el("img", { src: m.logo, alt: m.name, className: "console-logo", style: "object-fit:contain;padding:12%;width:auto;max-width:70%;max-height:55%" }) : null);
 
 /* ---- components --------------------------------------------------- */
 function collage(imgs) {
@@ -97,7 +117,8 @@ function shelf({ title, count, moreHref, tiles }) {
 
 function consoleTile(s, { play = false } = {}) {
   const art = el("div", { className: "tile-art console" });
-  if (s.logo) art.append(el("img", { className: "console-logo", src: s.logo, loading: "lazy", alt: s.name }));
+  if (s.photo) art.append(el("img", { className: "console-photo", src: s.photo, loading: "lazy", alt: s.name }));
+  else if (s.logo) art.append(el("img", { className: "console-logo", src: s.logo, loading: "lazy", alt: s.name }));
   else art.append(el("div", { className: "ph", textContent: s.name }));
   if (play && s.playable) art.append(el("span", { className: "badge", textContent: "Play" }));
   return el("a", { className: "tile", href: play ? `#/play/${s.id}` : `#/s/${s.id}` },
@@ -165,12 +186,17 @@ async function routeHome() {
     title: "All consoles", count: systems.length, moreHref: "#/browse",
     tiles: [...withLogo, ...rest].map((s) => consoleTile(s)),
   }));
+  const linkTile = (href, emoji, title, sub) => el("a", { className: "tile", href },
+    el("div", { className: "tile-art console" }, el("div", { className: "ph", textContent: `${emoji}  ${title}` })),
+    el("div", { className: "tile-cap" }, el("div", { className: "t", textContent: title }),
+      el("div", { className: "s", textContent: sub })));
   frag.append(el("div", { className: "shelf" },
-    el("div", { className: "shelf-head" }, el("h2", { textContent: "Movies" })),
+    el("div", { className: "shelf-head" }, el("h2", { textContent: "More" })),
     el("div", { className: "shelf-track" },
-      el("a", { className: "tile", href: "#/movies" },
-        el("div", { className: "tile-art console" }, el("div", { className: "ph", textContent: "🎬  Movie library" })),
-        el("div", { className: "tile-cap" }, el("div", { className: "t", textContent: "Jellyfin" }))))));
+      linkTile("#/movies", "🎬", "Movies", "Jellyfin library"),
+      linkTile("#/music", "🎧", "Music", "Albums on the server"),
+      linkTile("#/videos", "▶", "Videos", "Latest YouTube uploads"),
+      linkTile("#/contact", "📡", "Contact", "Socials & Discord"))));
   view.replaceChildren(frag);
 }
 
@@ -209,7 +235,7 @@ async function routeSystem(id) {
   frag.append(hero({
     kicker: "Console", title: m.name,
     desc: `${games.length.toLocaleString()} games${m.withArt ? `, ${m.withArt} with box art` : ""}${m.playable ? " · playable in your browser" : ""}.`,
-    art: arty.length ? collage(arty) : (m.logo ? el("img", { src: m.logo, alt: m.name, style: "object-fit:contain;padding:8%" }) : null),
+    art: arty.length ? collage(arty) : sysArt(m),
     actions: m.playable ? [{ label: "▶ Play these", href: `#/play/${id}`, primary: true }] : [],
   }));
 
@@ -262,7 +288,7 @@ async function routeGame(sysId, gid) {
       g.players && `${g.players} players`].filter(Boolean).join("   ·   "),
     art: g.img ? el("img", { src: g.img, alt: g.name })
       : (games.filter((x) => x.img).length ? collage(games.filter((x) => x.img).slice(0, 16).map((x) => x.img))
-        : (m.logo ? el("img", { src: m.logo, style: "object-fit:contain;padding:9%" }) : null)),
+        : sysArt(m)),
     actions,
   }));
 }
@@ -318,10 +344,19 @@ async function routePlaySystem(id) {
   frag.append(hero({
     kicker: "Play", title: m.name,
     desc: `${games.length.toLocaleString()} games, ready to run. Streamed from the home server — pick one.`,
-    art: m.logo ? el("img", { src: m.logo, style: "object-fit:contain;padding:8%" }) : null,
+    art: sysArt(m),
     actions: [{ label: "Or upload a ROM", onClick: () => $("#rom-input")?.click() }],
   }));
   frag.append(el("div", { className: "wrap", style: "padding-bottom:6px" }, dropzone()));
+  const NOTE = {
+    cps1: "Arcade emulation needs romsets that match EmulatorJS's exact FBNeo build. Many current CPS romsets show a “missing files for THIS VERSION” error — that's the romset, not a bug.",
+    cps2: "Arcade emulation needs romsets that match EmulatorJS's exact FBNeo build. Many current CPS romsets show a “missing files for THIS VERSION” error — that's the romset, not a bug.",
+    mame: "Arcade emulation needs romsets that match the mame2003-plus (0.78) set. Newer romsets won't load.",
+    neogeo: "Neo Geo needs a matching FBNeo romset + neogeo.zip BIOS. Hit-or-miss.",
+    amiga: "Amiga (PUAE) is experimental in EmulatorJS and often won't boot — WHDLoad/ADF quirks.",
+    satellaview: "Satellaview .bs files load via the BS-X BIOS; some titles still drop to the emulator menu.",
+  }[id];
+  if (NOTE) frag.append(el("div", { className: "note" }, el("b", { textContent: "Heads up: " }), NOTE));
   const fText = el("input", { type: "search", placeholder: "Filter titles…" });
   frag.append(el("div", { className: "grid-tools" }, fText));
   const box = el("div", {});
@@ -350,11 +385,13 @@ const idbGet = async (k) => { const db = await idb(); return new Promise((res, r
 // file extension -> EmulatorJS system (EJS_core) for uploaded ROMs
 const EXT_CORE = {
   nes: "nes", fds: "nes", unf: "nes", sfc: "snes", smc: "snes", fig: "snes",
-  gb: "gb", gbc: "gb", gba: "gba", n64: "n64", z64: "n64", v64: "n64",
-  md: "segaMD", gen: "segaMD", smd: "segaMD", sms: "segaMS",
-  gg: "segaGG", pce: "pce", sgx: "pce", a26: "atari2600",
+  bs: "snes", swc: "snes",
+  gb: "gb", gbc: "gb", gba: "gba", srl: "gba", n64: "n64", z64: "n64", v64: "n64",
+  md: "segaMD", gen: "segaMD", smd: "segaMD", sms: "segaMS", "32x": "sega32x",
+  gg: "segaGG", sg: "segaMS", pce: "pce", sgx: "pce", a26: "atari2600", a52: "atari5200",
   a78: "atari7800", lnx: "lynx", j64: "jaguar", jag: "jaguar", ws: "ws", wsc: "ws",
-  ngp: "ngp", ngc: "ngp", vb: "vb", col: "coleco", d64: "c64",
+  ngp: "ngp", ngc: "ngp", vb: "vb", col: "coleco", "int": "coleco",
+  d64: "c64", t64: "c64", crt: "c64", prg: "c64",
   iso: "psx", cue: "psx", chd: "psx", pbp: "psx", bin: "psx", zip: "arcade",
 };
 async function startUpload(file) {
@@ -406,6 +443,8 @@ async function routePlayGame(sys, romParam) {
   window.EJS_gameName = romName;
   window.EJS_pathtodata = EMU_DATA;
   window.EJS_startOnLoaded = true;
+  const bios = sys !== "upload" && meta(sys).bios;
+  if (bios) window.EJS_biosUrl = ROM_BASE + "bios/" + encodeURIComponent(bios);
   window.EJS_Buttons = { restart: true, settings: true, fullscreen: true, saveState: true, loadState: true, gamepad: true };
   window.EJS_onGameStart = () => $("#player-load")?.remove();
   const s = el("script", { src: EMU_DATA + "loader.js" });
@@ -425,6 +464,119 @@ function routeMovies() {
     el("a", { className: "btn btn-primary", href: MOVIES_URL, target: "_blank", rel: "noopener", textContent: "Open the movie library ↗" }),
     el("div", { className: "hint" }, "Jellyfin at ", el("code", { textContent: host }),
       " — if it doesn't load, the server may be off or you're not on the tailnet.")));
+}
+
+/* ---- routes: music ------------------------------------------- */
+let audioEl = null, curAlbum = null;
+async function routeMusic(albumIdx) {
+  const token = ++state.render;
+  spinner();
+  const data = await fetch(MUSIC_BASE + "index.json").then((r) => r.json()).catch(() => null);
+  if (token !== state.render) return;
+  if (!data || !data.albums.length) {
+    view.replaceChildren(el("section", { className: "pane center" },
+      el("div", { className: "big-emoji", textContent: "🎧" }),
+      el("h1", { textContent: "Music" }),
+      el("p", { textContent: "No music on the server yet — drop albums into the Music folder and they'll show up here." }),
+      el("div", { className: "hint" }, "Served from ", el("code", { textContent: new URL(MUSIC_BASE, location.href).host }))));
+    return;
+  }
+  const idx = Math.min(Math.max(0, albumIdx | 0), data.albums.length - 1);
+  const album = data.albums[idx];
+
+  if (!audioEl) audioEl = $("#player-audio");
+  const npTitle = el("div", { className: "np-title" });
+  const nowPlaying = el("div", { className: "now-playing" }, npTitle, audioEl);
+  audioEl.hidden = false; audioEl.controls = true;
+
+  const trackList = el("div", { className: "track-list" });
+  const renderTracks = (alb) => {
+    trackList.replaceChildren(...alb.tracks.map((t, i) =>
+      el("div", { className: "track", dataset: { file: t.file },
+        onclick: () => playTrack(alb, i) },
+        el("span", { className: "num", textContent: String(i + 1).padStart(2, "0") }),
+        el("span", { textContent: t.title }))));
+  };
+  const playTrack = (alb, i) => {
+    curAlbum = alb;
+    const t = alb.tracks[i];
+    audioEl.src = MUSIC_BASE + "file/" + t.file.split("/").map(encodeURIComponent).join("/");
+    audioEl.play().catch(() => {});
+    npTitle.textContent = `${t.title} — ${alb.name.replace(/\[[^\]]*\]/g, "").trim()}`;
+    $$(".track", trackList).forEach((r, n) => r.classList.toggle("playing", n === i));
+  };
+  audioEl.onended = () => {
+    if (!curAlbum) return;
+    const cur = $$(".track", trackList).findIndex((r) => r.classList.contains("playing"));
+    if (cur >= 0 && cur + 1 < curAlbum.tracks.length) playTrack(curAlbum, cur + 1);
+  };
+  renderTracks(album);
+
+  const cleanAlbum = (n) => n
+    .replace(/\[[^\]]*\]/g, "").replace(/\([^)]*\)/g, "")
+    .replace(/[-–]\s*[A-Za-z0-9]+\s*$/, "")     // trailing release-group tag
+    .replace(/\s{2,}/g, " ").trim() || n;
+
+  const albumList = el("div", { className: "album-list" },
+    ...data.albums.map((a, i) => el("button", {
+      className: "album-btn" + (i === idx ? " active" : ""),
+      onclick: () => { location.hash = `#/music/${i}`; },
+    }, el("span", { textContent: cleanAlbum(a.name) }),
+      el("small", { textContent: `${a.tracks.length} track${a.tracks.length > 1 ? "s" : ""}` }))));
+
+  view.replaceChildren(el("div", { className: "wrap" },
+    el("section", { className: "shelf", style: "padding:22px 0 6px" },
+      el("div", { className: "shelf-head" }, el("h2", { textContent: "Music" }),
+        el("span", { className: "count", textContent: `${data.albums.length} album${data.albums.length > 1 ? "s" : ""}` }))),
+    el("div", { className: "music-layout" }, albumList,
+      el("div", {}, el("h3", { style: "margin:4px 0 10px", textContent: cleanAlbum(album.name) }), trackList)),
+    nowPlaying));
+}
+
+/* ---- routes: contact ---------------------------------------- */
+function routeContact() {
+  ++state.render;
+  view.replaceChildren(el("section", { className: "pane" },
+    el("div", { className: "big-emoji", textContent: "📡" }),
+    el("h1", { textContent: "Contact & Socials" }),
+    el("p", { textContent: "Follow ShadowSwords everywhere, or jump into the Discord to chat, request games, or report anything broken." }),
+    el("div", { className: "socials" },
+      ...SOCIALS.map(([name, url, ic, col]) => el("a", { className: "social", href: url, target: "_blank", rel: "noopener" },
+        el("span", { className: "ic", style: `color:${col}`, textContent: ic }),
+        el("span", {}, name, el("small", { textContent: url.replace(/^https?:\/\/(www\.)?/, "") }))))),
+    el("div", { className: "discord-cta" },
+      el("div", {}, el("strong", { style: "font-size:16px", textContent: "💬  Discord server" }),
+        el("div", { style: "color:var(--muted);font-size:13px", textContent: "The best place to reach me." })),
+      el("a", { className: "btn btn-primary", href: DISCORD, target: "_blank", rel: "noopener", textContent: "Join the Discord ↗" }))));
+}
+
+/* ---- routes: videos --------------------------------------- */
+async function routeVideos() {
+  const token = ++state.render;
+  spinner();
+  const vids = await fetch("data/videos.json").then((r) => r.json()).catch(() => []);
+  if (token !== state.render) return;
+  const frag = document.createDocumentFragment();
+  frag.append(el("section", { className: "shelf", style: "padding:22px var(--pad) 6px" },
+    el("div", { className: "shelf-head" }, el("h2", { textContent: "Latest videos" }),
+      el("a", { href: YT_CHANNEL, target: "_blank", rel: "noopener", textContent: "Full channel ›" }))));
+  const grid = el("div", { className: "video-grid" });
+  if (vids.length) {
+    vids.slice(0, 15).forEach((v) => grid.append(el("div", {},
+      el("div", { className: "video-embed" },
+        el("iframe", { src: `https://www.youtube-nocookie.com/embed/${v.id}`, loading: "lazy",
+          allow: "accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture",
+          allowFullscreen: true, title: v.title })),
+      el("div", { className: "tile-cap", style: "padding:8px 2px" },
+        el("div", { className: "t", textContent: v.title }),
+        el("div", { className: "s", textContent: v.date || "" })))));
+  } else {
+    grid.append(el("div", { className: "video-embed channel" },
+      el("div", {}, el("div", { style: "font-size:32px;margin-bottom:8px", textContent: "▶" }),
+        el("a", { className: "btn btn-primary", href: YT_CHANNEL, target: "_blank", rel: "noopener", textContent: "Open the YouTube channel ↗" }))));
+  }
+  frag.append(el("div", { className: "wrap" }, grid));
+  view.replaceChildren(frag);
 }
 
 async function routeSearch(qRaw) {
@@ -455,11 +607,13 @@ async function routeSearch(qRaw) {
 function parseHash() {
   return location.hash.replace(/^#\/?/, "").split(/[/?]/).map((s) => { try { return decodeURIComponent(s); } catch { return s; } });
 }
+const TOP_NAV = new Set(["home", "play", "movies", "music", "videos", "contact"]);
 function setNav(name) {
-  $$(".bar-link").forEach((a) => a.classList.toggle("active", a.dataset.nav === name));
-  const top = name === "home" || name === "play" || name === "movies";
+  $$(".bar-link, .drawer a").forEach((a) => a.classList.toggle("active", a.dataset.nav === name));
+  const top = TOP_NAV.has(name);
   $("#bar-nav").hidden = !top;
   $("#back-btn").hidden = top;
+  $("#drawer").hidden = true;
 }
 async function router() {
   const parts = parseHash();
@@ -467,6 +621,7 @@ async function router() {
   // an emulator is live and we're navigating away from it -> hard reset (kills audio/RAF)
   if (window.__emuUp && !(a === "play" && parts.length > 2)) { window.__emuUp = false; location.reload(); return; }
   if (a !== "q") $("#bar-search").hidden = true;
+  if (a !== "music" && audioEl) audioEl.pause();
   window.scrollTo(0, 0);
   if (a === "s" && b) { setNav(null); return routeSystem(b); }
   if (a === "g" && b && parts[2]) { setNav(null); return routeGame(b, parts[2]); }
@@ -474,6 +629,9 @@ async function router() {
   if (a === "play" && b) { setNav("play"); return routePlaySystem(b); }
   if (a === "play") { setNav("play"); return routePlay(); }
   if (a === "movies") { setNav("movies"); return routeMovies(); }
+  if (a === "music") { setNav("music"); return routeMusic(b); }
+  if (a === "videos") { setNav("videos"); return routeVideos(); }
+  if (a === "contact") { setNav("contact"); return routeContact(); }
   if (a === "browse") { setNav("home"); return routeBrowse(); }
   if (a === "q" && b) { setNav(null); return routeSearch(b); }
   setNav("home"); $("#q").value = ""; return routeHome();
@@ -482,6 +640,12 @@ window.addEventListener("hashchange", router);
 
 /* ---- chrome ----------------------------------------------- */
 $("#back-btn").onclick = () => (history.length > 1 ? history.back() : (location.hash = "#/"));
+const drawer = $("#drawer");
+$("#menu-btn").onclick = () => { drawer.hidden = !drawer.hidden; };
+drawer.addEventListener("click", (e) => { if (e.target.tagName === "A") drawer.hidden = true; });
+document.addEventListener("click", (e) => {
+  if (!drawer.hidden && !drawer.contains(e.target) && e.target.id !== "menu-btn") drawer.hidden = true;
+});
 const sf = $("#bar-search"), qi = $("#q");
 $("#search-btn").onclick = () => { sf.hidden = !sf.hidden; if (!sf.hidden) qi.focus(); };
 sf.onsubmit = (e) => e.preventDefault();
