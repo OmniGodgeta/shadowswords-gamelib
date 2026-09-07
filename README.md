@@ -1,11 +1,32 @@
-# shadowswords — game library site
+# shadowswords — arcade
 
-A static, browsable web gallery generated from the local **ES-DE**
-(EmulationStation Desktop Edition) library. Pick a system, filter/sort, search
-across every system, click a game for art + full metadata. Dark/light, works on
-mobile, no server or build toolchain — plain HTML/CSS/JS.
+A static, browsable **webRcade-style** gallery of the local **ES-DE** library:
+hero banners, horizontal carousels, dark 10-foot UI. Three sections:
+
+- **Home / Consoles** — browse 4,350 games across 38 systems (art from ES-DE scrape)
+- **Play** — NES & SNES in-browser via [EmulatorJS]; ROMs stream from the home
+  ROM server over Tailscale, or load-your-own via file picker
+- **Movies** — opens the Jellyfin library (also via Tailscale)
+
+Plain HTML/CSS/JS, no build toolchain for the frontend.
 
 **Live:** https://omnigodgeta.github.io/shadowswords-gamelib/
+
+[EmulatorJS]: https://emulatorjs.org/
+
+## Play section — the moving parts
+
+| Piece | Where | What |
+|-------|-------|------|
+| `~/rom-server.mjs` | `shadow`, `127.0.0.1:8710` | read-only NES/SNES ROM + `catalog.json` server, CORS + Range. systemd user unit `rom-server.service`. |
+| `tailscale serve` | `shadow` | fronts Jellyfin at `:443`, the ROM server at `:8443`, with real HTTPS certs |
+| `tailscale funnel` | `shadow` | makes both public (so non-tailnet visitors can play) |
+| `~/setup-arcade-serving.sh` | `shadow` | one command to wire serve+funnel up (`off` / `lan` args) |
+| `MOVIES_URL`, `ROM_BASE` | `docs/assets/app.js` | the two URLs the frontend points at — change here if the node/tailnet changes |
+
+The ROM catalog is derived live from `~/Games/roms/{nes,snes}/`; no ROMs are in
+this repo (copyright — GitHub would DMCA them). If `ROM_BASE` is unreachable the
+Play section still works with the file picker.
 
 ```
 build.py          generator: reads ~/ES-DE, writes docs/data + docs/media
@@ -63,10 +84,30 @@ enter it — GitHub writes a `docs/CNAME` file. At the registrar:
   (185.199.108–111.153) plus an `AAAA` set, per GitHub's docs.
 - `www` subdomain: a `CNAME` record → `omnigodgeta.github.io`.
 
+## First-time serving setup (Play + Movies)
+
+On `shadow`, one-time, click **Enable** on each (opens the Tailscale account):
+
+- Serve:  `https://login.tailscale.com/f/serve?node=nbPLc1nrhS11CNTRL`
+- Funnel: `https://login.tailscale.com/f/funnel?node=nbPLc1nrhS11CNTRL`
+
+Then:
+
+```sh
+~/setup-arcade-serving.sh          # serve + public funnel for Jellyfin + ROM server
+~/setup-arcade-serving.sh lan      # tailnet-only (no public funnel)
+~/setup-arcade-serving.sh off      # tear down
+```
+
+`rom-server.service` (systemd --user) starts the ROM server on boot.
+⚠️ Public funnel exposes the full commercial ROM library to the internet from
+this machine — that is ROM distribution; keep it `lan` if that's a concern.
+
 ## Notes / limits
 
-- Only art actually present on disk is included; videos and manuals are skipped
-  to keep the site light. Games with no art show a placeholder.
+- Frontend is dark-only (webRcade style); the old light theme + modal were removed.
+- Only art actually present on disk is included; NES/SNES have none, so Play tiles
+  and no-art games use a styled name placeholder.
 - `data/search.json` (~340 KB) is fetched once on the first search.
-- Regenerate and redeploy whenever the ES-DE library changes — the site is a
-  snapshot, it does not read ES-DE live.
+- Regenerate + `git push` whenever the ES-DE library changes — the browse data is
+  a snapshot. The Play catalog *is* live (read from disk each request).
