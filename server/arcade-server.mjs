@@ -74,7 +74,7 @@ const MIME = {
 };
 const CORS = {
   "access-control-allow-origin": "*",
-  "access-control-allow-headers": "range, content-type",
+  "access-control-allow-headers": "range, content-type, x-ssw-token",
   "access-control-allow-methods": "GET, HEAD, POST, PUT, DELETE, OPTIONS",
 };
 
@@ -144,6 +144,60 @@ function serveRom(req, res, sys, rel) {
 }
 
 // ---- music ----------------------------------------------------------------
+const FOLDER_ART = ["cover.jpg", "folder.jpg", "front.jpg", "album.jpg", "cover.png", "folder.png",
+  "front.png", "Cover.jpg", "Folder.jpg", "AlbumArtSmall.jpg", "AlbumArt.jpg"];
+const IMG_EXT_RE = /\.(jpe?g|png|webp)$/i;
+
+// pull embedded cover art from the first track (ID3v2 APIC / FLAC PICTURE)
+function embeddedArt(file) {
+  let fd;
+  try {
+    fd = fs.openSync(file, "r");
+    const head = Buffer.alloc(12); fs.readSync(fd, head, 0, 12, 0);
+    if (head.slice(0, 3).toString("latin1") === "ID3") {
+      const sz = ((head[6] & 0x7f) << 21) | ((head[7] & 0x7f) << 14) | ((head[8] & 0x7f) << 7) | (head[9] & 0x7f);
+      const buf = Buffer.alloc(Math.min(sz + 10, 4 << 20)); fs.readSync(fd, buf, 0, buf.length, 0);
+      let p = 10;
+      while (p + 10 < buf.length) {
+        const id = buf.slice(p, p + 4).toString("latin1");
+        const fsz = buf.readUInt32BE(p + 4);
+        if (!/^[A-Z0-9]{4}$/.test(id) || fsz <= 0 || p + 10 + fsz > buf.length) break;
+        if (id === "APIC") {
+          let q = p + 10; q++;                                  // text encoding
+          while (q < buf.length && buf[q] !== 0) q++; q++;      // MIME (latin1, null-term)
+          q++;                                                  // picture type
+          while (q < buf.length && buf[q] !== 0) q++; q++;      // description
+          return { mime: "image/jpeg", data: buf.slice(q, p + 10 + fsz) };
+        }
+        p += 10 + fsz;
+      }
+    } else if (head.slice(0, 4).toString("latin1") === "fLaC") {
+      let p = 4;
+      const b = Buffer.alloc(4 << 20); fs.readSync(fd, b, 0, b.length, 0);
+      while (p + 4 < b.length) {
+        const last = b[p] & 0x80, type = b[p] & 0x7f;
+        const len = (b[p + 1] << 16) | (b[p + 2] << 8) | b[p + 3];
+        p += 4;
+        if (type === 6) {
+          let q = p + 4;
+          const mlen = b.readUInt32BE(q); q += 4;
+          const mime = b.slice(q, q + mlen).toString("latin1"); q += mlen;
+          const dlen = b.readUInt32BE(q); q += 4 + dlen;
+          q += 16;                                              // w/h/depth/colors
+          const ilen = b.readUInt32BE(q); q += 4;
+          return { mime, data: b.slice(q, q + ilen) };
+        }
+        p += len;
+        if (last) break;
+      }
+    }
+  } catch { /* */ } finally { if (fd !== undefined) try { fs.closeSync(fd); } catch { /* */ } }
+  return null;
+}
+
+const artCacheDir = path.join(DATA, "music-art");
+try { fs.mkdirSync(artCacheDir, { recursive: true }); } catch { /* */ }
+
 let musicCache = null, musicAt = 0;
 function musicIndex(req, res) {
   if (musicCache && Date.now() - musicAt < 120000) {
@@ -158,6 +212,7 @@ function musicIndex(req, res) {
       if (ent.isDirectory()) {
         const dir = path.join(MUSIC, ent.name);
         const tracks = [];
+        let folderImg = null;
         const walk = (d, prefix) => {
           for (const t of fs.readdirSync(d, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name))) {
             if (t.name.startsWith(".")) continue;
@@ -165,11 +220,18 @@ function musicIndex(req, res) {
             if (t.isDirectory()) walk(path.join(d, t.name), rel);
             else if (AUDIO_EXT.has(path.extname(t.name).toLowerCase())) {
               tracks.push({ title: t.name.replace(/\.[^.]+$/, "").replace(/^\d+[\s.\-_]+/, ""), file: `${ent.name}/${rel}` });
+            } else if (!folderImg && IMG_EXT_RE.test(t.name)) {
+              folderImg = `${ent.name}/${rel}`;
             }
           }
         };
         walk(dir, "");
-        if (tracks.length) albums.push({ name: ent.name, tracks });
+        // prefer a well-known cover filename at the album root
+        for (const c of FOLDER_ART) { if (fs.existsSync(path.join(dir, c))) { folderImg = `${ent.name}/${c}`; break; } }
+        if (tracks.length) {
+          const hasArt = !!folderImg || (fs.existsSync(path.join(artCacheDir, encodeURIComponent(ent.name) + ".jpg")));
+          albums.push({ name: ent.name, tracks, art: hasArt || undefined });
+        }
       } else if (AUDIO_EXT.has(path.extname(ent.name).toLowerCase())) {
         loose.push({ title: ent.name.replace(/\.[^.]+$/, ""), file: ent.name });
       }
@@ -179,6 +241,39 @@ function musicIndex(req, res) {
   musicCache = JSON.stringify({ albums });
   musicAt = Date.now();
   res.writeHead(200, { ...CORS, "content-type": "application/json", "cache-control": "public, max-age=120" }).end(musicCache);
+}
+
+function serveMusicArt(req, res, albumName) {
+  if (albumName.includes("..") || albumName.includes("/")) { res.writeHead(400, CORS).end("bad"); return; }
+  const dir = path.join(MUSIC, albumName);
+  const send = (buf, mime) => res.writeHead(200, { ...CORS, "content-type": mime || "image/jpeg",
+    "content-length": buf.length, "cache-control": "public, max-age=86400" })
+    .end(req.method === "HEAD" ? undefined : buf);
+  // 1: a cover file in the album folder
+  try {
+    let img = null;
+    for (const c of FOLDER_ART) { if (fs.existsSync(path.join(dir, c))) { img = path.join(dir, c); break; } }
+    if (!img) {
+      const anyImg = fs.readdirSync(dir).find((f) => IMG_EXT_RE.test(f));
+      if (anyImg) img = path.join(dir, anyImg);
+    }
+    if (img) { const ext = path.extname(img).toLowerCase();
+      return send(fs.readFileSync(img), ext === ".png" ? "image/png" : ext === ".webp" ? "image/webp" : "image/jpeg"); }
+  } catch { /* */ }
+  // 2: embedded art from the first track, cached to disk
+  const cache = path.join(artCacheDir, encodeURIComponent(albumName) + ".jpg");
+  try { return send(fs.readFileSync(cache)); } catch { /* */ }
+  try {
+    const first = fs.readdirSync(dir).sort().find((f) => AUDIO_EXT.has(path.extname(f).toLowerCase()));
+    if (first) {
+      const art = embeddedArt(path.join(dir, first));
+      if (art && art.data && art.data.length > 200) {
+        try { fs.writeFileSync(cache, art.data); } catch { /* */ }
+        return send(art.data, art.mime);
+      }
+    }
+  } catch { /* */ }
+  res.writeHead(404, CORS).end("no art");
 }
 function serveMusic(req, res, rel) {
   if (rel.startsWith("/") || rel.split(/[/\\]/).includes("..")) { res.writeHead(400, CORS).end("bad"); return; }
@@ -359,8 +454,8 @@ const now = () => Date.now();
 function stats() {
   if (STATS) return STATS;
   try { STATS = JSON.parse(fs.readFileSync(STATS_FILE, "utf8")); }
-  catch { STATS = { plays: {}, sessions: {} }; }
-  STATS.plays ||= {}; STATS.sessions ||= {};
+  catch { STATS = { plays: {}, sessions: {}, reports: {} }; }
+  STATS.plays ||= {}; STATS.sessions ||= {}; STATS.reports ||= {};
   return STATS;
 }
 let statsDirty = false;
@@ -388,9 +483,37 @@ function playStats(req, res) {
   const s = stats();
   const top = Object.values(s.plays).sort((a, b) => b.count - a.count).slice(0, 24)
     .map(({ sys, file, name, count }) => ({ sys, file, name, count }));
+  const week = now() - 7 * 864e5;
+  const trending = Object.values(s.plays).filter((p) => p.last > week)
+    .sort((a, b) => b.last - a.last).slice(0, 60)
+    .sort((a, b) => (b.recent || b.count) - (a.recent || a.count)).slice(0, 18)
+    .map(({ sys, file, name, count }) => ({ sys, file, name, count }));
+  const reported = Object.values(s.reports).filter((r) => r.n > 0)
+    .sort((a, b) => b.n - a.n).slice(0, 30)
+    .map(({ sys, file, name, n, issues }) => ({ sys, file, name, n, issues }));
   const cutoff = now() - 90000;
   const playingNow = Object.values(s.sessions).filter((x) => x.at > cutoff).length;
-  jsonRes(res, 200, { top, playingNow });
+  jsonRes(res, 200, { top, trending, reported, playingNow });
+}
+
+// ---- report a broken game ------------------------------------------
+async function gameReport(req, res) {
+  let body = {};
+  try { body = JSON.parse((await readBody(req, 4096)).toString() || "{}"); } catch { return jsonRes(res, 400, { ok: false }); }
+  const sys = String(body.sys || "").slice(0, 40), file = String(body.file || "").slice(0, 300);
+  const issue = String(body.issue || "won't boot").slice(0, 60);
+  if (!sys || !file) return jsonRes(res, 400, { ok: false });
+  const s = stats();
+  const key = `${sys}/${file}`;
+  const r = s.reports[key] || { sys, file, name: body.name || file, n: 0, issues: {}, last: 0 };
+  r.n++; r.issues[issue] = (r.issues[issue] || 0) + 1; r.last = now(); r.name = body.name || r.name;
+  s.reports[key] = r; statsDirty = true;
+  const hook = cfg().discordWebhook;
+  if (hook && r.n <= 3) {
+    fetch(hook, { method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ content: `⚠️ **Broken game report** — ${r.name} (${sys}) · "${issue}" · ${r.n}× total` }) }).catch(() => {});
+  }
+  jsonRes(res, 200, { ok: true });
 }
 
 // ---- twitch live status (via decapi.me, no API key) ------------------
@@ -461,12 +584,35 @@ async function jellyfinProxy(req, res, rest, u) {
   } catch (e) { res.writeHead(502, CORS).end("jellyfin: " + e.message); }
 }
 
+// ---- rate limiting + optional write token ------------------------------
+const rl = new Map();   // ip -> [timestamps]
+function rateLimited(req, res, max, windowMs) {
+  const ip = (req.headers["x-forwarded-for"] || "").split(",")[0].trim()
+    || req.socket.remoteAddress || "?";
+  const t = now(), arr = (rl.get(ip) || []).filter((x) => x > t - windowMs);
+  arr.push(t); rl.set(ip, arr);
+  if (rl.size > 5000) for (const [k, v] of rl) if (!v.some((x) => x > t - 60000)) rl.delete(k);
+  if (arr.length > max) { res.writeHead(429, { ...CORS, "retry-after": "30" }).end("slow down"); return true; }
+  return false;
+}
+function tokenOK(req) {
+  const want = cfg().writeToken;
+  if (!want) return true;                      // no token configured -> open (tailnet mode)
+  const got = req.headers["x-ssw-token"] || new URL(req.url, "http://x").searchParams.get("t");
+  return got === want;
+}
+
 http.createServer((req, res) => {
-  if (req.method === "OPTIONS") { res.writeHead(204, { ...CORS, "access-control-max-age": "86400" }).end(); return; }
+  if (req.method === "OPTIONS") { res.writeHead(204, { ...CORS, "access-control-max-age": "86400", "access-control-allow-headers": "range, content-type, x-ssw-token" }).end(); return; }
 
   {
     const u0 = new URL(req.url, "http://x");
     const P = u0.pathname;
+    const writeEP = req.method === "PUT" || req.method === "DELETE"
+      || (req.method === "POST" && (P === "/request" || P === "/report"));
+    if (writeEP && rateLimited(req, res, 40, 60000)) return;
+    if (writeEP && !tokenOK(req)) { res.writeHead(401, CORS).end("token required"); return; }
+
     if (P === "/states/list" && req.method === "GET") { statesList(req, res); return; }
     const sm = P.match(/^\/states\/([^/]+)\/(.+)$/);
     if (sm) {
@@ -477,12 +623,15 @@ http.createServer((req, res) => {
       res.writeHead(405, CORS).end("no"); return;
     }
     // POST/GET dynamic endpoints
-    if (P === "/play/ping" && req.method === "POST") { playPing(req, res); return; }
+    if (P === "/play/ping" && req.method === "POST") { if (rateLimited(req, res, 120, 60000)) return; playPing(req, res); return; }
     if (P === "/play/stats" && req.method === "GET") { playStats(req, res); return; }
+    if (P === "/report" && req.method === "POST") { gameReport(req, res); return; }
     if (P === "/twitch/status" && req.method === "GET") { twitchStatus(req, res); return; }
     if (P === "/discord/info" && req.method === "GET") { discordInfo(req, res); return; }
     if (P === "/request" && req.method === "POST") { gameRequest(req, res); return; }
     if (P === "/search" && req.method === "GET") { serveSearch(req, res, u0); return; }
+    const ma = P.match(/^\/music\/art\/(.+)$/);
+    if (ma && (req.method === "GET" || req.method === "HEAD")) { serveMusicArt(req, res, decodeURIComponent(ma[1])); return; }
     const ejs = P.match(/^\/emulatorjs\/(.+)$/);
     if (ejs && (req.method === "GET" || req.method === "HEAD")) { serveEjs(req, res, decodeURIComponent(ejs[1])); return; }
     const th = P.match(/^\/thumb\/(.+)$/);

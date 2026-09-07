@@ -2,6 +2,37 @@
 
 All notable changes to the ShadowSwords Arcade website.
 
+## [2.4.0] — 2026-09-08 — Trending, movie shelves, album art, offline packs, safety
+
+### Added
+- **Trending shelf** on the home page — the games people actually played this week.
+- **Movies: "Continue watching" + "Just added"** rows at the top of the Movies
+  page (Jellyfin resume state + newest-first).
+- **Album art** — the music section now shows real cover art (folder image or
+  embedded ID3/FLAC), in the album list, the album header, and the mini-player.
+- **Lock-screen / notification music controls** — the mini-player drives the
+  `mediaSession` API (metadata, artwork, play/pause/prev/next/seek), so the
+  installed app and OS media keys control playback and it survives backgrounding.
+- **"Save all for offline"** on cartridge consoles (NES, GB/GBC/GBA, Genesis,
+  SMS, PCE, Atari, WonderSwan…) — bulk-downloads the whole system into the
+  browser ROM cache so it plays with no server. Capped, cancellable.
+- **Report a problem** — a ⚑ button in the player logs broken games to the
+  server (and pings Discord for the first few reports).
+- **Stats page** (`#/stats`) — most played and reported-problem games across
+  everyone.
+- **Unified search** — the results page now also shows matching movies.
+- **Server-unreachable banner** — clear "browse-only mode" notice when off the
+  tailnet, instead of features failing silently.
+- **Export / import** your favorites, recently-played and playtime as JSON
+  (Profile page).
+- **Rate limiting** on all write endpoints, and an **optional access token**
+  (`writeToken` in the server config + a field on the Offline page) that gates
+  save-states, requests and reports — set it before exposing the instance
+  publicly with Funnel.
+
+### Fixed
+- Service worker never caches the dynamic API paths (added `/music/art`).
+
 ## [2.3.0] — 2026-09-08 — In-site movie browser
 
 ### Added

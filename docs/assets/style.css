@@ -505,6 +505,27 @@ body.has-mp .foot { margin-bottom: 66px; }
 }
 .req-form input:focus, .req-form textarea:focus { border-color: var(--cyan); box-shadow: var(--glow-cyan); }
 
+/* ---- offline banner ---- */
+#offline-banner {
+  position: sticky; top: 0; z-index: 300; display: flex; align-items: center; gap: 10px;
+  padding: 8px 14px; font-size: 12.5px; font-weight: 600;
+  background: #3a1020; color: #ffd7e6; border-bottom: 1px solid var(--pink);
+}
+#offline-banner button { margin-left: auto; background: none; border: 0; color: inherit; cursor: pointer; font-size: 14px; }
+
+/* ---- mini-player art + album thumbs ---- */
+#mp-art { width: 40px; height: 40px; border-radius: 6px; object-fit: cover; flex: 0 0 auto; }
+.album-btn { display: flex; align-items: center; gap: 10px; text-align: left; }
+.alb-thumb { width: 40px; height: 40px; border-radius: 6px; object-fit: cover; flex: 0 0 auto;
+  display: grid; place-items: center; background: var(--bg-3); font-size: 16px; color: var(--dim); }
+.alb-txt { display: flex; flex-direction: column; min-width: 0; }
+.alb-txt span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.alb-head { display: flex; gap: 14px; align-items: center; margin: 4px 0 14px; }
+.alb-cover { width: 96px; height: 96px; border-radius: 10px; object-fit: cover; box-shadow: 0 8px 24px rgba(0,0,0,.5); }
+.btn.sm { padding: 5px 12px; font-size: 12px; }
+.player-bar #flag-btn { color: var(--muted); }
+.player-bar #flag-btn:hover { color: var(--pink); border-color: var(--pink); }
+
 /* ---- movie detail modal ---- */
 #movie-modal { position: fixed; inset: 0; z-index: 400; display: grid; place-items: center; padding: 20px;
   background: rgba(7,7,13,.82); backdrop-filter: blur(5px); }

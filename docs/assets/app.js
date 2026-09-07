@@ -275,9 +275,26 @@ async function routeHome() {
 
   const anchor = el("div");
   frag.append(anchor);
-  Promise.all([getJSON("added"), getJSON("collections"), getJSON("franchises")]).then(([added, cols, fr]) => {
+  Promise.all([
+    getJSON("added"), getJSON("collections"), getJSON("franchises"),
+    fetch(`${API}/play/stats`).then((r) => r.json()).catch(() => null),
+  ]).then(([added, cols, fr, ps]) => {
     if (location.hash !== "#/" && location.hash !== "" && location.hash !== "#") return;
     const bits = document.createDocumentFragment();
+    const trend = ps && (ps.trending && ps.trending.length ? ps.trending : ps.top) || [];
+    if (trend.length >= 4) bits.append(shelf({ title: "Trending", count: trend.length,
+      tiles: trend.map((p) => {
+        const gm = (state.cache[p.sys] || []).find((x) => x.file === p.file);
+        const art = el("div", { className: "tile-art" });
+        if (gm && gm.img) art.append(el("img", { src: artUrl(gm.img), loading: "lazy", alt: p.name }));
+        else art.append(el("div", { className: "ph", textContent: p.name }));
+        art.append(el("span", { className: "badge", textContent: "Play" }));
+        return el("a", { className: "tile wide",
+          href: `#/play/${p.sys}/${p.file.split("/").map(encodeURIComponent).join("/")}` }, art,
+          el("div", { className: "tile-cap" },
+            el("div", { className: "t", textContent: p.name }),
+            el("div", { className: "s", textContent: `${sysName(p.sys)} · ${p.count} play${p.count === 1 ? "" : "s"}` })));
+      }) }));
     if (added && added.length) bits.append(shelf({ title: "Recently added", count: added.length,
       tiles: added.slice(0, 24).map((r) => refTile(r)) }));
     if (cols && cols.length) {
@@ -319,6 +336,7 @@ async function routeHome() {
       linkTile("#/favorites", "♥", "Favorites", "Your starred games"),
       linkTile("#/saves", "☁", "Cloud saves", "Resume on any device"),
       linkTile("#/profile", "👤", "Profile", "Your stats"),
+      linkTile("#/stats", "📊", "Stats", "Trending & reports"),
       linkTile("#/cache", "💾", "Offline", "Install & ROM cache"))));
   view.replaceChildren(frag);
 }
@@ -481,6 +499,12 @@ async function routePlaySystem(id) {
   const games = await getSystem(id).catch(() => []);
   if (token !== state.render) return;
 
+  const CART_SYS = new Set(["nes", "fds", "snes", "satellaview", "gb", "gbc", "gba", "genesis",
+    "megadrive", "megadrivejp", "mastersystem", "sg-1000", "gamegear", "pcengine", "supergrafx",
+    "atari2600", "atari5200", "atari7800", "atarilynx", "wonderswan", "wonderswancolor",
+    "ngp", "ngpc", "virtualboy", "colecovision", "sega32x"]);
+  const canOffline = CART_SYS.has(id) && games.length <= 600 && !meta(id).bios;
+
   const frag = document.createDocumentFragment();
   frag.append(hero({
     kicker: "Play", title: m.name,
@@ -488,8 +512,9 @@ async function routePlaySystem(id) {
     art: sysArt(m),
     actions: [
       { label: "🎲 Random game", primary: true, onClick: () => surpriseMe(id) },
+      canOffline ? { label: "⬇ Save all for offline", onClick: () => offlineDownload(id, games) } : null,
       { label: "Or upload a ROM", onClick: () => $("#rom-input")?.click() },
-    ],
+    ].filter(Boolean),
   }));
   frag.append(el("div", { className: "wrap", style: "padding-bottom:6px" }, dropzone()));
   const NOTE = {
@@ -597,6 +622,43 @@ async function fetchRom(key, url, onProgress) {
   }
   return URL.createObjectURL(blob);
 }
+// cache a ROM without producing an object URL (bulk "save for offline")
+async function cacheRom(key, url) {
+  if (await idbGetIn("romcache", key).catch(() => null)) return 0;
+  const resp = await fetch(url);
+  if (!resp.ok) throw new Error("HTTP " + resp.status);
+  const blob = await resp.blob();
+  if (blob.size <= ROM_CACHE_MAX_ITEM) {
+    await romCacheEvict(blob.size);
+    await idbPutIn("romcache", key, { blob, size: blob.size, t: Date.now() });
+  }
+  return blob.size;
+}
+async function offlineDownload(sys, games) {
+  const CAP = 500 * 1048576;
+  let cancel = false, done = 0, bytes = 0;
+  const bar = el("div", { className: "dl-bar" }, el("i"));
+  const stat = el("div", { className: "hint", style: "margin:10px 0" });
+  const o = el("div", { id: "help-overlay" },
+    el("div", { className: "help-card", style: "min-width:320px" },
+      el("h3", { textContent: `Saving ${sysName(sys)} for offline` }),
+      el("p", { className: "hint", style: "margin:0 0 10px", textContent: "Downloads into your browser's ROM cache (1.5 GB, oldest evicted first). You can keep browsing." }),
+      stat, bar,
+      el("button", { className: "btn btn-ghost", style: "margin-top:12px", textContent: "Stop",
+        onclick: () => { cancel = true; o.remove(); toast(`Saved ${done} games offline`); } })));
+  document.body.append(o);
+  const list = games.filter((g) => !/\.(chd|iso|cue|pbp|bin)$/i.test(g.file));
+  for (const g of list) {
+    if (cancel || bytes > CAP) break;
+    const key = sys + "/" + g.file;
+    const url = ROM_BASE + "rom/" + encodeURIComponent(sys) + "/" + g.file.split("/").map(encodeURIComponent).join("/");
+    try { bytes += await cacheRom(key, url); } catch { /* skip */ }
+    done++;
+    stat.textContent = `${done} / ${list.length} · ${fmtBytes(bytes)}`;
+    bar.firstChild.style.width = (done / list.length * 100).toFixed(1) + "%";
+  }
+  if (!cancel) { o.remove(); toast(`✅ ${sysName(sys)} saved for offline (${done} games, ${fmtBytes(bytes)})`); }
+}
 const fmtBytes = (n) => !n ? "0 KB"
   : n >= 1073741824 ? (n / 1073741824).toFixed(1) + " GB"
   : n >= 1048576 ? Math.round(n / 1048576) + " MB"
@@ -624,6 +686,27 @@ async function startUpload(file) {
 
 const stateKey = (sys, file) => STATE_BASE + encodeURIComponent(sys) + "/" + file.split("/").map(encodeURIComponent).join("/");
 
+function reportGame(sys, file, name) {
+  const opts = ["Won't boot / black screen", "Crashes while playing", "Graphics glitches",
+    "No sound", "Wrong / missing BIOS", "Controls don't work"];
+  const o = el("div", { id: "help-overlay", onclick: (e) => { if (e.target.id === "help-overlay") o.remove(); } },
+    el("div", { className: "help-card" },
+      el("h3", { textContent: "Report a problem" }),
+      el("p", { className: "hint", style: "margin:0 0 12px", textContent: name }),
+      ...opts.map((label) => el("button", { className: "btn btn-ghost", style: "display:block;width:100%;margin:6px 0;text-align:left",
+        onclick: async () => {
+          o.remove();
+          try {
+            await fetch(`${API}/report`, { method: "POST", headers: { "content-type": "application/json", ...tokenHdr() },
+              body: JSON.stringify({ sys, file, name, issue: label }) });
+            toast("Thanks — logged it 👍");
+          } catch { toast("Couldn't send the report"); }
+        } })),
+      el("button", { className: "btn btn-ghost", style: "margin-top:8px", textContent: "Cancel", onclick: () => o.remove() })));
+  document.body.append(o);
+}
+const tokenHdr = () => { const t = LS.get("token", ""); return t ? { "x-ssw-token": t } : {}; };
+
 async function routePlayGame(sys, romParam, resume = false) {
   ++state.render;
   if (window.__emuUp) { location.reload(); return; }
@@ -633,11 +716,14 @@ async function routePlayGame(sys, romParam, resume = false) {
   const loadEl = el("div", { className: "player-load", id: "player-load" }, "Booting emulator…");
   const saveBtn = el("button", { className: "pbtn", id: "cloud-save", textContent: "☁ Save", title: "Save state to the server", hidden: true });
   const loadBtn = el("button", { className: "pbtn", id: "cloud-load", textContent: "☁ Load", title: "Load the last server save state", hidden: true });
+  const flagBtn = el("button", { className: "pbtn", id: "flag-btn", textContent: "⚑", title: "Report a problem with this game" });
+  if (sys !== "upload") flagBtn.onclick = () => reportGame(sys, file, romName);
+  else flagBtn.hidden = true;
   const shell = el("div", { className: "player" },
     el("div", { className: "player-bar" },
       el("button", { className: "exit", textContent: "‹ Exit", onclick: exitPlayer }),
       el("div", { className: "title", id: "player-title", textContent: "Loading…" }),
-      saveBtn, loadBtn),
+      saveBtn, loadBtn, flagBtn),
     el("div", { className: "player-stage" },
       el("div", { id: "game" }), loadEl));
   document.body.append(shell);
@@ -702,7 +788,7 @@ async function routePlayGame(sys, romParam, resume = false) {
     if (!gm) return;
     try {
       const data = gm.getState();
-      await fetch(key, { method: "PUT", headers: { "content-type": "application/octet-stream" }, body: data });
+      await fetch(key, { method: "PUT", headers: { "content-type": "application/octet-stream", ...tokenHdr() }, body: data });
       toast("Saved to the server ☁");
     } catch { toast("Cloud save failed"); }
   };
@@ -720,7 +806,7 @@ async function routePlayGame(sys, romParam, resume = false) {
   const autoSave = async () => {
     const g2 = window.EJS_emulator?.gameManager;
     if (!key || !g2) return;
-    try { await fetch(key, { method: "PUT", headers: { "content-type": "application/octet-stream" }, body: g2.getState() }); }
+    try { await fetch(key, { method: "PUT", headers: { "content-type": "application/octet-stream", ...tokenHdr() }, body: g2.getState() }); }
     catch { /* offline */ }
   };
   window.__emuAutoSave = autoSave;
@@ -775,6 +861,16 @@ const JF = (SELF_HOSTED ? "" : TS) + "/jellyfin/";
 const jfImg = (it) => it.ImageTags && it.ImageTags.Primary
   ? `${JF}Items/${it.Id}/Images/Primary?maxWidth=320&tag=${it.ImageTags.Primary}` : null;
 const jfOpen = (id) => MOVIES_URL + "web/#/details?id=" + id;
+let _jfUser;
+const jfUser = () => _jfUser ||= fetch(`${JF}Users`).then((r) => r.json())
+  .then((us) => (us.find((u) => !u.Policy?.IsAdministrator) || us[0] || {}).Id).catch(() => null);
+
+async function movieShelf(title, url) {
+  const items = await fetch(url).then((r) => r.json())
+    .then((d) => Array.isArray(d) ? d : d.Items || []).catch(() => []);
+  if (!items.length) return null;
+  return shelf({ title, count: items.length, tiles: items.slice(0, 20).map((it) => movieCard(it)) });
+}
 
 function movieLinkoutPane() {
   const host = (() => { try { return new URL(MOVIES_URL).host; } catch { return MOVIES_URL; } })();
@@ -844,10 +940,27 @@ async function routeMovies() {
     el("span", { className: "count", id: "mv-count", textContent: total.toLocaleString() }),
     el("a", { href: MOVIES_URL, ...extTarget, textContent: "Open Jellyfin ›" }));
 
+  const shelves = el("div");
   view.replaceChildren(el("div", { className: "wrap" },
+    shelves,
     el("section", { className: "shelf", style: "padding:22px 0 0" }, head),
     el("div", { className: "grid-tools", style: "padding:0" }, fText, fGenre, fSort),
     box));
+
+  // Continue watching + Just added rows (best-effort)
+  (async () => {
+    const uid = await jfUser();
+    const frag2 = document.createDocumentFragment();
+    if (uid) {
+      const cw = await movieShelf("Continue watching",
+        `${JF}Users/${uid}/Items/Resume?IncludeItemTypes=Movie&Limit=20&Fields=ProductionYear,OfficialRating&EnableImageTypes=Primary`);
+      if (cw) frag2.append(cw);
+    }
+    const la = await movieShelf("Just added",
+      `${JF}Items?IncludeItemTypes=Movie&Recursive=true&SortBy=DateCreated&SortOrder=Descending&Limit=20&Fields=ProductionYear,OfficialRating`);
+    if (la) frag2.append(la);
+    if (location.hash.startsWith("#/movies")) shelves.replaceWith(frag2);
+  })();
 
   let loaded = [], idx = 0, busy = false, done = false, myToken;
   const PAGEM = 60;
@@ -889,6 +1002,7 @@ const cleanAlbum = (n) => n
   .replace(/\s{2,}/g, " ").trim() || n;
 
 const MP = { data: null, ai: null, alb: -1, tr: -1, shuffle: false, ctx: null, an: null, wired: false };
+const musicArtUrl = (name) => MUSIC_BASE + "art/" + encodeURIComponent(name);
 
 async function mpData() {
   if (!MP.data) MP.data = await fetch(MUSIC_BASE + "index.json").then((r) => r.json()).catch(() => null);
@@ -898,6 +1012,7 @@ function mpBar() {
   let b = $("#mini-player");
   if (b) return b;
   b = el("div", { id: "mini-player", hidden: true },
+    el("img", { id: "mp-art", alt: "", hidden: true }),
     el("button", { className: "mp-b", id: "mp-prev", textContent: "⏮", title: "Previous" }),
     el("button", { className: "mp-b mp-play", id: "mp-toggle", textContent: "▶" }),
     el("button", { className: "mp-b", id: "mp-next", textContent: "⏭", title: "Next" }),
@@ -920,6 +1035,17 @@ function mpAudio() {
   MP.ai.addEventListener("ended", mpNext);
   MP.ai.addEventListener("play", mpSync);
   MP.ai.addEventListener("pause", mpSync);
+  if ("mediaSession" in navigator) {
+    const h = navigator.mediaSession;
+    try {
+      h.setActionHandler("play", () => mpToggle());
+      h.setActionHandler("pause", () => mpToggle());
+      h.setActionHandler("previoustrack", () => mpPrev());
+      h.setActionHandler("nexttrack", () => mpNext());
+      h.setActionHandler("stop", () => mpStop());
+      h.setActionHandler("seekto", (e) => { if (e.seekTime != null && isFinite(MP.ai.duration)) MP.ai.currentTime = e.seekTime; });
+    } catch { /* some handlers unsupported */ }
+  }
   return MP.ai;
 }
 function mpViz(canvas) {
@@ -962,7 +1088,9 @@ function mpSync() {
     +r.dataset.alb === MP.alb && n === MP.tr));
   if ("mediaSession" in navigator && MP.data && MP.alb >= 0) {
     const alb = MP.data.albums[MP.alb], tr = alb.tracks[MP.tr];
-    navigator.mediaSession.metadata = new MediaMetadata({ title: tr.title, album: cleanAlbum(alb.name), artist: "ShadowSwords" });
+    const art = alb.art ? [{ src: new URL(musicArtUrl(alb.name), location.href).href, sizes: "512x512", type: "image/jpeg" }] : [];
+    navigator.mediaSession.metadata = new MediaMetadata({ title: tr.title, album: cleanAlbum(alb.name), artist: "ShadowSwords", artwork: art });
+    navigator.mediaSession.playbackState = playing ? "playing" : "paused";
   }
 }
 function mpPlay(albIdx, trIdx) {
@@ -976,6 +1104,9 @@ function mpPlay(albIdx, trIdx) {
   document.body.classList.add("has-mp");
   $("#mp-title").textContent = t.title;
   $("#mp-sub").textContent = cleanAlbum(alb.name);
+  const art = $("#mp-art");
+  if (alb.art) { art.src = musicArtUrl(alb.name); art.hidden = false; }
+  else art.hidden = true;
   document.title = `▶ ${t.title} — ShadowSwords`;
   mpViz();
   mpSync();
@@ -1033,8 +1164,19 @@ async function routeMusic(albumIdx) {
     ...data.albums.map((a, i) => el("button", {
       className: "album-btn" + (i === idx ? " active" : ""),
       onclick: () => { location.hash = `#/music/${i}`; },
-    }, el("span", { textContent: cleanAlbum(a.name) }),
-      el("small", { textContent: `${a.tracks.length} track${a.tracks.length > 1 ? "s" : ""}` }))));
+    },
+      a.art
+        ? el("img", { className: "alb-thumb", src: musicArtUrl(a.name), loading: "lazy", alt: "" })
+        : el("span", { className: "alb-thumb ph", textContent: "♪" }),
+      el("span", { className: "alb-txt" },
+        el("span", { textContent: cleanAlbum(a.name) }),
+        el("small", { textContent: `${a.tracks.length} track${a.tracks.length > 1 ? "s" : ""}` })))));
+
+  const albHead = el("div", { className: "alb-head" });
+  if (album.art) albHead.append(el("img", { className: "alb-cover", src: musicArtUrl(album.name), alt: "" }));
+  albHead.append(el("div", {},
+    el("h3", { style: "margin:0 0 4px", textContent: cleanAlbum(album.name) }),
+    el("button", { className: "btn btn-ghost sm", textContent: "▶ Play album", onclick: () => mpPlay(idx, 0) })));
 
   view.replaceChildren(el("div", { className: "wrap" },
     el("section", { className: "shelf", style: "padding:22px 0 6px" },
@@ -1045,8 +1187,7 @@ async function routeMusic(albumIdx) {
           mpPlay(Math.random() * data.albums.length | 0, 0);
         } }))),
     el("div", { className: "music-layout" }, albumList,
-      el("div", {}, el("h3", { style: "margin:4px 0 10px", textContent: cleanAlbum(album.name) }),
-        trackList, viz))));
+      el("div", {}, albHead, trackList, viz))));
   mpBar();
   if (MP.alb >= 0) mpViz(viz);
 }
@@ -1062,7 +1203,7 @@ function requestForm() {
     if (!title.value.trim()) { status.textContent = "Enter a game first."; return; }
     btn.disabled = true; status.textContent = "Sending…";
     try {
-      const r = await fetch(`${API}/request`, { method: "POST", headers: { "content-type": "application/json" },
+      const r = await fetch(`${API}/request`, { method: "POST", headers: { "content-type": "application/json", ...tokenHdr() },
         body: JSON.stringify({ title: title.value, who: who.value, note: note.value }) });
       if (r.ok) { status.textContent = "Sent — thanks! It'll show up in the Discord."; title.value = note.value = ""; }
       else if (r.status === 501) status.textContent = "Requests aren't wired up yet — ask in the Discord for now.";
@@ -1150,6 +1291,45 @@ function refGrid(box, items, shown = PAGE) {
   if (items.length > shown) parts.push(el("button", { className: "more",
     textContent: `Show more · ${items.length - shown} left`, onclick: () => refGrid(box, items, shown + PAGE) }));
   box.replaceChildren(...parts);
+}
+
+async function routeStats() {
+  ++state.render; spinner();
+  await getSystems().catch(() => {});
+  document.title = "Stats — ShadowSwords";
+  const s = await fetch(`${API}/play/stats`).then((r) => r.json()).catch(() => null);
+  if (!s) { view.replaceChildren(el("section", { className: "pane center" },
+    el("div", { className: "big-emoji", textContent: "📊" }), el("h1", { textContent: "Stats" }),
+    el("p", { textContent: "Can't reach the stats server — you may be off the tailnet." }))); return; }
+  const frag = document.createDocumentFragment();
+  frag.append(el("section", { className: "shelf", style: "padding:22px var(--pad) 0" },
+    el("div", { className: "shelf-head" }, el("h2", { textContent: "Library stats" }),
+      s.playingNow ? el("span", { className: "count", textContent: `${s.playingNow} playing now` }) : null)));
+  const gtile = (p, extra) => {
+    const gm = (state.cache[p.sys] || []).find((x) => x.file === p.file);
+    const art = el("div", { className: "tile-art" });
+    if (gm && gm.img) art.append(el("img", { src: artUrl(gm.img), loading: "lazy", alt: p.name }));
+    else art.append(el("div", { className: "ph", textContent: p.name }));
+    if (meta(p.sys).playable) art.append(el("span", { className: "badge", textContent: "Play" }));
+    return el("a", { className: "tile wide",
+      href: `#/play/${p.sys}/${p.file.split("/").map(encodeURIComponent).join("/")}` }, art,
+      el("div", { className: "tile-cap" }, el("div", { className: "t", textContent: p.name }),
+        el("div", { className: "s", textContent: `${sysName(p.sys)} · ${extra(p)}` })));
+  };
+  if (s.top && s.top.length) frag.append(shelf({ title: "Most played", count: s.top.length,
+    tiles: s.top.map((p) => gtile(p, (x) => `${x.count} play${x.count === 1 ? "" : "s"}`)) }));
+  if (s.reported && s.reported.length) {
+    const box = el("div", {});
+    const grid = el("div", { className: "tile-grid" });
+    s.reported.forEach((p) => grid.append(gtile(p, (x) =>
+      `${x.n} report${x.n === 1 ? "" : "s"} · ${Object.keys(x.issues || {})[0] || "issue"}`)));
+    box.append(grid);
+    frag.append(el("section", { className: "shelf", style: "padding:10px var(--pad) 0" },
+      el("div", { className: "shelf-head" }, el("h2", { textContent: "Reported problems" }),
+        el("span", { className: "count", textContent: `${s.reported.length}` }))),
+      el("div", { className: "wrap" }, box));
+  }
+  view.replaceChildren(frag);
 }
 
 async function routeCollections() {
@@ -1292,6 +1472,9 @@ async function routeCache() {
   const bar = el("div", { className: "dl-bar" }, el("i", { style: `width:${pct.toFixed(1)}%` }));
   const clearBtn = el("button", { className: "btn btn-ghost", textContent: "Clear ROM cache" });
   clearBtn.onclick = async () => { await romCacheClear(); toast("ROM cache cleared"); routeCache(); };
+  const tokIn = el("input", { type: "password", placeholder: "access token (only if the site is public)",
+    value: LS.get("token", ""), style: "width:100%;max-width:340px;padding:9px 12px;background:var(--bg-1);color:var(--text);border:1px solid var(--line-2);border-radius:9px;outline:none" });
+  tokIn.onchange = () => { LS.set("token", tokIn.value.trim()); toast("Saved"); };
   view.replaceChildren(el("section", { className: "pane center" },
     el("div", { className: "big-emoji", textContent: "💾" }),
     el("h1", { textContent: "Offline & cache" }),
@@ -1300,7 +1483,10 @@ async function routeCache() {
     bar,
     el("div", { style: "margin-top:16px" }, clearBtn),
     el("div", { className: "hint", style: "margin-top:20px" },
-      "This site also installs as an app — look for “Install” / “Add to Home Screen” in your browser menu.")));
+      "This site also installs as an app — look for “Install” / “Add to Home Screen” in your browser menu."),
+    el("div", { style: "margin-top:22px;border-top:1px solid var(--line);padding-top:18px" },
+      el("div", { className: "hint", style: "margin-bottom:8px", textContent: "Access token — only needed if this instance has been made public with a write password." }),
+      tokIn)));
 }
 
 async function routeProfile() {
@@ -1329,8 +1515,27 @@ async function routeProfile() {
     tiles: recent.map((r) => favTile({ sys: r.sys, id: null, name: r.name, img: r.img, file: r.file })) }));
   if (favs.length) frag.append(shelf({ title: "Favorites", count: favs.length, moreHref: "#/favorites",
     tiles: favs.slice(0, 24).map((f) => favTile(f)) }));
-  frag.append(el("div", { className: "wrap", style: "padding:8px var(--pad) 40px" },
-    el("a", { className: "btn btn-ghost", href: "#/cache", textContent: "Manage offline cache" })));
+  const impInput = el("input", { type: "file", accept: ".json", hidden: true });
+  impInput.onchange = async () => {
+    const f = impInput.files[0]; if (!f) return;
+    try {
+      const d = JSON.parse(await f.text());
+      if (Array.isArray(d.favs)) LS.set("favs", d.favs);
+      if (Array.isArray(d.recent)) LS.set("recent", d.recent);
+      if (d.playtime) LS.set("playtime", d.playtime);
+      if (d.netplay) LS.set("netplay", d.netplay);
+      toast("Imported — reloading"); setTimeout(() => location.reload(), 800);
+    } catch { toast("That's not a valid export file"); }
+  };
+  frag.append(el("div", { className: "wrap", style: "padding:8px var(--pad) 40px;display:flex;gap:10px;flex-wrap:wrap" },
+    el("a", { className: "btn btn-ghost", href: "#/cache", textContent: "Manage offline cache" }),
+    el("button", { className: "btn btn-ghost", textContent: "Export favorites & data", onclick: () => {
+      const blob = new Blob([JSON.stringify({ favs: favList(), recent: recentList(),
+        playtime: LS.get("playtime", {}), exported: new Date().toISOString() }, null, 2)], { type: "application/json" });
+      const a = el("a", { href: URL.createObjectURL(blob), download: "shadowswords-profile.json" });
+      document.body.append(a); a.click(); a.remove();
+    } }),
+    el("button", { className: "btn btn-ghost", textContent: "Import", onclick: () => impInput.click() }), impInput));
   view.replaceChildren(frag);
 }
 
@@ -1373,12 +1578,25 @@ async function routeSearch(qRaw) {
   const toGame = (r) => (state.cache[r[1]] || []).find((x) => x.id === r[2]) || { name: r[0], id: r[2], _sys: r[1], year: r[3] || null };
 
   const box = el("div", {});
+  const mvBox = el("div", {});
   view.replaceChildren(el("div", { className: "wrap" },
+    mvBox,
     el("section", { className: "shelf", style: "padding:22px 0 0" },
-      el("div", { className: "shelf-head" }, el("h2", { textContent: `“${qRaw}”` }),
-        el("span", { className: "count", textContent: `${hits.length}${hits.length === 600 ? "+" : ""} results` })),
+      el("div", { className: "shelf-head" }, el("h2", { textContent: `Games — “${qRaw}”` }),
+        el("span", { className: "count", textContent: `${hits.length}${hits.length === 600 ? "+" : ""}` })),
       box)));
   tileGrid(box, hits.map(toGame), PAGE);
+
+  // also search movies (best-effort)
+  fetch(`${JF}Items?IncludeItemTypes=Movie&Recursive=true&SearchTerm=${encodeURIComponent(q)}&Limit=12&Fields=ProductionYear,OfficialRating`)
+    .then((r) => r.json()).then((d) => {
+      if (token !== state.render || !d.Items || !d.Items.length) return;
+      const grid = el("div", { className: "tile-grid" });
+      d.Items.forEach((it) => grid.append(movieCard(it)));
+      mvBox.replaceChildren(el("section", { className: "shelf", style: "padding:22px 0 0" },
+        el("div", { className: "shelf-head" }, el("h2", { textContent: `Movies — “${qRaw}”` }),
+          el("span", { className: "count", textContent: `${d.Items.length}` }))), grid);
+    }).catch(() => {});
 }
 
 /* ---- router ------------------------------------------------- */
@@ -1416,6 +1634,7 @@ async function router() {
   if (a === "saves") { setNav("saves"); return routeSaves(); }
   if (a === "cache") { setNav(null); return routeCache(); }
   if (a === "profile") { setNav(null); return routeProfile(); }
+  if (a === "stats") { setNav(null); return routeStats(); }
   if (a === "collections") { setNav(null); return routeCollections(); }
   if (a === "collection" && b) { setNav(null); return routeCollection(b); }
   if (a === "franchises") { setNav(null); return routeFranchises(); }
@@ -1529,6 +1748,22 @@ function toggleHelp() {
     if (s && s.playingNow > 1) toast(`👾 ${s.playingNow} people playing right now`);
   } catch { /* */ }
 })();
+
+/* ---- server-reachable check + degraded banner -------------- */
+async function checkServer() {
+  let ok = false;
+  try { ok = (await fetch(`${API}/roms/health`, { cache: "no-store" })).ok; } catch { /* */ }
+  window.__serverOff = !ok;
+  let b = $("#offline-banner");
+  if (!ok && !b && LS.get("offdismiss", 0) < Date.now() - 3600e3) {
+    b = el("div", { id: "offline-banner" },
+      "⚠ Home server unreachable — browse & upload-your-own-ROM only. Streamed ROMs, movies, music, saves and stats need the tailnet.",
+      el("button", { textContent: "✕", onclick: () => { b.remove(); LS.set("offdismiss", Date.now()); } }));
+    document.body.prepend(b);
+  } else if (ok && b) { b.remove(); }
+}
+checkServer();
+setInterval(checkServer, 120000);
 
 /* ---- gamepad navigation for the site menus (not in-game) --------- */
 const NAV_SEL = "a.tile, a.btn, button.more, .bar-link, .drawer a, .album-btn, .social, .shelf-nav, .heart, #back-btn, #menu-btn, #search-btn, .track";
