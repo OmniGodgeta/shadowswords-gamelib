@@ -18,10 +18,31 @@ const SITE = path.join(os.homedir(), "Work", "shadowswords-gamelib", "docs");
 const ROMS = path.join(os.homedir(), "Games", "roms");
 const BIOS = path.join(os.homedir(), "Games", "bios");
 const MUSIC = "/run/media/shadowswords/Game SSD/Music";
-const STATES = path.join(os.homedir(), ".local", "share", "ssw-arcade", "states");
+const DATA = path.join(os.homedir(), ".local", "share", "ssw-arcade");
+const STATES = path.join(DATA, "states");
+const EJS_CACHE = path.join(DATA, "ejs-cache");
+const STATS_FILE = path.join(DATA, "stats.json");
 const STATE_MAX = 96 * 1024 * 1024;   // reject absurd save-state uploads
-try { fs.mkdirSync(STATES, { recursive: true }); }
-catch (e) { console.warn("save-states dir unavailable:", e.message); }
+for (const d of [STATES, EJS_CACHE]) {
+  try { fs.mkdirSync(d, { recursive: true }); }
+  catch (e) { console.warn("dir unavailable:", d, e.message); }
+}
+
+// ---- optional config: ~/.config/ssw-arcade/config.json --------------------
+//   { "twitch": "shadowswords",
+//     "discordWebhook": "https://discord.com/api/webhooks/…",
+//     "jellyfinUrl": "http://127.0.0.1:8096", "jellyfinKey": "…" }
+const CONFIG_FILE = path.join(os.homedir(), ".config", "ssw-arcade", "config.json");
+let CONFIG = {}, configAt = 0;
+function cfg() {
+  if (Date.now() - configAt > 30000) {
+    configAt = Date.now();
+    try { CONFIG = JSON.parse(fs.readFileSync(CONFIG_FILE, "utf8")); }
+    catch { CONFIG = {}; }
+  }
+  return CONFIG;
+}
+cfg();
 const AUDIO_EXT = new Set([".mp3", ".flac", ".m4a", ".aac", ".ogg", ".opus", ".wav", ".wma"]);
 const AUDIO_MIME = {
   ".mp3": "audio/mpeg", ".flac": "audio/flac", ".m4a": "audio/mp4", ".aac": "audio/aac",
@@ -54,7 +75,7 @@ const MIME = {
 const CORS = {
   "access-control-allow-origin": "*",
   "access-control-allow-headers": "range, content-type",
-  "access-control-allow-methods": "GET, HEAD, PUT, DELETE, OPTIONS",
+  "access-control-allow-methods": "GET, HEAD, POST, PUT, DELETE, OPTIONS",
 };
 
 function serveStatic(req, res, urlPath) {
@@ -240,13 +261,159 @@ function stateDelete(req, res, sys, rel) {
   res.writeHead(200, { ...CORS, "content-type": "application/json" }).end('{"ok":true}');
 }
 
+// ---- read a (small) request body ----------------------------------------
+function readBody(req, cap = 1 << 20) {
+  return new Promise((resolve, reject) => {
+    const chunks = []; let n = 0;
+    req.on("data", (c) => { n += c.length; if (n > cap) { req.destroy(); reject(new Error("too big")); } else chunks.push(c); });
+    req.on("end", () => resolve(Buffer.concat(chunks)));
+    req.on("error", reject);
+  });
+}
+const jsonRes = (res, code, obj) =>
+  res.writeHead(code, { ...CORS, "content-type": "application/json", "cache-control": "no-store" }).end(JSON.stringify(obj));
+
+// ---- self-hosted EmulatorJS (transparent caching proxy of the CDN) -------
+const EJS_CDN = "https://cdn.emulatorjs.org/stable/data/";
+async function serveEjs(req, res, rel) {
+  if (rel.includes("..") || rel.startsWith("/")) { res.writeHead(400, CORS).end("bad"); return; }
+  const disk = path.join(EJS_CACHE, rel);
+  const ext = path.extname(rel).toLowerCase();
+  const ct = MIME[ext] || (ext === ".data" || ext === ".wasm" ? "application/octet-stream"
+    : ext === ".mem" ? "application/octet-stream" : "application/octet-stream");
+  const send = (buf) => {
+    res.writeHead(200, { ...CORS, "content-type": ct, "content-length": buf.length,
+      "cache-control": "public, max-age=604800" });
+    res.end(req.method === "HEAD" ? undefined : buf);
+  };
+  try { return send(fs.readFileSync(disk)); } catch { /* miss -> fetch */ }
+  try {
+    const r = await fetch(EJS_CDN + rel, { redirect: "follow" });
+    if (!r.ok) { res.writeHead(r.status, CORS).end("upstream " + r.status); return; }
+    const buf = Buffer.from(await r.arrayBuffer());
+    try { fs.mkdirSync(path.dirname(disk), { recursive: true }); fs.writeFileSync(disk, buf); } catch { /* rw */ }
+    send(buf);
+  } catch (e) { res.writeHead(502, CORS).end("ejs proxy: " + e.message); }
+}
+
+// ---- server-side search over docs/data/search.json ----------------------
+let SEARCH = null;
+function loadSearch() {
+  if (SEARCH) return SEARCH;
+  try { SEARCH = JSON.parse(fs.readFileSync(path.join(SITE, "data", "search.json"), "utf8")); }
+  catch { SEARCH = []; }
+  return SEARCH;
+}
+function serveSearch(req, res, u) {
+  const q = (u.searchParams.get("q") || "").trim().toLowerCase();
+  const limit = Math.min(300, +u.searchParams.get("limit") || 60);
+  if (q.length < 2) return jsonRes(res, 200, []);
+  const terms = q.split(/\s+/).filter(Boolean);
+  const rows = loadSearch()
+    .filter((r) => terms.every((t) => r[0].toLowerCase().includes(t)))
+    .sort((a, b) => (b[4] || 0) - (a[4] || 0) || a[0].localeCompare(b[0]))
+    .slice(0, limit);
+  jsonRes(res, 200, rows);
+}
+
+// ---- play stats + "playing now" ---------------------------------------
+let STATS = null;
+const now = () => Date.now();
+function stats() {
+  if (STATS) return STATS;
+  try { STATS = JSON.parse(fs.readFileSync(STATS_FILE, "utf8")); }
+  catch { STATS = { plays: {}, sessions: {} }; }
+  STATS.plays ||= {}; STATS.sessions ||= {};
+  return STATS;
+}
+let statsDirty = false;
+function saveStats() {
+  if (!statsDirty) return; statsDirty = false;
+  try { fs.writeFileSync(STATS_FILE, JSON.stringify(stats())); } catch { /* rw */ }
+}
+setInterval(saveStats, 15000).unref?.();
+async function playPing(req, res) {
+  let body = {};
+  try { body = JSON.parse((await readBody(req, 4096)).toString() || "{}"); } catch { /* */ }
+  const s = stats();
+  const key = `${body.sys}/${body.file}`;
+  if (body.sys && body.file && PLAYABLE.has(body.sys)) {
+    const p = s.plays[key] || { sys: body.sys, file: body.file, name: body.name || body.file, count: 0, last: 0 };
+    if (body.start) { p.count++; }
+    p.last = now(); p.name = body.name || p.name;
+    s.plays[key] = p;
+  }
+  if (body.cid) s.sessions[body.cid] = { game: body.name || null, at: now() };
+  statsDirty = true;
+  jsonRes(res, 200, { ok: true });
+}
+function playStats(req, res) {
+  const s = stats();
+  const top = Object.values(s.plays).sort((a, b) => b.count - a.count).slice(0, 24)
+    .map(({ sys, file, name, count }) => ({ sys, file, name, count }));
+  const cutoff = now() - 90000;
+  const playingNow = Object.values(s.sessions).filter((x) => x.at > cutoff).length;
+  jsonRes(res, 200, { top, playingNow });
+}
+
+// ---- twitch live status (via decapi.me, no API key) ------------------
+let twCache = { at: 0, live: false, title: "" };
+async function twitchStatus(req, res) {
+  const user = (cfg().twitch || "").replace(/[^\w]/g, "");
+  if (!user) return jsonRes(res, 200, { configured: false, live: false });
+  if (now() - twCache.at < 60000) return jsonRes(res, 200, { configured: true, ...twCache, user });
+  try {
+    const up = await fetch(`https://decapi.me/twitch/uptime/${user}`).then((r) => r.text());
+    const live = !/offline|not live|error/i.test(up);
+    let title = "";
+    if (live) title = await fetch(`https://decapi.me/twitch/title/${user}`).then((r) => r.text()).catch(() => "");
+    twCache = { at: now(), live, title: title.slice(0, 140) };
+  } catch { twCache = { at: now(), live: false, title: "" }; }
+  jsonRes(res, 200, { configured: true, ...twCache, user });
+}
+
+// ---- request-a-game -> Discord webhook -------------------------------
+async function gameRequest(req, res) {
+  const hook = cfg().discordWebhook;
+  if (!hook) return jsonRes(res, 501, { ok: false, error: "not configured" });
+  let body = {};
+  try { body = JSON.parse((await readBody(req, 8192)).toString() || "{}"); } catch { return jsonRes(res, 400, { ok: false }); }
+  const title = String(body.title || "").trim().slice(0, 200);
+  const note = String(body.note || "").trim().slice(0, 500);
+  const who = String(body.who || "anon").trim().slice(0, 60);
+  if (!title) return jsonRes(res, 400, { ok: false, error: "no title" });
+  try {
+    await fetch(hook, {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ content: `🎮 **Game request** from **${who}**\n> ${title}${note ? `\n> _${note}_` : ""}` }),
+    });
+    jsonRes(res, 200, { ok: true });
+  } catch { jsonRes(res, 502, { ok: false }); }
+}
+
+// ---- Jellyfin proxy (config-gated) ----------------------------------
+async function jellyfinProxy(req, res, rest, u) {
+  const base = cfg().jellyfinUrl || "http://127.0.0.1:8096";
+  const key = cfg().jellyfinKey;
+  if (!key) return jsonRes(res, 501, { error: "jellyfin not configured" });
+  const target = base.replace(/\/$/, "") + "/" + rest + (u.search || "");
+  try {
+    const r = await fetch(target, { headers: { "X-Emby-Token": key } });
+    const buf = Buffer.from(await r.arrayBuffer());
+    res.writeHead(r.status, { ...CORS, "content-type": r.headers.get("content-type") || "application/octet-stream",
+      "cache-control": "no-store" });
+    res.end(req.method === "HEAD" ? undefined : buf);
+  } catch (e) { res.writeHead(502, CORS).end("jellyfin: " + e.message); }
+}
+
 http.createServer((req, res) => {
   if (req.method === "OPTIONS") { res.writeHead(204, { ...CORS, "access-control-max-age": "86400" }).end(); return; }
 
   {
     const u0 = new URL(req.url, "http://x");
-    if (u0.pathname === "/states/list" && req.method === "GET") { statesList(req, res); return; }
-    const sm = u0.pathname.match(/^\/states\/([^/]+)\/(.+)$/);
+    const P = u0.pathname;
+    if (P === "/states/list" && req.method === "GET") { statesList(req, res); return; }
+    const sm = P.match(/^\/states\/([^/]+)\/(.+)$/);
     if (sm) {
       const sys = decodeURIComponent(sm[1]), rel = decodeURIComponent(sm[2]);
       if (req.method === "GET" || req.method === "HEAD") { stateGet(req, res, sys, rel); return; }
@@ -254,6 +421,16 @@ http.createServer((req, res) => {
       if (req.method === "DELETE") { stateDelete(req, res, sys, rel); return; }
       res.writeHead(405, CORS).end("no"); return;
     }
+    // POST/GET dynamic endpoints
+    if (P === "/play/ping" && req.method === "POST") { playPing(req, res); return; }
+    if (P === "/play/stats" && req.method === "GET") { playStats(req, res); return; }
+    if (P === "/twitch/status" && req.method === "GET") { twitchStatus(req, res); return; }
+    if (P === "/request" && req.method === "POST") { gameRequest(req, res); return; }
+    if (P === "/search" && req.method === "GET") { serveSearch(req, res, u0); return; }
+    const ejs = P.match(/^\/emulatorjs\/(.+)$/);
+    if (ejs && (req.method === "GET" || req.method === "HEAD")) { serveEjs(req, res, decodeURIComponent(ejs[1])); return; }
+    const jf = P.match(/^\/jellyfin\/(.*)$/);
+    if (jf && (req.method === "GET" || req.method === "HEAD")) { jellyfinProxy(req, res, jf[1], u0); return; }
   }
 
   if (req.method !== "GET" && req.method !== "HEAD") { res.writeHead(405).end("GET only"); return; }
