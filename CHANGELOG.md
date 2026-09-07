@@ -2,6 +2,21 @@
 
 All notable changes to the ShadowSwords Arcade website.
 
+## [2.3.0] — 2026-09-08 — In-site movie browser
+
+### Added
+- **Movies is now a real in-site browser** — a poster wall of the whole Jellyfin
+  library (2,500+ films) with search, genre filter, and sort (A–Z / newest /
+  recently added / shuffle / top rated). Click a poster for a detail card
+  (backdrop, runtime, rating, synopsis) and "Play in Jellyfin". Falls back to
+  the plain link-out when the Jellyfin key isn't set or you're off the tailnet.
+- **Request-a-game form is live** — posts straight to the Discord.
+
+### Fixed
+- Service worker no longer caches any of the dynamic API paths
+  (`/jellyfin`, `/emulatorjs`, `/thumb`, `/play`, `/twitch`, `/discord`,
+  `/search`, `/request`) — a stale "not configured" response could stick.
+
 ## [2.2.0] — 2026-09-08 — Box art everywhere, collections, discovery, streamer bits
 
 ### Added

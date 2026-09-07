@@ -770,18 +770,117 @@ async function exitPlayer() {
 }
 window.addEventListener("beforeunload", () => { if (window.__emuUp) { emuCleanup(); navigator.sendBeacon?.(`${API}/play/ping`, JSON.stringify({ cid: CID, bye: true })); } });
 
-/* ---- routes: movies + search --------------------------------- */
-function routeMovies() {
-  ++state.render;
+/* ---- routes: movies ----------------------------------------- */
+const JF = (SELF_HOSTED ? "" : TS) + "/jellyfin/";
+const jfImg = (it) => it.ImageTags && it.ImageTags.Primary
+  ? `${JF}Items/${it.Id}/Images/Primary?maxWidth=320&tag=${it.ImageTags.Primary}` : null;
+const jfOpen = (id) => MOVIES_URL + "web/#/details?id=" + id;
+
+function movieLinkoutPane() {
   const host = (() => { try { return new URL(MOVIES_URL).host; } catch { return MOVIES_URL; } })();
-  view.replaceChildren(el("section", { className: "pane" },
+  return el("section", { className: "pane" },
     el("div", { className: "big-emoji", textContent: "🎬" }),
     el("h1", { textContent: "Movie library" }),
-    el("p", { textContent: "The full film & TV collection, streamed from the home server" + (IN_APP ? " — sign in with the shared account." : ". Opens the Jellyfin player in a new tab — sign in with the shared account.") }),
+    el("p", { textContent: "The full film & TV collection, streamed from the home server" + (IN_APP ? "." : ". Opens the Jellyfin player in a new tab — sign in with the shared account.") }),
     el("a", { className: "btn btn-primary", href: MOVIES_URL, ...extTarget, textContent: IN_APP ? "Open the movie library" : "Open the movie library ↗" }),
     el("div", { className: "hint" }, "Jellyfin at ", el("code", { textContent: host }),
-      " — if it doesn't load, the server may be off or you're not on the tailnet.")));
+      " — if it doesn't load, the server may be off or you're not on the tailnet."));
 }
+
+function movieCard(it) {
+  const art = el("div", { className: "tile-art" });
+  const src = jfImg(it);
+  if (src) art.append(el("img", { src, loading: "lazy", alt: it.Name }));
+  else art.append(el("div", { className: "ph", textContent: it.Name }));
+  art.append(el("span", { className: "badge", textContent: "▶" }));
+  const a = el("a", { className: "tile wide", href: "javascript:void 0", onclick: () => movieDetail(it) }, art,
+    el("div", { className: "tile-cap" },
+      el("div", { className: "t", textContent: it.Name }),
+      el("div", { className: "s", textContent: [it.ProductionYear, it.OfficialRating].filter(Boolean).join(" · ") })));
+  return a;
+}
+async function movieDetail(it) {
+  const full = await fetch(`${JF}Items/${it.Id}?Fields=Overview,Genres,People`).then((r) => r.json()).catch(() => it);
+  const back = full.BackdropImageTags && full.BackdropImageTags[0]
+    ? `${JF}Items/${full.Id}/Images/Backdrop/0?maxWidth=1200&tag=${full.BackdropImageTags[0]}` : jfImg(full);
+  const o = el("div", { id: "movie-modal", onclick: (e) => { if (e.target.id === "movie-modal") o.remove(); } },
+    el("div", { className: "mv-card" },
+      back && el("div", { className: "mv-back", style: `background-image:url("${back}")` }),
+      el("button", { className: "mv-x", textContent: "✕", onclick: () => o.remove() }),
+      el("div", { className: "mv-body" },
+        el("h2", { textContent: full.Name }),
+        el("div", { className: "mv-meta", textContent: [full.ProductionYear,
+          full.RunTimeTicks && Math.round(full.RunTimeTicks / 600000000) + " min",
+          (full.Genres || []).slice(0, 3).join(", "), full.OfficialRating].filter(Boolean).join("  ·  ") }),
+        full.Overview && el("p", { className: "mv-ov", textContent: full.Overview }),
+        el("a", { className: "btn btn-primary", href: jfOpen(full.Id), ...extTarget,
+          textContent: IN_APP ? "Play in Jellyfin" : "Play in Jellyfin ↗" }))));
+  document.body.append(o);
+}
+
+async function routeMovies() {
+  const token = ++state.render;
+  spinner();
+  document.title = "Movies — ShadowSwords";
+  const probe = await fetch(`${JF}Items?IncludeItemTypes=Movie&Recursive=true&Limit=0&EnableTotalRecordCount=true`)
+    .then((r) => r.ok ? r.json() : null).catch(() => null);
+  if (token !== state.render) return;
+  if (!probe) { view.replaceChildren(movieLinkoutPane()); return; }
+  const total = probe.TotalRecordCount || 0;
+  const genres = await fetch(`${JF}Genres?IncludeItemTypes=Movie&Recursive=true&SortBy=SortName`)
+    .then((r) => r.json()).then((d) => d.Items.map((g) => g.Name)).catch(() => []);
+
+  const fText = el("input", { type: "search", placeholder: "Search movies…" });
+  const fGenre = el("select", {}, el("option", { value: "", textContent: "All genres" }),
+    ...genres.map((g) => el("option", { value: g, textContent: g })));
+  const fSort = el("select", {},
+    el("option", { value: "SortName", textContent: "A–Z" }),
+    el("option", { value: "ProductionYear,SortName", textContent: "Newest" }),
+    el("option", { value: "DateCreated,SortName", textContent: "Recently added" }),
+    el("option", { value: "Random", textContent: "Shuffle" }),
+    el("option", { value: "CommunityRating,SortName", textContent: "Top rated" }));
+  const box = el("div", {});
+  const head = el("div", { className: "shelf-head" }, el("h2", { textContent: "Movies" }),
+    el("span", { className: "count", id: "mv-count", textContent: total.toLocaleString() }),
+    el("a", { href: MOVIES_URL, ...extTarget, textContent: "Open Jellyfin ›" }));
+
+  view.replaceChildren(el("div", { className: "wrap" },
+    el("section", { className: "shelf", style: "padding:22px 0 0" }, head),
+    el("div", { className: "grid-tools", style: "padding:0" }, fText, fGenre, fSort),
+    box));
+
+  let loaded = [], idx = 0, busy = false, done = false, myToken;
+  const PAGEM = 60;
+  const load = async (reset) => {
+    if (busy) return; busy = true;
+    if (reset) { loaded = []; idx = 0; done = false; myToken = Symbol(); box.replaceChildren(spinnerEl()); }
+    const t = myToken;
+    const p = new URLSearchParams({ IncludeItemTypes: "Movie", Recursive: "true",
+      Fields: "PrimaryImageAspectRatio,ProductionYear,OfficialRating",
+      ImageTypeLimit: "1", StartIndex: idx, Limit: PAGEM,
+      SortBy: fSort.value === "Random" ? "Random" : fSort.value,
+      SortOrder: /Year|Rating|DateCreated/.test(fSort.value) ? "Descending" : "Ascending" });
+    if (fText.value.trim()) p.set("SearchTerm", fText.value.trim());
+    if (fGenre.value) p.set("Genres", fGenre.value);
+    const res = await fetch(`${JF}Items?${p}`).then((r) => r.json()).catch(() => ({ Items: [] }));
+    if (t !== myToken) { busy = false; return; }
+    loaded.push(...res.Items); idx += res.Items.length;
+    if (res.Items.length < PAGEM) done = true;
+    const grid = box.querySelector(".tile-grid") || el("div", { className: "tile-grid", style: "padding:0" });
+    if (reset) grid.replaceChildren();
+    res.Items.forEach((it) => grid.append(movieCard(it)));
+    const more = el("button", { className: "more", textContent: "Show more",
+      onclick: () => load(false) });
+    box.replaceChildren(grid);
+    if (!done) box.append(more);
+    else if (!loaded.length) box.replaceChildren(el("div", { className: "empty-state", textContent: "No movies match." }));
+    busy = false;
+  };
+  fText.oninput = debounce(() => load(true), 350);
+  fGenre.onchange = fSort.onchange = () => load(true);
+  load(true);
+}
+const spinnerEl = () => el("div", { className: "spinner", textContent: "Loading…" });
 
 /* ---- music: a player that survives navigation --------------- */
 const cleanAlbum = (n) => n

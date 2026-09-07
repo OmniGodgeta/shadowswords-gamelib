@@ -1,7 +1,7 @@
 /* ShadowSwords Arcade — service worker.
    Shell + assets: cache-first. HTML + small data JSON: network-first with fallback.
    ROMs, BIOS, music, save-states, search.json, cross-origin (EmulatorJS CDN): never touched. */
-const CACHE = "ssw-v2.2";
+const CACHE = "ssw-v2.3";
 const SHELL = [
   "./", "./index.html", "./assets/app.js", "./assets/style.css",
   "./assets/img/logo.webp", "./manifest.json",
@@ -24,7 +24,8 @@ self.addEventListener("fetch", (e) => {
   if (req.method !== "GET") return;
   const u = new URL(req.url);
   if (u.origin !== location.origin) return;                       // EmulatorJS CDN etc.
-  if (/^\/(roms|music|states|netplay)\//.test(u.pathname)) return; // large / dynamic
+  // large / dynamic / API — never cache
+  if (/^\/(roms|music|states|netplay|emulatorjs|thumb|jellyfin|play|twitch|discord|search|request)(\/|$|\?)/.test(u.pathname)) return;
   if (u.pathname.endsWith("search.json")) return;                  // 6 MB, not worth caching
 
   const isDoc = req.mode === "navigate" || u.pathname.endsWith(".html");
