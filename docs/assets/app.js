@@ -32,9 +32,17 @@ const extTarget = { target: "_blank", rel: "noopener" };      // keep the signal
 const ROM_BASE = SELF_HOSTED ? "/roms/" : TS + "/roms/";       // needs Funnel when off-tailnet
 const MUSIC_BASE = SELF_HOSTED ? "/music/" : TS + "/music/";
 const MOVIES_URL = TS + ":8443/";                               // opens in a new tab
-const EMU_DATA = "https://cdn.emulatorjs.org/stable/data/";
+const EMU_DATA = SELF_HOSTED ? "/emulatorjs/" : "https://cdn.emulatorjs.org/stable/data/";
 const STATE_BASE = SELF_HOSTED ? "/states/" : TS + "/states/";   // cloud save-states
+const API = SELF_HOSTED ? "" : TS;                               // dynamic endpoints (search, stats, twitch…)
 const NETPLAY_URL = TS + ":8712/";                                // EmulatorJS netplay signalling (tailnet)
+const CID = (() => {
+  try {
+    let c = localStorage.getItem("ssw:cid");
+    if (!c) { c = Math.random().toString(36).slice(2) + Date.now().toString(36); localStorage.setItem("ssw:cid", c); }
+    return c;
+  } catch { return "anon"; }
+})();
 const ROM_CACHE_CAP = 1610612736;                                 // 1.5 GiB IndexedDB budget
 const ROM_CACHE_MAX_ITEM = 805306368;                             // don't cache a single file bigger than 768 MiB
 const YT_CHANNEL = "https://www.youtube.com/@shadowswordsttv";
@@ -249,6 +257,31 @@ async function routeHome() {
     title: "Play now", count: playable.length, moreHref: "#/play",
     tiles: playable.slice(0, 24).map((s) => consoleTile(s, { play: true })),
   }));
+
+  const anchor = el("div");
+  frag.append(anchor);
+  Promise.all([getJSON("added"), getJSON("collections"), getJSON("franchises")]).then(([added, cols, fr]) => {
+    if (location.hash !== "#/" && location.hash !== "" && location.hash !== "#") return;
+    const bits = document.createDocumentFragment();
+    if (added && added.length) bits.append(shelf({ title: "Recently added", count: added.length,
+      tiles: added.slice(0, 24).map((r) => refTile(r)) }));
+    if (cols && cols.length) {
+      const pick = [...cols].sort(() => Math.random() - 0.5).slice(0, 3);
+      for (const c of pick) bits.append(shelf({ title: c.title, count: c.items.length,
+        moreHref: `#/collection/${c.id}`, tiles: c.items.slice(0, 20).map((r) => refTile(r)) }));
+    }
+    if (fr && fr.length) bits.append(shelf({ title: "Franchises", count: fr.length, moreHref: "#/franchises",
+      tiles: fr.slice(0, 24).map((f) => {
+        const cover = el("div", { className: "tile-art console coll-cover" });
+        (f.items.filter((i) => i[3]).slice(0, 4)).forEach((i) => cover.append(el("img", { src: i[3], loading: "lazy", alt: "" })));
+        cover.append(el("span", { className: "coll-label", textContent: f.title }));
+        return el("a", { className: "tile", href: `#/franchise/${f.id}` }, cover,
+          el("div", { className: "tile-cap" }, el("div", { className: "t", textContent: f.title }),
+            el("div", { className: "s", textContent: f.note })));
+      }) }));
+    anchor.replaceWith(bits);
+  });
+
   const withLogo = systems.filter((s) => s.logo);
   const rest = systems.filter((s) => !s.logo);
   frag.append(shelf({
@@ -265,9 +298,12 @@ async function routeHome() {
       linkTile("#/movies", "🎬", "Movies", "Jellyfin library"),
       linkTile("#/music", "🎧", "Music", "Albums on the server"),
       linkTile("#/videos", "▶", "Videos", "Latest YouTube uploads"),
+      linkTile("#/collections", "🗂", "Collections", "Curated & by genre"),
+      linkTile("#/franchises", "🎯", "Franchises", "Mario, Zelda, Sonic…"),
       linkTile("#/contact", "📡", "Contact", "Socials & Discord"),
       linkTile("#/favorites", "♥", "Favorites", "Your starred games"),
       linkTile("#/saves", "☁", "Cloud saves", "Resume on any device"),
+      linkTile("#/profile", "👤", "Profile", "Your stats"),
       linkTile("#/cache", "💾", "Offline", "Install & ROM cache"))));
   view.replaceChildren(frag);
 }
@@ -300,7 +336,11 @@ async function routeSystem(id) {
   const games = await getSystem(id).catch(() => []);
   if (token !== state.render) return;
   const m = meta(id);
+  document.title = `${m.name} — ShadowSwords`;
   const genres = [...new Set(games.map((g) => g.genre).filter(Boolean))].sort();
+  const years = games.map((g) => g.year).filter(Boolean);
+  const decades = [...new Set(years.map((y) => Math.floor(y / 10) * 10))].sort();
+  const hasPlayers = games.some((g) => g.players);
   const arty = games.filter((g) => g.img).slice(0, 20).map((g) => g.img);
 
   const frag = document.createDocumentFragment();
@@ -308,23 +348,37 @@ async function routeSystem(id) {
     kicker: "Console", title: m.name,
     desc: `${games.length.toLocaleString()} games${m.withArt ? `, ${m.withArt} with box art` : ""}${m.playable ? " · playable in your browser" : ""}.`,
     art: arty.length ? collage(arty) : sysArt(m),
-    actions: m.playable ? [{ label: "▶ Play these", href: `#/play/${id}`, primary: true }] : [],
+    actions: m.playable
+      ? [{ label: "▶ Play these", href: `#/play/${id}`, primary: true }, { label: "🎲 Random", onClick: () => surpriseMe(id) }]
+      : [],
   }));
 
   const fText = el("input", { type: "search", placeholder: "Filter titles…" });
   const fGenre = el("select", {}, el("option", { value: "", textContent: "All genres" }),
     ...genres.map((x) => el("option", { value: x, textContent: x })));
+  const fDecade = decades.length > 1 ? el("select", {}, el("option", { value: "", textContent: "Any era" }),
+    ...decades.map((d) => el("option", { value: String(d), textContent: d + "s" }))) : null;
+  const fArt = el("label", { className: "chk" }, el("input", { type: "checkbox" }), " box art only");
+  const fMulti = hasPlayers ? el("label", { className: "chk" }, el("input", { type: "checkbox" }), " 2+ players") : null;
   const fSort = el("select", {},
     el("option", { value: "name", textContent: "A–Z" }), el("option", { value: "-name", textContent: "Z–A" }),
     el("option", { value: "-year", textContent: "Newest" }), el("option", { value: "art", textContent: "Box art first" }));
-  frag.append(el("div", { className: "grid-tools" }, fText, fGenre, fSort));
+  frag.append(el("div", { className: "grid-tools" }, fText, fGenre, fDecade, fSort, fArt, fMulti));
   const box = el("div", {});
   frag.append(box);
   view.replaceChildren(frag);
 
   const apply = () => {
     const q = fText.value.trim().toLowerCase(), gv = fGenre.value;
-    let list = games.filter((g) => (!q || g.name.toLowerCase().includes(q)) && (!gv || g.genre === gv));
+    const dv = fDecade && fDecade.value ? +fDecade.value : null;
+    const artOnly = fArt.querySelector("input").checked;
+    const multi = fMulti && fMulti.querySelector("input").checked;
+    let list = games.filter((g) =>
+      (!q || g.name.toLowerCase().includes(q)) &&
+      (!gv || g.genre === gv) &&
+      (!dv || (g.year && g.year >= dv && g.year < dv + 10)) &&
+      (!artOnly || g.img) &&
+      (!multi || (g.players && /[2-9]|multi/i.test(String(g.players)))));
     const cmp = {
       "name": (a, b) => a.name.localeCompare(b.name), "-name": (a, b) => b.name.localeCompare(a.name),
       "-year": (a, b) => (b.year || 0) - (a.year || 0) || a.name.localeCompare(b.name),
@@ -333,7 +387,7 @@ async function routeSystem(id) {
     tileGrid(box, [...list].sort(cmp), PAGE);
   };
   fText.oninput = debounce(apply, 150);
-  fGenre.onchange = fSort.onchange = apply;
+  for (const c of [fGenre, fDecade, fSort, fArt, fMulti]) if (c) c.onchange = apply;
   apply();
 }
 
@@ -611,7 +665,9 @@ async function routePlayGame(sys, romParam, resume = false) {
   window.EJS_startOnLoaded = true;
   const bios = sys !== "upload" && meta(sys).bios;
   if (bios) window.EJS_biosUrl = ROM_BASE + "bios/" + encodeURIComponent(bios);
-  window.EJS_Buttons = { restart: true, settings: true, fullscreen: true, saveState: true, loadState: true, gamepad: true };
+  window.EJS_Buttons = { restart: true, settings: true, fullscreen: true, saveState: true,
+    loadState: true, screenshot: true, cheat: true, gamepad: true };
+  window.EJS_RETROACHIEVEMENTS = true;          // enables the RA login in the settings menu (build-permitting)
   // Netplay signalling server — tailnet default; override with localStorage ssw:netplay ("off" disables).
   const np = LS.get("netplay", NETPLAY_URL);
   if (np && np !== "off") { window.EJS_netplayServer = np; window.EJS_Buttons.netplay = true; }
@@ -642,20 +698,59 @@ async function routePlayGame(sys, romParam, resume = false) {
     } catch { toast("No server save state for this game"); }
   };
 
+  // silent cloud auto-save (no toast) — on a timer and on exit
+  const autoSave = async () => {
+    const g2 = window.EJS_emulator?.gameManager;
+    if (!key || !g2) return;
+    try { await fetch(key, { method: "PUT", headers: { "content-type": "application/octet-stream" }, body: g2.getState() }); }
+    catch { /* offline */ }
+  };
+  window.__emuAutoSave = autoSave;
+
+  // play-stats ping + local playtime accounting
+  const ptKey = sys === "upload" ? null : `${sys}/${file}`;
+  let ptStart = 0;
+  const ping = (start) => fetch(`${API}/play/ping`, {
+    method: "POST", headers: { "content-type": "application/json" },
+    body: JSON.stringify({ sys, file, name: romName, start, cid: CID }),
+  }).catch(() => {});
+  const flushPlaytime = () => {
+    if (!ptKey || !ptStart) return;
+    const secs = Math.round((Date.now() - ptStart) / 1000);
+    ptStart = Date.now();
+    if (secs > 0 && secs < 7200) {
+      const pt = LS.get("playtime", {}); pt[ptKey] = (pt[ptKey] || 0) + secs; LS.set("playtime", pt);
+    }
+  };
+
   window.EJS_onGameStart = () => {
     $("#player-load")?.remove();
+    ptStart = Date.now();
+    ping(true);
+    window.__emuHeartbeat = setInterval(() => { ping(false); flushPlaytime(); }, 60000);
+    window.__emuAutoSaveT = key ? setInterval(autoSave, 180000) : 0;
     if (key) {
       saveBtn.hidden = false; saveBtn.onclick = cloudSave;
       loadBtn.hidden = false; loadBtn.onclick = cloudLoad;
       if (hasCloudSave) setTimeout(cloudLoad, 400);
     }
   };
+  window.__emuFlush = flushPlaytime;
 
   const s = el("script", { src: EMU_DATA + "loader.js" });
   s.onerror = () => { const l = $("#player-load"); if (l) l.textContent = "Emulator failed to load (CDN blocked?)."; };
   document.body.append(s);
 }
-function exitPlayer() { window.__emuUp = false; location.hash = "#/play"; location.reload(); }
+function emuCleanup() {
+  clearInterval(window.__emuHeartbeat); clearInterval(window.__emuAutoSaveT);
+  try { window.__emuFlush?.(); } catch { /* */ }
+}
+async function exitPlayer() {
+  emuCleanup();
+  try { await window.__emuAutoSave?.(); } catch { /* */ }
+  window.__emuUp = false; location.hash = "#/play"; location.reload();
+}
+window.addEventListener("beforeunload", () => { if (window.__emuUp) { emuCleanup(); navigator.sendBeacon?.(`${API}/play/ping`, JSON.stringify({ cid: CID, bye: true })); } });
 
 /* ---- routes: movies + search --------------------------------- */
 function routeMovies() {
@@ -670,12 +765,130 @@ function routeMovies() {
       " — if it doesn't load, the server may be off or you're not on the tailnet.")));
 }
 
-/* ---- routes: music ------------------------------------------- */
-let audioEl = null, curAlbum = null;
+/* ---- music: a player that survives navigation --------------- */
+const cleanAlbum = (n) => n
+  .replace(/\[[^\]]*\]/g, "").replace(/\([^)]*\)/g, "")
+  .replace(/[-–]\s*[A-Za-z0-9]+\s*$/, "")
+  .replace(/\s{2,}/g, " ").trim() || n;
+
+const MP = { data: null, ai: null, alb: -1, tr: -1, shuffle: false, ctx: null, an: null, wired: false };
+
+async function mpData() {
+  if (!MP.data) MP.data = await fetch(MUSIC_BASE + "index.json").then((r) => r.json()).catch(() => null);
+  return MP.data;
+}
+function mpBar() {
+  let b = $("#mini-player");
+  if (b) return b;
+  b = el("div", { id: "mini-player", hidden: true },
+    el("button", { className: "mp-b", id: "mp-prev", textContent: "⏮", title: "Previous" }),
+    el("button", { className: "mp-b mp-play", id: "mp-toggle", textContent: "▶" }),
+    el("button", { className: "mp-b", id: "mp-next", textContent: "⏭", title: "Next" }),
+    el("div", { className: "mp-meta", id: "mp-meta", onclick: () => { location.hash = "#/music" + (MP.alb >= 0 ? "/" + MP.alb : ""); } },
+      el("div", { className: "mp-t", id: "mp-title" }), el("div", { className: "mp-s", id: "mp-sub" })),
+    el("button", { className: "mp-b mp-sh", id: "mp-shuffle", textContent: "🔀", title: "Shuffle" }),
+    el("button", { className: "mp-b", id: "mp-close", textContent: "✕", title: "Stop" }));
+  document.body.append(b);
+  $("#mp-prev").onclick = mpPrev;
+  $("#mp-next").onclick = mpNext;
+  $("#mp-toggle").onclick = mpToggle;
+  $("#mp-shuffle").onclick = () => { MP.shuffle = !MP.shuffle; $("#mp-shuffle").classList.toggle("on", MP.shuffle); toast(MP.shuffle ? "Shuffle on" : "Shuffle off"); };
+  $("#mp-close").onclick = mpStop;
+  return b;
+}
+function mpAudio() {
+  if (MP.ai) return MP.ai;
+  MP.ai = $("#player-audio");
+  MP.ai.hidden = true;
+  MP.ai.addEventListener("ended", mpNext);
+  MP.ai.addEventListener("play", mpSync);
+  MP.ai.addEventListener("pause", mpSync);
+  return MP.ai;
+}
+function mpViz(canvas) {
+  const ai = mpAudio();
+  try {
+    if (!MP.ctx) {
+      MP.ctx = new (window.AudioContext || window.webkitAudioContext)();
+      MP.src = MP.ctx.createMediaElementSource(ai);
+      MP.an = MP.ctx.createAnalyser(); MP.an.fftSize = 128;
+      MP.src.connect(MP.an); MP.an.connect(MP.ctx.destination);
+    }
+    MP.ctx.resume?.();
+  } catch { return; }
+  if (!canvas) return;
+  const g = canvas.getContext("2d");
+  const bins = MP.an.frequencyBinCount, buf = new Uint8Array(bins);
+  cancelAnimationFrame(MP._viz);
+  const draw = () => {
+    MP._viz = requestAnimationFrame(draw);
+    if (!canvas.isConnected) return cancelAnimationFrame(MP._viz);
+    const w = canvas.width = canvas.clientWidth, h = canvas.height = canvas.clientHeight;
+    MP.an.getByteFrequencyData(buf);
+    g.clearRect(0, 0, w, h);
+    const bw = w / bins;
+    for (let i = 0; i < bins; i++) {
+      const v = buf[i] / 255, bh = v * h;
+      const grad = g.createLinearGradient(0, h, 0, h - bh);
+      grad.addColorStop(0, "#22e0ff"); grad.addColorStop(1, "#ff33c6");
+      g.fillStyle = grad;
+      g.fillRect(i * bw + 1, h - bh, bw - 2, bh);
+    }
+  };
+  draw();
+}
+function mpSync() {
+  const ai = MP.ai; if (!ai) return;
+  const playing = !ai.paused && !ai.ended;
+  const t = $("#mp-toggle"); if (t) t.textContent = playing ? "⏸" : "▶";
+  $$(".track").forEach((r, n) => r.classList.toggle("playing",
+    +r.dataset.alb === MP.alb && n === MP.tr));
+  if ("mediaSession" in navigator && MP.data && MP.alb >= 0) {
+    const alb = MP.data.albums[MP.alb], tr = alb.tracks[MP.tr];
+    navigator.mediaSession.metadata = new MediaMetadata({ title: tr.title, album: cleanAlbum(alb.name), artist: "ShadowSwords" });
+  }
+}
+function mpPlay(albIdx, trIdx) {
+  const d = MP.data; if (!d) return;
+  MP.alb = albIdx; MP.tr = trIdx;
+  const alb = d.albums[albIdx], t = alb.tracks[trIdx];
+  const ai = mpAudio();
+  ai.src = MUSIC_BASE + "file/" + t.file.split("/").map(encodeURIComponent).join("/");
+  ai.play().catch(() => {});
+  mpBar().hidden = false;
+  document.body.classList.add("has-mp");
+  $("#mp-title").textContent = t.title;
+  $("#mp-sub").textContent = cleanAlbum(alb.name);
+  document.title = `▶ ${t.title} — ShadowSwords`;
+  mpViz();
+  mpSync();
+}
+function mpToggle() { const ai = MP.ai; if (!ai) return; ai.paused ? ai.play().catch(() => {}) : ai.pause(); }
+function mpNext() {
+  const d = MP.data; if (!d || MP.alb < 0) return;
+  const alb = d.albums[MP.alb];
+  if (MP.shuffle) return mpPlay(MP.alb, Math.random() * alb.tracks.length | 0);
+  if (MP.tr + 1 < alb.tracks.length) return mpPlay(MP.alb, MP.tr + 1);
+  if (MP.alb + 1 < d.albums.length) return mpPlay(MP.alb + 1, 0);
+}
+function mpPrev() {
+  if (MP.alb < 0) return;
+  if (MP.ai && MP.ai.currentTime > 3) { MP.ai.currentTime = 0; return; }
+  if (MP.tr > 0) return mpPlay(MP.alb, MP.tr - 1);
+  if (MP.alb > 0) return mpPlay(MP.alb - 1, MP.data.albums[MP.alb - 1].tracks.length - 1);
+}
+function mpStop() {
+  if (MP.ai) { MP.ai.pause(); MP.ai.removeAttribute("src"); MP.ai.load(); }
+  MP.alb = MP.tr = -1;
+  const b = $("#mini-player"); if (b) b.hidden = true;
+  document.body.classList.remove("has-mp");
+  cancelAnimationFrame(MP._viz);
+}
+
 async function routeMusic(albumIdx) {
   const token = ++state.render;
   spinner();
-  const data = await fetch(MUSIC_BASE + "index.json").then((r) => r.json()).catch(() => null);
+  const data = await mpData();
   if (token !== state.render) return;
   if (!data || !data.albums.length) {
     view.replaceChildren(el("section", { className: "pane center" },
@@ -688,40 +901,17 @@ async function routeMusic(albumIdx) {
   const idx = Math.min(Math.max(0, albumIdx | 0), data.albums.length - 1);
   const album = data.albums[idx];
 
-  if (!audioEl) audioEl = $("#player-audio");
-  const npTitle = el("div", { className: "np-title" });
-  const nowPlaying = el("div", { className: "now-playing" }, npTitle, audioEl);
-  audioEl.hidden = false; audioEl.controls = true;
+  const trackList = el("div", { className: "track-list" },
+    ...album.tracks.map((t, i) => el("div", {
+      className: "track" + (MP.alb === idx && MP.tr === i ? " playing" : ""),
+      tabIndex: 0, dataset: { alb: String(idx) },
+      onkeydown: (e) => { if (e.key === "Enter") mpPlay(idx, i); },
+      onclick: () => mpPlay(idx, i),
+    },
+      el("span", { className: "num", textContent: String(i + 1).padStart(2, "0") }),
+      el("span", { textContent: t.title }))));
 
-  const trackList = el("div", { className: "track-list" });
-  const renderTracks = (alb) => {
-    trackList.replaceChildren(...alb.tracks.map((t, i) =>
-      el("div", { className: "track", tabIndex: 0, dataset: { file: t.file },
-        onkeydown: (e) => { if (e.key === "Enter") playTrack(alb, i); },
-        onclick: () => playTrack(alb, i) },
-        el("span", { className: "num", textContent: String(i + 1).padStart(2, "0") }),
-        el("span", { textContent: t.title }))));
-  };
-  const playTrack = (alb, i) => {
-    curAlbum = alb;
-    const t = alb.tracks[i];
-    audioEl.src = MUSIC_BASE + "file/" + t.file.split("/").map(encodeURIComponent).join("/");
-    audioEl.play().catch(() => {});
-    npTitle.textContent = `${t.title} — ${alb.name.replace(/\[[^\]]*\]/g, "").trim()}`;
-    $$(".track", trackList).forEach((r, n) => r.classList.toggle("playing", n === i));
-  };
-  audioEl.onended = () => {
-    if (!curAlbum) return;
-    const cur = $$(".track", trackList).findIndex((r) => r.classList.contains("playing"));
-    if (cur >= 0 && cur + 1 < curAlbum.tracks.length) playTrack(curAlbum, cur + 1);
-  };
-  renderTracks(album);
-
-  const cleanAlbum = (n) => n
-    .replace(/\[[^\]]*\]/g, "").replace(/\([^)]*\)/g, "")
-    .replace(/[-–]\s*[A-Za-z0-9]+\s*$/, "")     // trailing release-group tag
-    .replace(/\s{2,}/g, " ").trim() || n;
-
+  const viz = el("canvas", { className: "viz" });
   const albumList = el("div", { className: "album-list" },
     ...data.albums.map((a, i) => el("button", {
       className: "album-btn" + (i === idx ? " active" : ""),
@@ -732,15 +922,51 @@ async function routeMusic(albumIdx) {
   view.replaceChildren(el("div", { className: "wrap" },
     el("section", { className: "shelf", style: "padding:22px 0 6px" },
       el("div", { className: "shelf-head" }, el("h2", { textContent: "Music" }),
-        el("span", { className: "count", textContent: `${data.albums.length} album${data.albums.length > 1 ? "s" : ""}` }))),
+        el("span", { className: "count", textContent: `${data.albums.length} album${data.albums.length > 1 ? "s" : ""}` }),
+        el("a", { href: "javascript:void 0", textContent: "▶ Shuffle all", onclick: () => {
+          MP.shuffle = true; $("#mp-shuffle")?.classList.add("on");
+          mpPlay(Math.random() * data.albums.length | 0, 0);
+        } }))),
     el("div", { className: "music-layout" }, albumList,
-      el("div", {}, el("h3", { style: "margin:4px 0 10px", textContent: cleanAlbum(album.name) }), trackList)),
-    nowPlaying));
+      el("div", {}, el("h3", { style: "margin:4px 0 10px", textContent: cleanAlbum(album.name) }),
+        trackList, viz))));
+  mpBar();
+  if (MP.alb >= 0) mpViz(viz);
 }
 
 /* ---- routes: contact ---------------------------------------- */
+function requestForm() {
+  const title = el("input", { type: "text", placeholder: "Game or system you'd like added", maxLength: 200 });
+  const who = el("input", { type: "text", placeholder: "Your name / handle (optional)", maxLength: 60 });
+  const note = el("textarea", { placeholder: "Anything else? (optional)", rows: 2, maxLength: 500 });
+  const btn = el("button", { className: "btn btn-primary", textContent: "Send request" });
+  const status = el("div", { className: "hint", style: "margin-top:8px" });
+  btn.onclick = async () => {
+    if (!title.value.trim()) { status.textContent = "Enter a game first."; return; }
+    btn.disabled = true; status.textContent = "Sending…";
+    try {
+      const r = await fetch(`${API}/request`, { method: "POST", headers: { "content-type": "application/json" },
+        body: JSON.stringify({ title: title.value, who: who.value, note: note.value }) });
+      if (r.ok) { status.textContent = "Sent — thanks! It'll show up in the Discord."; title.value = note.value = ""; }
+      else if (r.status === 501) status.textContent = "Requests aren't wired up yet — ask in the Discord for now.";
+      else status.textContent = "Couldn't send — try the Discord instead.";
+    } catch { status.textContent = "Couldn't reach the server — you may be off the tailnet."; }
+    btn.disabled = false;
+  };
+  return el("div", { className: "req-form" },
+    el("h3", { textContent: "Request a game" }), title, who, note, btn, status);
+}
 function routeContact() {
   ++state.render;
+  document.title = "Contact — ShadowSwords";
+  const dc = el("div", { className: "discord-cta" },
+    el("div", {}, el("strong", { style: "font-size:16px", textContent: "💬  Discord server" }),
+      el("div", { className: "dc-sub", style: "color:var(--muted);font-size:13px", textContent: "The best place to reach me." })),
+    el("a", { className: "btn btn-primary", href: DISCORD, ...extTarget, textContent: "Join the Discord ↗" }));
+  fetch(`${API}/discord/info`).then((r) => r.json()).then((d) => {
+    if (d && d.online != null) dc.querySelector(".dc-sub").textContent =
+      `${d.members?.toLocaleString() || "?"} members · ${d.online.toLocaleString()} online now`;
+  }).catch(() => {});
   view.replaceChildren(el("section", { className: "pane" },
     el("div", { className: "big-emoji", textContent: "📡" }),
     el("h1", { textContent: "Contact & Socials" }),
@@ -749,10 +975,8 @@ function routeContact() {
       ...SOCIALS.map(([name, url, ic, col]) => el("a", { className: "social", href: url, ...extTarget },
         el("span", { className: "ic", style: `color:${col}`, textContent: ic }),
         el("span", {}, name, el("small", { textContent: url.replace(/^https?:\/\/(www\.)?/, "") }))))),
-    el("div", { className: "discord-cta" },
-      el("div", {}, el("strong", { style: "font-size:16px", textContent: "💬  Discord server" }),
-        el("div", { style: "color:var(--muted);font-size:13px", textContent: "The best place to reach me." })),
-      el("a", { className: "btn btn-primary", href: DISCORD, ...extTarget, textContent: "Join the Discord ↗" }))));
+    dc,
+    requestForm()));
 }
 
 /* ---- routes: videos --------------------------------------- */
@@ -782,6 +1006,91 @@ async function routeVideos() {
   }
   frag.append(el("div", { className: "wrap" }, grid));
   view.replaceChildren(frag);
+}
+
+/* ---- discovery: collections / franchises / recently added -- */
+const _json = {};
+const getJSON = (name) => _json[name] ||= fetch(`data/${name}.json`).then((r) => r.json()).catch(() => null);
+
+// [name, sys, gid, img] -> tile
+function refTile(r) {
+  const [name, sys, gid, img] = r;
+  const playable = meta(sys).playable;
+  const art = el("div", { className: "tile-art" });
+  if (img) art.append(el("img", { src: img, loading: "lazy", alt: name }));
+  else art.append(el("div", { className: "ph", textContent: name }));
+  if (playable) art.append(el("span", { className: "badge", textContent: "Play" }));
+  art.append(heartBtn({ _sys: sys, id: gid, name, img: img || null }));
+  return el("a", { className: "tile wide", href: `#/g/${sys}/${gid}` }, art,
+    el("div", { className: "tile-cap" },
+      el("div", { className: "t", textContent: name }),
+      el("div", { className: "s", textContent: sysName(sys) })));
+}
+function refGrid(box, items, shown = PAGE) {
+  const grid = el("div", { className: "tile-grid" });
+  items.slice(0, shown).forEach((r) => grid.append(refTile(r)));
+  const parts = [grid];
+  if (items.length > shown) parts.push(el("button", { className: "more",
+    textContent: `Show more · ${items.length - shown} left`, onclick: () => refGrid(box, items, shown + PAGE) }));
+  box.replaceChildren(...parts);
+}
+
+async function routeCollections() {
+  ++state.render; spinner();
+  await getSystems().catch(() => {});
+  const cols = await getJSON("collections") || [];
+  document.title = "Collections — ShadowSwords";
+  const frag = document.createDocumentFragment();
+  frag.append(el("section", { className: "shelf", style: "padding:22px var(--pad) 0" },
+    el("div", { className: "shelf-head" }, el("h2", { textContent: "Collections" }),
+      el("span", { className: "count", textContent: `${cols.length}` }))));
+  const grid = el("div", { className: "tile-grid", style: "padding:0 var(--pad) 30px;max-width:1600px;margin:0 auto" });
+  for (const c of cols) {
+    const cover = el("div", { className: "tile-art console coll-cover" });
+    (c.items.filter((i) => i[3]).slice(0, 4)).forEach((i) => cover.append(el("img", { src: i[3], loading: "lazy", alt: "" })));
+    cover.append(el("span", { className: "coll-label", textContent: c.title }));
+    grid.append(el("a", { className: "tile", href: `#/collection/${c.id}` }, cover,
+      el("div", { className: "tile-cap" }, el("div", { className: "t", textContent: c.title }),
+        el("div", { className: "s", textContent: c.note || `${c.items.length} games` }))));
+  }
+  frag.append(el("div", { className: "wrap" }, grid));
+  view.replaceChildren(frag);
+}
+async function routeCollection(id) {
+  ++state.render; spinner();
+  await getSystems().catch(() => {});
+  const c = (await getJSON("collections") || []).find((x) => x.id === id)
+    || (await getJSON("franchises") || []).find((x) => x.id === id);
+  if (!c) { location.hash = "#/collections"; return; }
+  document.title = `${c.title} — ShadowSwords`;
+  const box = el("div", {});
+  view.replaceChildren(el("div", { className: "wrap" },
+    el("section", { className: "shelf", style: "padding:22px 0 0" },
+      el("div", { className: "shelf-head" }, el("h2", { textContent: c.title }),
+        el("span", { className: "count", textContent: `${c.items.length}` }),
+        el("a", { href: "#/collections", textContent: "All collections ›" })),
+      box)));
+  refGrid(box, c.items);
+}
+const routeFranchise = routeCollection;
+async function routeFranchises() {
+  ++state.render; spinner();
+  await getSystems().catch(() => {});
+  const fr = await getJSON("franchises") || [];
+  document.title = "Franchises — ShadowSwords";
+  const grid = el("div", { className: "tile-grid", style: "padding:0 var(--pad) 30px;max-width:1600px;margin:0 auto" });
+  for (const f of fr) {
+    const cover = el("div", { className: "tile-art console coll-cover" });
+    (f.items.filter((i) => i[3]).slice(0, 4)).forEach((i) => cover.append(el("img", { src: i[3], loading: "lazy", alt: "" })));
+    cover.append(el("span", { className: "coll-label", textContent: f.title }));
+    grid.append(el("a", { className: "tile", href: `#/franchise/${f.id}` }, cover,
+      el("div", { className: "tile-cap" }, el("div", { className: "t", textContent: f.title }),
+        el("div", { className: "s", textContent: f.note }))));
+  }
+  view.replaceChildren(el("section", { className: "shelf", style: "padding:22px var(--pad) 0" },
+    el("div", { className: "shelf-head" }, el("h2", { textContent: "Franchises" }),
+      el("span", { className: "count", textContent: `${fr.length}` }))),
+    el("div", { className: "wrap" }, grid));
 }
 
 /* ---- routes: favorites / recent / cloud saves / cache ------- */
@@ -877,6 +1186,37 @@ async function routeCache() {
       "This site also installs as an app — look for “Install” / “Add to Home Screen” in your browser menu.")));
 }
 
+async function routeProfile() {
+  ++state.render; spinner();
+  await getSystems().catch(() => {});
+  document.title = "Your profile — ShadowSwords";
+  const favs = favList(), recent = recentList();
+  const played = LS.get("playtime", {});          // sys/file -> seconds
+  const totalSec = Object.values(played).reduce((n, s) => n + s, 0);
+  const systemsTouched = new Set([...recent.map((r) => r.sys), ...Object.keys(played).map((k) => k.split("/")[0])]).size;
+  const rc = await romCacheStats();
+  const hrs = totalSec / 3600;
+  const stat = (n, l) => el("div", { className: "stat" },
+    el("div", { className: "stat-n", textContent: n }), el("div", { className: "stat-l", textContent: l }));
+  const frag = document.createDocumentFragment();
+  frag.append(el("section", { className: "shelf", style: "padding:22px var(--pad) 0" },
+    el("div", { className: "shelf-head" }, el("h2", { textContent: "Your profile" }))),
+    el("div", { className: "wrap" },
+      el("div", { className: "stat-row" },
+        stat(hrs >= 1 ? hrs.toFixed(1) + " h" : Math.round(totalSec / 60) + " m", "played in browser"),
+        stat(recent.length, "games launched"),
+        stat(favs.length, "favorites"),
+        stat(systemsTouched, "systems"),
+        stat(fmtBytes(rc.bytes), "ROMs cached"))));
+  if (recent.length) frag.append(shelf({ title: "Continue playing", count: recent.length,
+    tiles: recent.map((r) => favTile({ sys: r.sys, id: null, name: r.name, img: r.img, file: r.file })) }));
+  if (favs.length) frag.append(shelf({ title: "Favorites", count: favs.length, moreHref: "#/favorites",
+    tiles: favs.slice(0, 24).map((f) => favTile(f)) }));
+  frag.append(el("div", { className: "wrap", style: "padding:8px var(--pad) 40px" },
+    el("a", { className: "btn btn-ghost", href: "#/cache", textContent: "Manage offline cache" })));
+  view.replaceChildren(frag);
+}
+
 async function surpriseMe(sysId) {
   await getSystems().catch(() => {});
   let s;
@@ -892,16 +1232,24 @@ async function surpriseMe(sysId) {
   location.hash = `#/play/${s.id}/${g.file.split("/").map(encodeURIComponent).join("/")}`;
 }
 
+async function searchRows(q, limit = 600) {
+  if (SELF_HOSTED) {
+    const r = await fetch(`${API}/search?q=${encodeURIComponent(q)}&limit=${limit}`).then((x) => x.json()).catch(() => null);
+    if (r) return r;
+  }
+  const rows = await getSearch();
+  const terms = q.toLowerCase().split(/\s+/).filter(Boolean);
+  return rows.filter((x) => terms.every((t) => x[0].toLowerCase().includes(t)))
+    .sort((a, b) => b[4] - a[4] || a[0].localeCompare(b[0])).slice(0, limit);
+}
 async function routeSearch(qRaw) {
   const token = ++state.render;
-  const q = qRaw.trim().toLowerCase();
+  const q = qRaw.trim();
   spinner();
+  document.title = `“${qRaw}” — ShadowSwords`;
   await getSystems();
-  const rows = await getSearch();
+  let hits = await searchRows(q);
   if (token !== state.render) return;
-  const terms = q.split(/\s+/).filter(Boolean);
-  let hits = rows.filter((r) => terms.every((t) => r[0].toLowerCase().includes(t)))
-    .sort((a, b) => b[4] - a[4] || a[0].localeCompare(b[0])).slice(0, 600);
   const need = [...new Set(hits.slice(0, PAGE).map((r) => r[1]))];
   await Promise.all(need.map((id) => getSystem(id).catch(() => [])));
   if (token !== state.render) return;
@@ -928,14 +1276,18 @@ function setNav(name) {
   $("#back-btn").hidden = top;
   $("#drawer").hidden = true;
 }
+const _scrollY = {};
 async function router() {
   const parts = parseHash();
   const [a, b] = parts;
   // an emulator is live and we're navigating away from it -> hard reset (kills audio/RAF)
-  if (window.__emuUp && !((a === "play" || a === "resume") && parts.length > 2)) { window.__emuUp = false; location.reload(); return; }
+  if (window.__emuUp && !((a === "play" || a === "resume") && parts.length > 2)) {
+    emuCleanup(); try { window.__emuAutoSave?.(); } catch { /* */ }
+    window.__emuUp = false; setTimeout(() => location.reload(), 60); return;
+  }
   if (a !== "q") $("#bar-search").hidden = true;
-  if (a !== "music" && audioEl) audioEl.pause();
   window.scrollTo(0, 0);
+  document.title = "ShadowSwords Arcade";
   if (a === "s" && b) { setNav(null); return routeSystem(b); }
   if (a === "g" && b && parts[2]) { setNav(null); return routeGame(b, parts[2]); }
   if (a === "resume" && b && parts.length > 2) { setNav("play"); return routePlayGame(b, parts.slice(2).join("/"), true); }
@@ -946,6 +1298,11 @@ async function router() {
   if (a === "favorites") { setNav("favorites"); return routeFavorites(); }
   if (a === "saves") { setNav("saves"); return routeSaves(); }
   if (a === "cache") { setNav(null); return routeCache(); }
+  if (a === "profile") { setNav(null); return routeProfile(); }
+  if (a === "collections") { setNav(null); return routeCollections(); }
+  if (a === "collection" && b) { setNav(null); return routeCollection(b); }
+  if (a === "franchises") { setNav(null); return routeFranchises(); }
+  if (a === "franchise" && b) { setNav(null); return routeFranchise(b); }
   if (a === "movies") { setNav("movies"); return routeMovies(); }
   if (a === "music") { setNav("music"); return routeMusic(b); }
   if (a === "videos") { setNav("videos"); return routeVideos(); }
@@ -967,12 +1324,94 @@ document.addEventListener("click", (e) => {
 const sf = $("#bar-search"), qi = $("#q");
 $("#search-btn").onclick = () => { sf.hidden = !sf.hidden; if (!sf.hidden) qi.focus(); };
 sf.onsubmit = (e) => e.preventDefault();
-qi.addEventListener("input", debounce(() => {
+const acBox = el("div", { className: "ac", hidden: true });
+sf.append(acBox);
+let acHits = [], acSel = -1;
+const acRender = () => {
+  acBox.replaceChildren(...acHits.map((r, i) => el("div", {
+    className: "ac-row" + (i === acSel ? " sel" : ""),
+    onmousedown: (e) => { e.preventDefault(); location.hash = `#/g/${r[1]}/${r[2]}`; sf.hidden = true; },
+  }, el("span", { className: "ac-t", textContent: r[0] }),
+    el("span", { className: "ac-s", textContent: sysName(r[1]) }))));
+  acBox.hidden = !acHits.length;
+};
+qi.addEventListener("input", debounce(async () => {
   const v = qi.value.trim();
-  if (v.length >= 2) location.hash = `#/q/${encodeURIComponent(v)}`;
-  else if (!v && location.hash.startsWith("#/q/")) location.hash = "#/";
-}, 250));
-qi.addEventListener("keydown", (e) => { if (e.key === "Escape") { sf.hidden = true; qi.blur(); } });
+  if (v.length < 2) { acBox.hidden = true; acHits = []; if (location.hash.startsWith("#/q/")) location.hash = "#/"; return; }
+  await getSystems().catch(() => {});
+  acHits = (await searchRows(v, 8)) || []; acSel = -1; acRender();
+}, 180));
+qi.addEventListener("keydown", (e) => {
+  if (e.key === "Escape") { acBox.hidden = true; sf.hidden = true; qi.blur(); return; }
+  if (e.key === "ArrowDown" && acHits.length) { acSel = Math.min(acSel + 1, acHits.length - 1); acRender(); e.preventDefault(); }
+  else if (e.key === "ArrowUp" && acHits.length) { acSel = Math.max(acSel - 1, -1); acRender(); e.preventDefault(); }
+  else if (e.key === "Enter") {
+    const v = qi.value.trim();
+    if (acSel >= 0) { location.hash = `#/g/${acHits[acSel][1]}/${acHits[acSel][2]}`; sf.hidden = true; }
+    else if (v.length >= 2) location.hash = `#/q/${encodeURIComponent(v)}`;
+    acBox.hidden = true;
+  }
+});
+qi.addEventListener("blur", () => setTimeout(() => { acBox.hidden = true; }, 150));
+
+/* ---- lite mode + reduced motion ------------------------------ */
+const applyLite = () => document.body.classList.toggle("lite", LS.get("lite", false) === true);
+applyLite();
+if (matchMedia("(prefers-reduced-motion: reduce)").matches && LS.get("lite", null) === null) {
+  document.body.classList.add("lite");
+}
+window.toggleLite = () => { LS.set("lite", !(LS.get("lite", false) === true)); applyLite(); toast(document.body.classList.contains("lite") ? "Lite mode on" : "Lite mode off"); };
+
+/* ---- keyboard shortcuts ------------------------------------- */
+const HELP = [["/", "search"], ["g h", "home"], ["g p", "play"], ["g m", "music"], ["g v", "videos"],
+  ["g f", "favorites"], ["r", "random game"], ["l", "toggle lite mode"], ["?", "this help"]];
+let _kchord = 0;
+addEventListener("keydown", (e) => {
+  if (/^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName) || window.__emuUp || e.metaKey || e.ctrlKey || e.altKey) return;
+  const now = Date.now();
+  if (_kchord && now - _kchord < 900) {
+    _kchord = 0;
+    const map = { h: "#/", p: "#/play", m: "#/music", v: "#/videos", f: "#/favorites", c: "#/contact", s: "#/saves" };
+    if (map[e.key]) { location.hash = map[e.key]; return; }
+  }
+  if (e.key === "g") { _kchord = now; return; }
+  if (e.key === "/") { e.preventDefault(); sf.hidden = false; qi.focus(); }
+  else if (e.key === "?") toggleHelp();
+  else if (e.key === "r") surpriseMe();
+  else if (e.key === "l") window.toggleLite();
+  else if (e.key === "Escape") $("#help-overlay")?.remove();
+});
+window.toggleHelp = toggleHelp;
+function toggleHelp() {
+  const ex = $("#help-overlay"); if (ex) { ex.remove(); return; }
+  const o = el("div", { id: "help-overlay", onclick: (e) => { if (e.target.id === "help-overlay") o.remove(); } },
+    el("div", { className: "help-card" }, el("h3", { textContent: "Keyboard shortcuts" }),
+      ...HELP.map(([k, d]) => el("div", { className: "help-row" },
+        el("kbd", { textContent: k }), el("span", { textContent: d }))),
+      el("button", { className: "btn btn-ghost", textContent: "Close", onclick: () => o.remove() })));
+  document.body.append(o);
+}
+
+/* ---- Twitch LIVE badge -------------------------------------- */
+(async () => {
+  try {
+    const t = await fetch(`${API}/twitch/status`).then((r) => r.json());
+    if (!t || !t.configured) return;
+    const badge = el("a", { id: "live-badge", className: t.live ? "live" : "off",
+      href: `https://twitch.tv/${t.user}`, ...extTarget,
+      title: t.live ? t.title || "Live on Twitch" : "Offline" },
+      el("span", { className: "dot" }), t.live ? "LIVE" : "");
+    if (t.live) $("#bar").append(badge);
+  } catch { /* */ }
+})();
+
+/* ---- "playing now" ----------------------------------------- */
+(async () => {
+  try {
+    const s = await fetch(`${API}/play/stats`).then((r) => r.json());
+    if (s && s.playingNow > 1) toast(`👾 ${s.playingNow} people playing right now`);
+  } catch { /* */ }
+})();
 
 /* ---- gamepad navigation for the site menus (not in-game) --------- */
 const NAV_SEL = "a.tile, a.btn, button.more, .bar-link, .drawer a, .album-btn, .social, .shelf-nav, .heart, #back-btn, #menu-btn, #search-btn, .track";
@@ -1025,9 +1464,24 @@ function pollPad() {
 window.addEventListener("gamepadconnected", () => { if (!_padRAF) { toast("🎮 Controller connected"); pollPad(); } });
 if (navigator.getGamepads && [...navigator.getGamepads()].some(Boolean)) pollPad();
 
-/* ---- PWA service worker ---------------------------------------- */
+/* ---- PWA service worker + update prompt ---------------------- */
 if ("serviceWorker" in navigator) {
-  addEventListener("load", () => navigator.serviceWorker.register("sw.js").catch(() => {}));
+  addEventListener("load", async () => {
+    try {
+      const reg = await navigator.serviceWorker.register("sw.js");
+      reg.addEventListener("updatefound", () => {
+        const nw = reg.installing;
+        nw && nw.addEventListener("statechange", () => {
+          if (nw.state === "installed" && navigator.serviceWorker.controller) {
+            const t = el("div", { id: "sw-toast" },
+              "New version available. ",
+              el("button", { textContent: "Reload", onclick: () => { nw.postMessage("skip"); location.reload(); } }));
+            document.body.append(t);
+          }
+        });
+      });
+    } catch { /* */ }
+  });
 }
 
 router();

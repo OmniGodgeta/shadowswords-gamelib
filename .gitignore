@@ -4,5 +4,6 @@ __pycache__/
 docs/data/
 docs/media/
 .console-cache/
+.lr-cache/
 node_modules/
 server/arcade-netplay/package-lock.json

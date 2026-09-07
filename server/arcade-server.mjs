@@ -391,6 +391,24 @@ async function gameRequest(req, res) {
   } catch { jsonRes(res, 502, { ok: false }); }
 }
 
+// ---- Discord invite counts (public, no auth) ------------------------
+let dcCache = { at: 0, data: null };
+async function discordInfo(req, res) {
+  const inv = (cfg().discordInvite || "QnMc35rUdB").replace(/[^\w-]/g, "");
+  if (now() - dcCache.at < 120000 && dcCache.data)
+    return jsonRes(res, 200, dcCache.data);
+  try {
+    const j = await fetch(`https://discord.com/api/v10/invites/${inv}?with_counts=true`).then((r) => r.json());
+    dcCache = { at: now(), data: {
+      name: j.guild?.name || null,
+      members: j.approximate_member_count || null,
+      online: j.approximate_presence_count || null,
+      invite: `https://discord.gg/${inv}`,
+    } };
+    jsonRes(res, 200, dcCache.data);
+  } catch { jsonRes(res, 502, { error: "discord unreachable" }); }
+}
+
 // ---- Jellyfin proxy (config-gated) ----------------------------------
 async function jellyfinProxy(req, res, rest, u) {
   const base = cfg().jellyfinUrl || "http://127.0.0.1:8096";
@@ -425,6 +443,7 @@ http.createServer((req, res) => {
     if (P === "/play/ping" && req.method === "POST") { playPing(req, res); return; }
     if (P === "/play/stats" && req.method === "GET") { playStats(req, res); return; }
     if (P === "/twitch/status" && req.method === "GET") { twitchStatus(req, res); return; }
+    if (P === "/discord/info" && req.method === "GET") { discordInfo(req, res); return; }
     if (P === "/request" && req.method === "POST") { gameRequest(req, res); return; }
     if (P === "/search" && req.method === "GET") { serveSearch(req, res, u0); return; }
     const ejs = P.match(/^\/emulatorjs\/(.+)$/);

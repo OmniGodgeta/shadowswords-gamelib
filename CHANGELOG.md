@@ -2,6 +2,60 @@
 
 All notable changes to the ShadowSwords Arcade website.
 
+## [2.2.0] — 2026-09-08 — Box art everywhere, collections, discovery, streamer bits
+
+### Added
+- **Box art for ~34,000 games** (was ~4,000). `build.py` now hot-links
+  box art from the [libretro-thumbnails](https://github.com/libretro-thumbnails)
+  repos by name-match when ES-DE has nothing scraped — no extra storage, 44% of
+  the whole library now has art (ZX Spectrum, X68000, TIC-80, Amiga, Vic-20,
+  Atari 8-bit and dozens more went from nothing to near-complete).
+- **Collections** (`#/collections`) — auto-built by decade and genre, plus a
+  "Multiplayer" set and hand-curated lists (Couch co-op, Pick-up-and-play,
+  Halloween night, Weekend RPGs). Cover mosaics, three rotate onto the home page.
+- **Franchises** (`#/franchises`) — Mario, Zelda, Sonic, Final Fantasy, Mega Man
+  and ~35 more, grouped across every system, ordered by year.
+- **Recently added** shelf on the home page (newest ROM files by mtime).
+- **Filters** on every console page — era, genre, "box art only", "2+ players",
+  plus the existing sort. Filename year/region parsing fills the gaps where
+  there's no gamelist.
+- **Search autocomplete** — a live dropdown under the search box; ↑/↓/Enter to
+  pick. Self-host uses a server-side search endpoint instead of the 6 MB index.
+- **Persistent music mini-player** — a bottom bar that keeps playing as you
+  browse, with prev/next, shuffle, "shuffle all", a neon spectrum visualizer on
+  the Music page, and OS media-key support.
+- **Self-hosted EmulatorJS** — the self-host now proxies and caches
+  `cdn.emulatorjs.org` at `/emulatorjs/`, so Play works with no CDN dependency
+  and can run offline once cached.
+- **Cloud auto-save** — the emulator state is pushed to the server every 3
+  minutes and on exit, on top of the manual ☁ Save. `#/resume/…` still
+  auto-loads it.
+- **Screenshot & cheats** buttons enabled in the emulator menu;
+  RetroAchievements login enabled where the build supports it.
+- **Twitch "🔴 LIVE" badge** in the header when
+  [twitch.tv/shadowswords](https://twitch.tv/shadowswords) is streaming (via
+  decapi.me, no API key).
+- **Request-a-game form** on the Contact page → posts to a Discord webhook
+  (set `discordWebhook` in `~/.config/ssw-arcade/config.json`).
+- **Live Discord counts** on the Contact page (members / online now).
+- **"Playing now" counter** — a heads-up when other people are in a game.
+- **Profile page** (`#/profile`) — browser playtime, games launched, favorites,
+  systems touched, cache size.
+- **Keyboard shortcuts** (`/`, `g h/p/m/v/f`, `r`, `l`, `?`) with a help overlay.
+- **Lite mode** — drops the scanlines, glows and animations for low-end devices;
+  respects `prefers-reduced-motion`. Toggle in the footer or with `l`.
+- **PWA update prompt** — "New version available — reload" when the service
+  worker finds an update.
+- Per-route page titles; Open Graph / Twitter card meta for shared links.
+- In-app link handling: the native wrapper's `ShadowSwordsApp` UA drops the
+  "opens in a new tab" affordance.
+
+### Server (`arcade-server`)
+- New endpoints: `/emulatorjs/*` (caching CDN proxy), `/search`, `/play/ping`
+  + `/play/stats`, `/twitch/status`, `/discord/info`, `/request` (Discord
+  webhook), `/jellyfin/*` (proxy, config-gated). Config file:
+  `~/.config/ssw-arcade/config.json`.
+
 ## [2.1.0] — 2026-09-08 — Cache, favorites, cloud saves, PWA, netplay
 
 ### Added

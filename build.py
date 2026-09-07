@@ -23,7 +23,10 @@ import sys
 import xml.etree.ElementTree as ET
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from urllib.parse import quote
 
+import time
+NOW = time.time()
 HOME = Path.home()
 ESDE = HOME / "ES-DE"
 GAMELISTS = ESDE / "gamelists"
@@ -220,6 +223,160 @@ LOGO_ALIAS = {
     "pcecd": "pcengine", "pico": "genesis", "ps5": "ps4", "megadrivejp": "megadrive",
     "msx1": "msx", "tg-cd": "pcengine", "n64dd": "n64", "amiga": "amiga",
 }
+
+# ES-DE system id -> libretro-thumbnails repo name. Box art (and title/snap
+# fallback) is hot-linked from raw.githubusercontent.com — no local storage.
+LIBRETRO = {
+    "nes": "Nintendo - Nintendo Entertainment System",
+    "fds": "Nintendo - Family Computer Disk System",
+    "snes": "Nintendo - Super Nintendo Entertainment System",
+    "satellaview": "Nintendo - Satellaview", "sufami": "Nintendo - Sufami Turbo",
+    "gb": "Nintendo - Game Boy", "gbc": "Nintendo - Game Boy Color",
+    "gba": "Nintendo - Game Boy Advance", "n64": "Nintendo - Nintendo 64",
+    "n64dd": "Nintendo - Nintendo 64DD", "nds": "Nintendo - Nintendo DS",
+    "gc": "Nintendo - GameCube", "wii": "Nintendo - Wii", "wiiu": "Nintendo - Wii U",
+    "n3ds": "Nintendo - Nintendo 3DS", "virtualboy": "Nintendo - Virtual Boy",
+    "pokemini": "Nintendo - Pokemon Mini", "gamegear": "Sega - Game Gear",
+    "mastersystem": "Sega - Master System - Mark III", "genesis": "Sega - Mega Drive - Genesis",
+    "megadrive": "Sega - Mega Drive - Genesis", "megadrivejp": "Sega - Mega Drive - Genesis",
+    "sega32x": "Sega - 32X", "segacd": "Sega - Mega-CD - Sega CD", "saturn": "Sega - Saturn",
+    "dreamcast": "Sega - Dreamcast", "sg-1000": "Sega - SG-1000", "pico": "Sega - PICO",
+    "pcengine": "NEC - PC Engine - TurboGrafx 16", "supergrafx": "NEC - PC Engine SuperGrafx",
+    "pcecd": "NEC - PC Engine CD - TurboGrafx-CD", "tg-cd": "NEC - PC Engine CD - TurboGrafx-CD",
+    "pcfx": "NEC - PC-FX", "atari2600": "Atari - 2600", "atari5200": "Atari - 5200",
+    "atari7800": "Atari - 7800", "atarilynx": "Atari - Lynx", "atarijaguar": "Atari - Jaguar",
+    "atarijaguarcd": "Atari - Jaguar", "atari800": "Atari - 8-bit", "atarist": "Atari - ST",
+    "wonderswan": "Bandai - WonderSwan", "wonderswancolor": "Bandai - WonderSwan Color",
+    "ngp": "SNK - Neo Geo Pocket", "ngpc": "SNK - Neo Geo Pocket Color", "neogeo": "SNK - Neo Geo",
+    "neogeocd": "SNK - Neo Geo CD", "colecovision": "Coleco - ColecoVision",
+    "c64": "Commodore - 64", "vic20": "Commodore - VIC-20", "amiga": "Commodore - Amiga",
+    "amiga500": "Commodore - Amiga", "cdtv": "Commodore - CDTV", "plus4": "Commodore - Plus-4",
+    "psx": "Sony - PlayStation", "ps2": "Sony - PlayStation 2", "psp": "Sony - PlayStation Portable",
+    "psvita": "Sony - PlayStation Vita", "3do": "The 3DO Company - 3DO",
+    "intellivision": "Mattel - Intellivision", "vectrex": "GCE - Vectrex",
+    "channelf": "Fairchild - Channel F", "odyssey2": "Magnavox - Odyssey2",
+    "msx": "Microsoft - MSX", "msx1": "Microsoft - MSX", "msx2": "Microsoft - MSX2",
+    "zxspectrum": "Sinclair - ZX Spectrum", "amstradcpc": "Amstrad - CPC",
+    "supervision": "Watara - Supervision", "gamecom": "Tiger - Game.com",
+    "arcadia": "Emerson - Arcadia 2001", "megaduck": "Mega Duck", "scv": "Epoch - Super Cassette Vision",
+    "x68000": "Sharp - X68000", "supracan": "Funtech - Super Acan", "vsmile": "VTech - V.Smile",
+    "crvision": "VTech - CreatiVision", "gx4000": "Amstrad - GX4000",
+    "apple2": "Apple - II", "bbcmicro": "Acorn - BBC Micro", "electron": "Acorn - Electron",
+    "archimedes": "Acorn - Archimedes", "oric": "Tangerine - Oric", "samcoupe": "MGT - SAM Coupe",
+    "pv1000": "Casio - PV-1000", "tic80": "TIC-80", "n-gage": "Nokia - N-Gage",
+}
+LR_TAG_RE = re.compile(r"[\(\[][^\)\]]*[\)\]]")
+LR_CACHE = Path(__file__).parent / ".lr-cache"
+
+
+def _lr_norm(s: str) -> str:
+    """No-Intro forbidden-char substitution used by libretro thumbnail filenames."""
+    return re.sub(r'[&*/:`<>?\\|"]', "_", s)
+
+
+def _lr_loose(s: str) -> str:
+    return re.sub(r"\s{2,}", " ", LR_TAG_RE.sub("", s)).strip().lower()
+
+
+def libretro_index(sid: str) -> dict:
+    """{stem -> raw boxart URL} for a system, from its libretro-thumbnails repo.
+    Cached to .lr-cache/<sid>.json. Skipped with --no-lr / --no-net."""
+    repo = LIBRETRO.get(sid)
+    if not repo:
+        return {}
+    LR_CACHE.mkdir(exist_ok=True)
+    cache = LR_CACHE / f"{sid}.json"
+    if cache.is_file():
+        try:
+            return json.loads(cache.read_text())
+        except ValueError:
+            pass
+    if "--no-lr" in sys.argv or "--no-net" in sys.argv:
+        return {}
+    exact, loose = {}, {}
+    for branch in ("master", "main"):
+        r = subprocess.run(
+            ["gh", "api", f"repos/libretro-thumbnails/{repo.replace(' ', '_')}"
+             f"/git/trees/{branch}?recursive=1", "--jq",
+             '.tree[] | select(.path | test("Named_(Boxarts|Titles|Snaps)/")) | .path'],
+            capture_output=True, text=True,
+        )
+        if r.returncode == 0 and r.stdout.strip():
+            paths = r.stdout.strip().split("\n")
+            base = f"https://raw.githubusercontent.com/libretro-thumbnails/{repo.replace(' ', '_')}/{branch}/"
+            # prefer boxart; fall back to title then snap
+            rank = {"Named_Boxarts": 0, "Named_Titles": 1, "Named_Snaps": 2}
+            for p in sorted(paths, key=lambda x: rank.get(x.split("/")[0], 3)):
+                if not p.lower().endswith(".png"):
+                    continue
+                stem = p.split("/")[-1][:-4]
+                url = base + "/".join(quote(seg) for seg in p.split("/"))
+                exact.setdefault(stem.lower(), url)
+                loose.setdefault(_lr_loose(stem), url)
+            break
+    idx = {"exact": exact, "loose": loose}
+    try:
+        cache.write_text(json.dumps(idx, separators=(",", ":")))
+    except OSError:
+        pass
+    print(f"  libretro {sid}: {len(exact)} boxarts")
+    return idx
+
+
+def libretro_match(idx: dict, stem: str) -> str | None:
+    if not idx:
+        return None
+    ex, lo = idx.get("exact", {}), idx.get("loose", {})
+    return (ex.get(stem.lower()) or ex.get(_lr_norm(stem).lower())
+            or lo.get(_lr_loose(stem)))
+
+
+# filename region / year hints for systems with no gamelist
+REGION_RE = re.compile(r"[\(\[](USA|Europe|Japan|World|Australia|Korea|Brazil|"
+                       r"USA, Europe|Japan, USA|En|U|E|J|JU|W)[,\)\]]", re.I)
+YEAR_RE = re.compile(r"[\(\[](19[7-9]\d|20[0-2]\d)[\)\],]")
+REGION_MAP = {"u": "USA", "e": "Europe", "j": "Japan", "w": "World", "ju": "Japan, USA",
+              "en": "English"}
+
+# name-prefix -> franchise label
+FRANCHISES = {
+    "Super Mario": "Mario", "Mario ": "Mario", "Dr. Mario": "Mario", "Mario Kart": "Mario",
+    "Paper Mario": "Mario", "Mario Party": "Mario", "Luigi": "Mario",
+    "The Legend of Zelda": "Zelda", "Zelda": "Zelda",
+    "Sonic ": "Sonic the Hedgehog", "Final Fantasy": "Final Fantasy",
+    "Dragon Quest": "Dragon Quest", "Dragon Warrior": "Dragon Quest",
+    "Mega Man": "Mega Man", "Megaman": "Mega Man", "Rockman": "Mega Man",
+    "Castlevania": "Castlevania", "Metroid": "Metroid", "Kirby": "Kirby",
+    "Donkey Kong": "Donkey Kong", "Street Fighter": "Street Fighter",
+    "Mortal Kombat": "Mortal Kombat", "Pokemon": "Pokémon", "Pokémon": "Pokémon",
+    "Contra": "Contra", "Metal Gear": "Metal Gear", "Resident Evil": "Resident Evil",
+    "Tekken": "Tekken", "Gran Turismo": "Gran Turismo", "Crash Bandicoot": "Crash Bandicoot",
+    "Spyro": "Spyro", "Tomb Raider": "Tomb Raider", "Need for Speed": "Need for Speed",
+    "Grand Theft Auto": "Grand Theft Auto", "The King of Fighters": "King of Fighters",
+    "Bomberman": "Bomberman", "Prince of Persia": "Prince of Persia",
+    "Star Wars": "Star Wars", "Teenage Mutant Ninja Turtles": "TMNT",
+    "Double Dragon": "Double Dragon", "Gradius": "Gradius", "Ninja Gaiden": "Ninja Gaiden",
+    "Worms": "Worms", "FIFA ": "FIFA", "NBA ": "NBA", "Tony Hawk": "Tony Hawk",
+    "Silent Hill": "Silent Hill", "Devil May Cry": "Devil May Cry", "Halo": "Halo",
+    "God of War": "God of War", "Ratchet": "Ratchet & Clank", "Jak": "Jak & Daxter",
+}
+CURATED = [
+    ("Couch co-op classics", "co-op",
+     ["Contra", "Streets of Rage 2", "Teenage Mutant Ninja Turtles", "Golden Axe",
+      "Double Dragon", "River City Ransom", "Gauntlet", "The Simpsons", "Battletoads",
+      "Sonic the Hedgehog 2", "Super Mario Bros. 3", "Bubble Bobble", "Micro Machines"]),
+    ("Pick-up-and-play under 5 minutes", "quick",
+     ["Tetris", "Pac-Man", "Dr. Mario", "Bomberman", "Galaga", "Dig Dug", "Bust-A-Move",
+      "Columns", "Snake", "Arkanoid", "Mr. Driller", "Puyo Puyo"]),
+    ("Halloween night", "spooky",
+     ["Castlevania", "Super Castlevania IV", "Ghosts 'n Goblins", "Splatterhouse",
+      "Zombies Ate My Neighbors", "Resident Evil", "Silent Hill", "Monster Party",
+      "Ghouls 'n Ghosts", "Sweet Home"]),
+    ("RPGs to sink a weekend into", "rpg",
+     ["Chrono Trigger", "Final Fantasy VI", "Final Fantasy VII", "EarthBound",
+      "Secret of Mana", "The Legend of Zelda: A Link to the Past", "Dragon Quest V",
+      "Pokemon Red", "Super Mario RPG", "Phantasy Star IV"]),
+]
 
 # EmulatorJS "system" value (EJS_core) per ES-DE system. Verified against
 # EmulatorJS getCores() + the cores/*.data files on cdn.emulatorjs.org/stable.
@@ -473,6 +630,113 @@ def convert(src, dst, width):
     return r.returncode == 0
 
 
+def write_discovery(all_games, newest):
+    """data/collections.json, data/franchises.json, data/added.json.
+    Each entry item is [name, sys, gid, img]."""
+    def item(g):
+        return [g[0], g[1], g[2], g[3]]
+
+    PREF_SYS = {"snes": 0, "genesis": 1, "megadrive": 1, "nes": 2, "gba": 3, "psx": 3,
+                "n64": 4, "gb": 5, "gbc": 5, "mastersystem": 6, "pcengine": 6}
+    def dedup_best(rows):
+        """collapse same title across systems, keep the one with art / preferred sys."""
+        best = {}
+        for g in rows:
+            k = re.sub(r"\s+", " ", LR_TAG_RE.sub("", g[0])).strip().lower()
+            score = (1 if g[3] else 0, -PREF_SYS.get(g[1], 9))
+            if k not in best or score > best[k][1]:
+                best[k] = (g, score)
+        return [v[0] for v in best.values()]
+
+    collections = []
+
+    # by decade
+    for lo in (1970, 1980, 1990, 2000, 2010):
+        rows = [g for g in all_games if lo <= g[4] < lo + 10]
+        rows = [g for g in dedup_best(rows) if g[3]]
+        rows.sort(key=lambda g: g[0].lower())
+        if len(rows) >= 12:
+            collections.append({"id": f"decade-{lo}s", "title": f"The {lo}s",
+                                "note": f"{len(rows):,} games with box art from the {lo}s",
+                                "items": [item(g) for g in rows[:180]]})
+
+    # by genre
+    genre_rows = {}
+    for g in all_games:
+        if g[5] and g[3]:
+            genre_rows.setdefault(g[5].split("/")[0].strip(), []).append(g)
+    for gen, rows in sorted(genre_rows.items(), key=lambda kv: -len(kv[1]))[:14]:
+        rows = dedup_best(rows)
+        rows.sort(key=lambda g: g[0].lower())
+        if len(rows) >= 15:
+            collections.append({"id": "genre-" + slug(gen), "title": gen,
+                                "note": f"{len(rows):,} {gen} games",
+                                "items": [item(g) for g in rows[:180]]})
+
+    # multiplayer
+    mp = [g for g in all_games if g[6] and re.search(r"[2-9]|multi", str(g[6]), re.I) and g[3]]
+    mp = dedup_best(mp); mp.sort(key=lambda g: g[0].lower())
+    if len(mp) >= 12:
+        collections.append({"id": "multiplayer", "title": "Multiplayer",
+                            "note": f"{len(mp):,} games for two or more players",
+                            "items": [item(g) for g in mp[:200]]})
+
+    # curated (name substring match, prefer art)
+    by_name = {}
+    for g in all_games:
+        by_name.setdefault(g[0].lower(), []).append(g)
+    for title, cid, names in CURATED:
+        picks = []
+        for want in names:
+            cands = [g for k, rows in by_name.items() if want.lower() in k for g in rows]
+            cands = [g for g in cands if g[3]] or cands
+            if cands:
+                picks.append(sorted(cands, key=lambda g: (len(g[0]), -PREF_SYS.get(g[1], 9)))[0])
+        if len(picks) >= 5:
+            collections.append({"id": "curated-" + cid, "title": title, "curated": True,
+                                "note": "", "items": [item(g) for g in picks]})
+
+    (DATA_OUT / "collections.json").write_text(
+        json.dumps(collections, ensure_ascii=False, separators=(",", ":")))
+
+    # franchises
+    fr = {}
+    for g in all_games:
+        for pref, label in FRANCHISES.items():
+            if g[0].startswith(pref) or g[0].lower().startswith(pref.lower()):
+                fr.setdefault(label, []).append(g)
+                break
+    franchises = []
+    for label, rows in sorted(fr.items()):
+        rows = dedup_best(rows)
+        rows.sort(key=lambda g: (g[4] or 9999, g[0].lower()))
+        if len(rows) >= 3:
+            franchises.append({"id": "fr-" + slug(label), "title": label,
+                               "note": f"{len(rows)} games",
+                               "items": [item(g) for g in rows[:120]]})
+    (DATA_OUT / "franchises.json").write_text(
+        json.dumps(franchises, ensure_ascii=False, separators=(",", ":")))
+
+    # recently added (by ROM file mtime)
+    newest.sort(reverse=True)
+    seen, added = set(), []
+    span = (newest[0][0] - newest[-1][0]) if len(newest) > 50 else 0
+    for mt, name, sysid, gid, img in newest:
+        if name.lower() in seen:
+            continue
+        seen.add(name.lower())
+        added.append([name, sysid, gid, img, int(mt)])
+        if len(added) >= 120:
+            break
+    # only meaningful if mtimes actually vary (a real "recently added" signal)
+    if span < 3600:
+        added = []
+    (DATA_OUT / "added.json").write_text(
+        json.dumps(added, ensure_ascii=False, separators=(",", ":")))
+    print(f"discovery: {len(collections)} collections, {len(franchises)} franchises, "
+          f"{len(added)} recently-added")
+
+
 def main():
     if not ROMS.is_dir():
         sys.exit(f"no roms dir at {ROMS}")
@@ -491,6 +755,8 @@ def main():
     if "--no-net" not in sys.argv:
         fetch_youtube_videos()
     systems_index, search_rows, jobs = [], [], []
+    all_games = []          # {name,sys,gid,img,year,genre,players} for collections
+    newest = []             # (mtime, name, sys, gid, img)
 
     for sid in system_ids:
         root = ROMS / sid
@@ -503,6 +769,7 @@ def main():
             continue
 
         gl = load_gamelist(sid)
+        lr = libretro_index(sid)
         core = EMU_CORE.get(sid)
         games, genres, with_art = [], {}, 0
         seen_ids = set()
@@ -526,8 +793,18 @@ def main():
                 if meta["desc"]:
                     rec["desc"] = meta["desc"][:1200]
 
-            # box art — any system: gamelist <image>, ES-DE downloaded_media, or
-            # ROM-adjacent media/ on the drive.
+            # fill year / region from the filename when the gamelist didn't
+            if "year" not in rec:
+                ym = YEAR_RE.search(rel)
+                if ym:
+                    rec["year"] = int(ym.group(1))
+            rm = REGION_RE.search(rel)
+            if rm:
+                r = rm.group(1).lower()
+                rec["region"] = REGION_MAP.get(r, rm.group(1).title())
+
+            # box art: gamelist <image>, ES-DE downloaded_media, ROM-adjacent
+            # media/, else a hot-linked libretro-thumbnails boxart.
             src = None
             if meta.get("_image"):
                 p = Path(os.path.normpath(root / meta["_image"].lstrip("./")))
@@ -538,11 +815,26 @@ def main():
                 rec["img"] = f"media/{sid}/{gid}.webp"
                 jobs.append((src, MEDIA_OUT / sid / f"{gid}.webp", IMG_W))
                 with_art += 1
+            else:
+                lr_url = libretro_match(lr, base_stem)
+                if lr_url:
+                    rec["img"] = lr_url          # remote, no conversion job
+                    with_art += 1
 
             if rec.get("genre"):
                 genres[rec["genre"]] = genres.get(rec["genre"], 0) + 1
             games.append(rec)
             search_rows.append([name, sid, gid, rec.get("year", 0), 1 if "img" in rec else 0])
+            all_games.append((name, sid, gid, rec.get("img"), rec.get("year", 0),
+                              rec.get("genre", ""), rec.get("players", "")))
+
+            try:
+                tp = root / rel.rstrip("/")
+                mt = min(tp.stat().st_mtime, tp.lstat().st_mtime)
+                if 946684800 < mt <= NOW + 86400:      # 2000-01-01 .. now (skip bogus NTFS stamps)
+                    newest.append((mt, name, sid, gid, rec.get("img")))
+            except OSError:
+                pass
 
         games.sort(key=lambda r: r["name"].lower())
         (DATA_OUT / f"{sid}.json").write_text(json.dumps(games, ensure_ascii=False, separators=(",", ":")))
@@ -582,6 +874,8 @@ def main():
     (DATA_OUT / "systems.json").write_text(json.dumps(
         {"systems": systems_index, "total": total}, ensure_ascii=False, separators=(",", ":")))
     (DATA_OUT / "search.json").write_text(json.dumps(search_rows, ensure_ascii=False, separators=(",", ":")))
+
+    write_discovery(all_games, newest)
 
     print(f"\n{len(jobs)} images -> webp ...")
     ok = 0

@@ -441,6 +441,107 @@ main { min-height: calc(100dvh - var(--bar-h) - 90px); }
 }
 .tile:focus-visible .tile-art { border-color: var(--pink); box-shadow: var(--glow-pink), 0 16px 40px rgba(0,0,0,.6); }
 
+/* ---- collection covers ---- */
+.coll-cover { display: grid; grid-template-columns: 1fr 1fr; gap: 2px; position: relative; overflow: hidden; }
+.coll-cover img { width: 100%; height: 100%; object-fit: cover; opacity: .5; }
+.coll-cover .coll-label {
+  position: absolute; inset: 0; display: grid; place-items: center; padding: 10px;
+  font-weight: 900; font-size: 14px; text-align: center; text-shadow: 0 2px 12px #000, 0 0 20px var(--cyan);
+  background: radial-gradient(120% 80% at 50% 50%, rgba(7,7,13,.35), rgba(7,7,13,.72));
+}
+
+/* ---- search autocomplete ---- */
+.ac {
+  position: absolute; top: calc(100% + 6px); left: 0; right: 0; z-index: 60;
+  background: rgba(9,9,18,.98); border: 1px solid var(--line-2); border-radius: 10px;
+  box-shadow: 0 20px 50px rgba(0,0,0,.6); overflow: hidden;
+}
+.ac-row { display: flex; justify-content: space-between; gap: 10px; padding: 9px 12px; cursor: pointer; font-size: 13px; }
+.ac-row .ac-s { color: var(--dim); flex: 0 0 auto; }
+.ac-row .ac-t { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ac-row.sel, .ac-row:hover { background: rgba(34,224,255,.12); color: var(--cyan); }
+
+/* ---- mini music player ---- */
+body.has-mp .foot { margin-bottom: 66px; }
+#mini-player {
+  position: fixed; left: 0; right: 0; bottom: 0; z-index: 200; height: 58px;
+  display: flex; align-items: center; gap: 8px; padding: 0 12px;
+  background: rgba(9,9,18,.97); border-top: 1px solid var(--cyan); box-shadow: 0 -6px 30px rgba(0,0,0,.5);
+  backdrop-filter: blur(8px);
+}
+#mini-player .mp-b {
+  flex: 0 0 auto; width: 34px; height: 34px; border-radius: 8px; padding: 0;
+  background: transparent; border: 1px solid var(--line-2); color: var(--text); cursor: pointer; font-size: 13px;
+}
+#mini-player .mp-b:hover { border-color: var(--cyan); color: var(--cyan); box-shadow: var(--glow-cyan); }
+#mini-player .mp-play { background: var(--pink); border-color: var(--pink); color: #fff; }
+#mini-player .mp-sh.on { color: var(--cyan); border-color: var(--cyan); }
+#mini-player .mp-meta { flex: 1 1 auto; min-width: 0; cursor: pointer; }
+#mini-player .mp-t { font-size: 13px; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#mini-player .mp-s { font-size: 11px; color: var(--dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+/* ---- audio visualizer ---- */
+.viz { width: 100%; height: 120px; margin-top: 16px; border: 1px solid var(--line); border-radius: 10px; background: rgba(7,7,13,.5); }
+
+/* ---- profile stats ---- */
+.stat-row { display: flex; flex-wrap: wrap; gap: 14px; padding: 8px 0 20px; }
+.stat {
+  flex: 1 1 130px; padding: 16px; border: 1px solid var(--line-2); border-radius: 12px;
+  background: linear-gradient(160deg, var(--bg-3), #0c0c1c); text-align: center;
+}
+.stat-n { font-size: 24px; font-weight: 900; color: var(--cyan); text-shadow: var(--glow-cyan); }
+.stat-l { font-size: 11.5px; color: var(--muted); margin-top: 4px; text-transform: uppercase; letter-spacing: .06em; }
+
+/* ---- filter checkboxes ---- */
+.grid-tools .chk { display: inline-flex; align-items: center; gap: 6px; font-size: 12.5px; color: var(--muted); cursor: pointer; }
+.grid-tools .chk input { width: 15px; height: 15px; accent-color: var(--pink); }
+
+/* ---- request form ---- */
+.req-form { margin-top: 28px; padding: 20px; border: 1px solid var(--line-2); border-radius: 14px; background: var(--bg-1); }
+.req-form h3 { margin: 0 0 12px; font-size: 15px; }
+.req-form input, .req-form textarea {
+  width: 100%; margin-bottom: 10px; padding: 10px 12px; font-size: 13px; font-family: inherit;
+  background: var(--bg); color: var(--text); border: 1px solid var(--line-2); border-radius: 9px; outline: none; resize: vertical;
+}
+.req-form input:focus, .req-form textarea:focus { border-color: var(--cyan); box-shadow: var(--glow-cyan); }
+
+/* ---- keyboard help overlay ---- */
+#help-overlay { position: fixed; inset: 0; z-index: 400; display: grid; place-items: center; background: rgba(7,7,13,.8); backdrop-filter: blur(4px); }
+.help-card { background: var(--bg-1); border: 1px solid var(--cyan); border-radius: 16px; padding: 24px 28px; box-shadow: var(--glow-cyan); min-width: 280px; }
+.help-card h3 { margin: 0 0 14px; }
+.help-row { display: flex; gap: 14px; align-items: center; margin-bottom: 8px; font-size: 13px; }
+.help-row kbd {
+  flex: 0 0 64px; text-align: center; padding: 3px 6px; font-family: inherit; font-size: 12px;
+  background: var(--bg-3); border: 1px solid var(--line-2); border-radius: 6px; color: var(--cyan);
+}
+.help-card .btn { margin-top: 12px; }
+
+/* ---- Twitch live badge ---- */
+#live-badge {
+  display: inline-flex; align-items: center; gap: 6px; margin-left: 10px; padding: 4px 10px;
+  border-radius: 999px; font-size: 11px; font-weight: 900; letter-spacing: .1em;
+  background: #ff0033; color: #fff; text-decoration: none; box-shadow: 0 0 14px rgba(255,0,51,.6);
+  animation: livepulse 1.6s ease-in-out infinite;
+}
+#live-badge .dot { width: 7px; height: 7px; border-radius: 999px; background: #fff; }
+@keyframes livepulse { 50% { box-shadow: 0 0 22px rgba(255,0,51,.95); } }
+
+/* ---- SW update toast ---- */
+#sw-toast {
+  position: fixed; left: 50%; bottom: 20px; transform: translateX(-50%); z-index: 500;
+  background: var(--bg-1); border: 1px solid var(--cyan); border-radius: 10px; padding: 10px 14px;
+  font-size: 13px; box-shadow: var(--glow-cyan);
+}
+#sw-toast button { margin-left: 8px; padding: 4px 10px; border-radius: 6px; border: 1px solid var(--cyan); background: var(--cyan); color: #001; font-weight: 800; cursor: pointer; }
+body.has-mp #sw-toast { bottom: 78px; }
+
+/* ---- lite mode: kill the expensive bits ---- */
+body.lite .scanlines { display: none; }
+body.lite { background-image: radial-gradient(1000px 700px at 50% 120%, rgba(34,224,255,.08), transparent 60%); }
+body.lite *, body.lite *::before, body.lite *::after { animation: none !important; text-shadow: none !important; }
+body.lite .tile { transition: none; }
+body.lite .btn, body.lite .badge, body.lite .stat-n, body.lite #live-badge { box-shadow: none !important; }
+
 /* ---- responsive ---- */
 @media (max-width: 900px) {
   .bar-nav { display: none; }

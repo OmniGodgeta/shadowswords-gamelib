@@ -13,6 +13,23 @@ stream, BIOS, music, cloud save-states and netplay.
 | `arcade-netplay/` | EmulatorJS netplay signalling server (`express` + `socket.io` + `cors`, from [EmulatorJS/EmulatorJS-Netplay](https://github.com/EmulatorJS/EmulatorJS-Netplay), patched to bind `127.0.0.1:8712`). | `arcade-netplay.service` (user unit) |
 | `setup-arcade-serving.sh` | Publishes 8710 / 8096 / 8712 to the tailnet via `tailscale serve`, and prints the Funnel commands for public access. | run by hand |
 
+## Optional config — `~/.config/ssw-arcade/config.json`
+
+```json
+{
+  "twitch": "shadowswords",
+  "discordWebhook": "https://discord.com/api/webhooks/…",
+  "discordInvite": "QnMc35rUdB",
+  "jellyfinUrl": "http://127.0.0.1:8096",
+  "jellyfinKey": "<Jellyfin API key from Dashboard → API Keys>"
+}
+```
+
+All keys are optional and hot-reloaded (~30 s). Without `discordWebhook` the
+request form returns 501; without `jellyfinKey` the `/jellyfin/*` proxy is off
+and Movies stays a link-out. `twitch` drives the header LIVE badge (via
+decapi.me, no API key needed).
+
 ## Install
 
 ```bash
