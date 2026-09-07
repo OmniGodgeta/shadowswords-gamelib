@@ -470,11 +470,16 @@ function parseHash() {
 }
 function setNav(name) {
   $$(".bar-link").forEach((a) => a.classList.toggle("active", a.dataset.nav === name));
-  $("#back-btn").hidden = !name || name === "home";
+  // left slot holds EITHER the nav (top-level routes) OR a back button (deep routes) — never both
+  const topLevel = name === "home" || name === "play" || name === "movies";
+  $("#bar-nav").hidden = !topLevel;
+  $("#back-btn").hidden = topLevel;
 }
 async function router() {
   // leaving the player? (any hash change while it's up triggers a reload via routePlayGame)
   const [a, b, c] = parseHash();
+  if (a !== "q") { $("#bar-search").hidden = true; }
+  window.scrollTo(0, 0);
   if (a === "s" && b) { setNav(null); return routeSystem(b); }
   if (a === "g" && b && c) { setNav(null); return routeGame(b, c); }
   if (a === "play" && b && c) { setNav("play"); return routePlayGame(b, c); }
