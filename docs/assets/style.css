@@ -388,6 +388,59 @@ main { min-height: calc(100dvh - var(--bar-h) - 90px); }
 .foot a:hover { color: var(--cyan); }
 .foot-sep { margin: 0 8px; opacity: .5; }
 
+/* ---- player-bar cloud buttons ---- */
+.player-bar .pbtn {
+  flex: 0 0 auto; height: 30px; padding: 0 12px; border-radius: 8px;
+  background: var(--bg-1); border: 1px solid var(--line-2); color: var(--cyan);
+  font-size: 12px; font-weight: 700; cursor: pointer; white-space: nowrap;
+  transition: box-shadow .12s, border-color .12s;
+}
+.player-bar .pbtn:hover { border-color: var(--cyan); box-shadow: var(--glow-cyan); }
+
+/* ---- favorite heart ---- */
+.heart {
+  position: absolute; right: 6px; top: 6px; z-index: 4;
+  width: 30px; height: 30px; border-radius: 999px; padding: 0;
+  display: grid; place-items: center; font-size: 15px; line-height: 1;
+  background: rgba(7,7,13,.62); color: #7a7fb5;
+  border: 1px solid var(--line-2); cursor: pointer;
+  backdrop-filter: blur(3px); transition: transform .12s, color .12s, box-shadow .12s;
+  opacity: 0;
+}
+.tile:hover .heart, .tile:focus-within .heart, .heart.on, .heart:focus-visible { opacity: 1; }
+.heart:hover { transform: scale(1.12); color: var(--pink); }
+.heart.on { color: var(--pink); border-color: var(--pink); box-shadow: var(--glow-pink); opacity: 1; }
+@media (hover: none) { .heart { opacity: 1; } }
+
+/* ---- download progress bar ---- */
+.dl-bar {
+  width: min(320px, 70vw); height: 8px; margin: 12px auto 0;
+  background: var(--bg-1); border: 1px solid var(--line-2); border-radius: 999px; overflow: hidden;
+}
+.dl-bar > i {
+  display: block; height: 100%; width: 0;
+  background: linear-gradient(90deg, var(--cyan), var(--pink));
+  box-shadow: var(--glow-cyan); transition: width .2s ease;
+}
+
+/* ---- toast ---- */
+#toast {
+  position: fixed; left: 50%; bottom: 26px; transform: translate(-50%, 20px);
+  z-index: 9999; max-width: 90vw; padding: 11px 18px; border-radius: 10px;
+  background: rgba(7,7,13,.92); border: 1px solid var(--cyan); color: var(--text);
+  font-size: 13px; font-weight: 600; box-shadow: var(--glow-cyan);
+  opacity: 0; pointer-events: none; transition: opacity .22s, transform .22s;
+}
+#toast.show { opacity: 1; transform: translate(-50%, 0); }
+
+/* ---- gamepad / keyboard focus ring ---- */
+.bar-link:focus-visible, .btn:focus-visible, .more:focus-visible,
+.album-btn:focus-visible, .social:focus-visible, .shelf-nav:focus-visible,
+.track:focus-visible, .drawer a:focus-visible, .bar-btn:focus-visible {
+  outline: 2px solid var(--cyan); outline-offset: 2px; border-radius: 8px;
+}
+.tile:focus-visible .tile-art { border-color: var(--pink); box-shadow: var(--glow-pink), 0 16px 40px rgba(0,0,0,.6); }
+
 /* ---- responsive ---- */
 @media (max-width: 900px) {
   .bar-nav { display: none; }

@@ -15,16 +15,19 @@ if [[ $mode == off ]]; then
 fi
 
 systemctl --user start arcade-server.service 2>/dev/null || true
+systemctl --user start arcade-netplay.service 2>/dev/null || true
 tailscale serve --bg --https=443  http://127.0.0.1:8710
 tailscale serve --bg --https=8443 http://127.0.0.1:8096
+tailscale serve --bg --https=8712 http://127.0.0.1:8712   # EmulatorJS netplay
 
 echo
 tailscale serve status
 cat <<'MSG'
 
-Arcade : https://shadow-1.tail51f9d6.ts.net/
-Movies : https://shadow-1.tail51f9d6.ts.net:8443/
-(both reachable from any device on your tailnet — remote or on home wifi)
+Arcade  : https://shadow-1.tail51f9d6.ts.net/
+Movies  : https://shadow-1.tail51f9d6.ts.net:8443/
+Netplay : https://shadow-1.tail51f9d6.ts.net:8712/  (signalling only)
+(all reachable from any device on your tailnet — remote or on home wifi)
 
 To also make them reachable from the public internet (no Tailscale needed on
 the client), first click "Enable" at

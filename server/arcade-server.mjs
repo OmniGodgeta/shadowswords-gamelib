@@ -18,6 +18,10 @@ const SITE = path.join(os.homedir(), "Work", "shadowswords-gamelib", "docs");
 const ROMS = path.join(os.homedir(), "Games", "roms");
 const BIOS = path.join(os.homedir(), "Games", "bios");
 const MUSIC = "/run/media/shadowswords/Game SSD/Music";
+const STATES = path.join(os.homedir(), ".local", "share", "ssw-arcade", "states");
+const STATE_MAX = 96 * 1024 * 1024;   // reject absurd save-state uploads
+try { fs.mkdirSync(STATES, { recursive: true }); }
+catch (e) { console.warn("save-states dir unavailable:", e.message); }
 const AUDIO_EXT = new Set([".mp3", ".flac", ".m4a", ".aac", ".ogg", ".opus", ".wav", ".wma"]);
 const AUDIO_MIME = {
   ".mp3": "audio/mpeg", ".flac": "audio/flac", ".m4a": "audio/mp4", ".aac": "audio/aac",
@@ -47,7 +51,11 @@ const MIME = {
   ".webp": "image/webp", ".png": "image/png", ".jpg": "image/jpeg",
   ".svg": "image/svg+xml", ".ico": "image/x-icon", ".txt": "text/plain; charset=utf-8",
 };
-const CORS = { "access-control-allow-origin": "*", "access-control-allow-headers": "range" };
+const CORS = {
+  "access-control-allow-origin": "*",
+  "access-control-allow-headers": "range, content-type",
+  "access-control-allow-methods": "GET, HEAD, PUT, DELETE, OPTIONS",
+};
 
 function serveStatic(req, res, urlPath) {
   let rel = decodeURIComponent(urlPath).replace(/\?.*$/, "");
@@ -175,8 +183,79 @@ function serveMusic(req, res, rel) {
   }
 }
 
+// ---- cloud save-states --------------------------------------------------
+const stateSys = (s) => /^[a-z0-9-]+$/i.test(s) && PLAYABLE.has(s);
+const stateFile = (sys, rel) => path.join(STATES, sys, Buffer.from(rel).toString("base64url") + ".state");
+
+function statesList(req, res) {
+  const out = [];
+  try {
+    for (const sys of fs.readdirSync(STATES)) {
+      const dir = path.join(STATES, sys);
+      if (!fs.statSync(dir).isDirectory()) continue;
+      for (const f of fs.readdirSync(dir)) {
+        if (!f.endsWith(".state")) continue;
+        let rel;
+        try { rel = Buffer.from(f.slice(0, -6), "base64url").toString("utf8"); } catch { continue; }
+        const st = fs.statSync(path.join(dir, f));
+        out.push({ sys, file: rel, name: rel.split("/").pop().replace(/\.[^.]+$/, ""),
+          size: st.size, mtime: st.mtimeMs });
+      }
+    }
+  } catch { /* none yet */ }
+  res.writeHead(200, { ...CORS, "content-type": "application/json", "cache-control": "no-store" })
+    .end(JSON.stringify(out));
+}
+
+function stateGet(req, res, sys, rel) {
+  if (!stateSys(sys) || rel.split(/[/\\]/).includes("..")) { res.writeHead(400, CORS).end("bad"); return; }
+  let st, full = stateFile(sys, rel);
+  try { st = fs.statSync(full); } catch { res.writeHead(404, CORS).end("no save"); return; }
+  res.writeHead(200, { ...CORS, "content-type": "application/octet-stream",
+    "content-length": st.size, "cache-control": "no-store" });
+  if (req.method === "HEAD") return res.end();
+  fs.createReadStream(full).pipe(res);
+}
+
+function statePut(req, res, sys, rel) {
+  if (!stateSys(sys) || rel.split(/[/\\]/).includes("..")) { res.writeHead(400, CORS).end("bad"); return; }
+  const full = stateFile(sys, rel);
+  fs.mkdirSync(path.dirname(full), { recursive: true });
+  const chunks = []; let n = 0;
+  req.on("data", (c) => {
+    n += c.length;
+    if (n > STATE_MAX) { req.destroy(); res.writeHead(413, CORS).end("too big"); return; }
+    chunks.push(c);
+  });
+  req.on("end", () => {
+    if (res.writableEnded) return;
+    try { fs.writeFileSync(full, Buffer.concat(chunks)); res.writeHead(200, { ...CORS, "content-type": "application/json" }).end('{"ok":true}'); }
+    catch (e) { res.writeHead(500, CORS).end("write failed"); }
+  });
+}
+
+function stateDelete(req, res, sys, rel) {
+  if (!stateSys(sys) || rel.split(/[/\\]/).includes("..")) { res.writeHead(400, CORS).end("bad"); return; }
+  try { fs.unlinkSync(stateFile(sys, rel)); } catch { /* already gone */ }
+  res.writeHead(200, { ...CORS, "content-type": "application/json" }).end('{"ok":true}');
+}
+
 http.createServer((req, res) => {
   if (req.method === "OPTIONS") { res.writeHead(204, { ...CORS, "access-control-max-age": "86400" }).end(); return; }
+
+  {
+    const u0 = new URL(req.url, "http://x");
+    if (u0.pathname === "/states/list" && req.method === "GET") { statesList(req, res); return; }
+    const sm = u0.pathname.match(/^\/states\/([^/]+)\/(.+)$/);
+    if (sm) {
+      const sys = decodeURIComponent(sm[1]), rel = decodeURIComponent(sm[2]);
+      if (req.method === "GET" || req.method === "HEAD") { stateGet(req, res, sys, rel); return; }
+      if (req.method === "PUT") { statePut(req, res, sys, rel); return; }
+      if (req.method === "DELETE") { stateDelete(req, res, sys, rel); return; }
+      res.writeHead(405, CORS).end("no"); return;
+    }
+  }
+
   if (req.method !== "GET" && req.method !== "HEAD") { res.writeHead(405).end("GET only"); return; }
 
   const u = new URL(req.url, "http://x");

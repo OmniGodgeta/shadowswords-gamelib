@@ -1,0 +1,16 @@
+[Unit]
+Description=shadowswords arcade — site + ROM server
+After=network.target
+
+[Service]
+ExecStart=/usr/bin/node %h/arcade-server.mjs
+Restart=on-failure
+RestartSec=3
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=%h/.local/share/ssw-arcade
+PrivateTmp=true
+
+[Install]
+WantedBy=default.target

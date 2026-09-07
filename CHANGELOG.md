@@ -2,6 +2,46 @@
 
 All notable changes to the ShadowSwords Arcade website.
 
+## [2.1.0] — 2026-09-08 — Cache, favorites, cloud saves, PWA, netplay
+
+### Added
+- **Browser ROM cache** — a downloaded ROM is kept in IndexedDB (1.5 GB budget,
+  oldest evicted first), so the second launch of a game is instant and works
+  offline. Shows a real download-progress bar while fetching, and "Loaded from
+  cache" on a hit. New **Offline & cache** page (`#/cache`) shows usage and has a
+  Clear button.
+- **Favorites** — a ♥ on every game tile (localStorage). New **Favorites** page
+  (`#/favorites`) and a home-page shelf.
+- **Continue playing** — the home page now has a shelf of the last 24 games you
+  launched; each resumes straight into the emulator.
+- **Cloud save-states** — an **☁ Save** / **☁ Load** pair in the player bar
+  pushes/pulls the emulator state to the home server
+  (`~/.local/share/ssw-arcade/states/`). New **Cloud saves** page (`#/saves`)
+  lists every server save with a one-click **Resume**; opening a game from there
+  auto-loads its state. Play on your phone, finish on the PC.
+- **Netplay** — EmulatorJS netplay is wired to a self-hosted signalling server
+  (`arcade-netplay`, `express`+`socket.io`, tailnet `:8712`). The netplay button
+  appears in the emulator menu; disable with `localStorage['ssw:netplay']='off'`.
+- **Installable PWA** — `manifest.json` + service worker + app icons. "Install" /
+  "Add to Home Screen" gives a full-screen app; the shell and browse data work
+  offline. Home-screen shortcuts for Play / Favorites / Cloud saves / Surprise me.
+- **Controller navigation for the menus** — a connected gamepad now drives focus
+  around the site itself (D-pad / left-stick to move, A to select, B to go back),
+  not just in-game.
+- **Random game** — "🎲 Surprise me" on the home hero (any playable system) and
+  "🎲 Random game" on each console's Play page.
+- `DOMAIN.md` (how to point a real domain at the site) and `ARCADE.md` (how to
+  get arcade romsets to actually load).
+
+### Changed
+- ROM downloads for catalog games now go through the cache layer with a progress
+  bar instead of EmulatorJS's opaque loader.
+- `arcade-server` gained `PUT/GET/DELETE /states/<sys>/<rom>` and
+  `/states/list`; the systemd unit now grants write access to just
+  `~/.local/share/ssw-arcade`.
+- Nav gained **Favorites** and **Saves**; the mobile drawer also has
+  **Offline & cache**.
+
 ## [2.0.0] — 2026-09-08 — Neon retro + Music / Videos / Contact
 
 ### Added

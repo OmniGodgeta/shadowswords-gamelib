@@ -1,0 +1,16 @@
+[Unit]
+Description=shadowswords arcade — EmulatorJS netplay signalling server
+After=network.target
+
+[Service]
+Environment=PORT=8712 HOST=127.0.0.1
+ExecStart=/usr/bin/node %h/arcade-netplay/server.js
+Restart=on-failure
+RestartSec=3
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=read-only
+PrivateTmp=true
+
+[Install]
+WantedBy=default.target

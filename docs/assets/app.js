@@ -16,6 +16,13 @@ const el = (tag, props = {}, ...kids) => {
   return n;
 };
 const debounce = (fn, ms) => { let t; return (...a) => { clearTimeout(t); t = setTimeout(() => fn(...a), ms); }; };
+let _toastT;
+function toast(msg) {
+  let t = document.getElementById("toast");
+  if (!t) { t = el("div", { id: "toast" }); document.body.append(t); }
+  t.textContent = msg; t.classList.add("show");
+  clearTimeout(_toastT); _toastT = setTimeout(() => t.classList.remove("show"), 3200);
+}
 
 /* ---- config --------------------------------------------------------- */
 const TS = "https://shadow-1.tail51f9d6.ts.net";
@@ -24,6 +31,10 @@ const ROM_BASE = SELF_HOSTED ? "/roms/" : TS + "/roms/";       // needs Funnel w
 const MUSIC_BASE = SELF_HOSTED ? "/music/" : TS + "/music/";
 const MOVIES_URL = TS + ":8443/";                               // opens in a new tab
 const EMU_DATA = "https://cdn.emulatorjs.org/stable/data/";
+const STATE_BASE = SELF_HOSTED ? "/states/" : TS + "/states/";   // cloud save-states
+const NETPLAY_URL = TS + ":8712/";                                // EmulatorJS netplay signalling (tailnet)
+const ROM_CACHE_CAP = 1610612736;                                 // 1.5 GiB IndexedDB budget
+const ROM_CACHE_MAX_ITEM = 805306368;                             // don't cache a single file bigger than 768 MiB
 const YT_CHANNEL = "https://www.youtube.com/@shadowswordsttv";
 const SOCIALS = [
   ["Facebook", "https://www.facebook.com/ShadowSwordsQc", "f", "#1877f2"],
@@ -39,6 +50,30 @@ const COLLAGE_SYSTEMS = ["atari2600", "archimedes", "3do", "wii", "xbox", "gba",
 
 const view = $("#view");
 const state = { sys: null, systems: {}, cache: {}, search: null, render: 0 };
+
+/* ---- local prefs: favorites + recently played --------------------- */
+const LS = {
+  get(k, d) { try { const v = localStorage.getItem("ssw:" + k); return v == null ? d : JSON.parse(v); } catch { return d; } },
+  set(k, v) { try { localStorage.setItem("ssw:" + k, JSON.stringify(v)); } catch { /* private mode */ } },
+};
+const favList = () => LS.get("favs", []);
+const isFav = (sys, id) => favList().some((f) => f.sys === sys && f.id === id);
+function toggleFav(g) {
+  const l = favList();
+  const i = l.findIndex((f) => f.sys === g._sys && f.id === g.id);
+  if (i >= 0) l.splice(i, 1);
+  else l.unshift({ sys: g._sys, id: g.id, name: g.name, img: g.img || null,
+    file: g.file || null, year: g.year || null, genre: g.genre || null });
+  LS.set("favs", l.slice(0, 400));
+  window.dispatchEvent(new Event("ssw-favs"));
+  return i < 0;
+}
+const recentList = () => LS.get("recent", []);
+function pushRecent(sys, file, name, img) {
+  const l = recentList().filter((r) => !(r.sys === sys && r.file === file));
+  l.unshift({ sys, file, name, img: img || null, t: Date.now() });
+  LS.set("recent", l.slice(0, 24));
+}
 
 /* ---- data ---------------------------------------------------------- */
 async function getSystems() {
@@ -128,11 +163,18 @@ function consoleTile(s, { play = false } = {}) {
       el("div", { className: "s", textContent: `${s.count.toLocaleString()} games` })));
 }
 
+function heartBtn(g) {
+  const b = el("button", { className: "heart" + (isFav(g._sys, g.id) ? " on" : ""),
+    title: "Favorite", ariaLabel: "Favorite", textContent: "♥" });
+  b.onclick = (e) => { e.preventDefault(); e.stopPropagation(); b.classList.toggle("on", toggleFav(g)); };
+  return b;
+}
 function gameTile(g, { play = false } = {}) {
   const art = el("div", { className: "tile-art" });
   if (g.img) art.append(el("img", { src: g.img, loading: "lazy", alt: g.name }));
   else art.append(el("div", { className: "ph", textContent: g.name }));
   if (play) art.append(el("span", { className: "badge", textContent: "Play" }));
+  if (g.id) art.append(heartBtn(g));
   const href = play ? `#/play/${g._sys}/${g.file.split("/").map(encodeURIComponent).join("/")}`
     : `#/g/${g._sys}/${g.id}`;
   return el("a", { className: "tile wide", href },
@@ -172,9 +214,34 @@ async function routeHome() {
     title: "Every console. Every game.",
     desc: `${total.toLocaleString()} games across ${systems.length} systems — browse the lot, play ${playable.length} of them right in your browser, and stream the movie library.`,
     art: await collageArt(22),
-    actions: [{ label: "▶ Play now", href: "#/play", primary: true }, { label: "Browse all", href: "#/browse" }],
+    actions: [
+      { label: "▶ Play now", href: "#/play", primary: true },
+      { label: "🎲 Surprise me", href: "#/play/random" },
+      { label: "Browse all", href: "#/browse" },
+    ],
   }));
   if (token !== state.render) return;
+
+  const recent = recentList();
+  if (recent.length) frag.append(shelf({
+    title: "Continue playing", count: recent.length,
+    tiles: recent.map((r) => {
+      const art = el("div", { className: "tile-art" });
+      if (r.img) art.append(el("img", { src: r.img, loading: "lazy", alt: r.name }));
+      else art.append(el("div", { className: "ph", textContent: r.name }));
+      art.append(el("span", { className: "badge", textContent: "Resume" }));
+      return el("a", { className: "tile wide",
+        href: `#/resume/${r.sys}/${r.file.split("/").map(encodeURIComponent).join("/")}` }, art,
+        el("div", { className: "tile-cap" },
+          el("div", { className: "t", textContent: r.name }),
+          el("div", { className: "s", textContent: sysName(r.sys) })));
+    }),
+  }));
+  const favs = favList();
+  if (favs.length) frag.append(shelf({
+    title: "Favorites", count: favs.length, moreHref: "#/favorites",
+    tiles: favs.slice(0, 24).map((f) => favTile(f)),
+  }));
 
   frag.append(shelf({
     title: "Play now", count: playable.length, moreHref: "#/play",
@@ -196,7 +263,10 @@ async function routeHome() {
       linkTile("#/movies", "🎬", "Movies", "Jellyfin library"),
       linkTile("#/music", "🎧", "Music", "Albums on the server"),
       linkTile("#/videos", "▶", "Videos", "Latest YouTube uploads"),
-      linkTile("#/contact", "📡", "Contact", "Socials & Discord"))));
+      linkTile("#/contact", "📡", "Contact", "Socials & Discord"),
+      linkTile("#/favorites", "♥", "Favorites", "Your starred games"),
+      linkTile("#/saves", "☁", "Cloud saves", "Resume on any device"),
+      linkTile("#/cache", "💾", "Offline", "Install & ROM cache"))));
   view.replaceChildren(frag);
 }
 
@@ -345,7 +415,10 @@ async function routePlaySystem(id) {
     kicker: "Play", title: m.name,
     desc: `${games.length.toLocaleString()} games, ready to run. Streamed from the home server — pick one.`,
     art: sysArt(m),
-    actions: [{ label: "Or upload a ROM", onClick: () => $("#rom-input")?.click() }],
+    actions: [
+      { label: "🎲 Random game", primary: true, onClick: () => surpriseMe(id) },
+      { label: "Or upload a ROM", onClick: () => $("#rom-input")?.click() },
+    ],
   }));
   frag.append(el("div", { className: "wrap", style: "padding-bottom:6px" }, dropzone()));
   const NOTE = {
@@ -371,16 +444,89 @@ async function routePlaySystem(id) {
   apply();
 }
 
-// --- IndexedDB stash so an uploaded ROM survives the player's reload
+// --- IndexedDB: "rom" = uploaded-ROM stash (survives player reload);
+//                "romcache" = downloaded catalog ROMs, LRU-capped, so a replay is instant.
 function idb() {
   return new Promise((res, rej) => {
-    const r = indexedDB.open("ssw-arcade", 1);
-    r.onupgradeneeded = () => r.result.createObjectStore("rom");
+    const r = indexedDB.open("ssw-arcade", 2);
+    r.onupgradeneeded = () => {
+      const db = r.result;
+      if (!db.objectStoreNames.contains("rom")) db.createObjectStore("rom");
+      if (!db.objectStoreNames.contains("romcache")) db.createObjectStore("romcache");
+    };
     r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error);
   });
 }
-const idbPut = async (k, v) => { const db = await idb(); return new Promise((res, rej) => { const t = db.transaction("rom", "readwrite"); t.objectStore("rom").put(v, k); t.oncomplete = res; t.onerror = () => rej(t.error); }); };
-const idbGet = async (k) => { const db = await idb(); return new Promise((res, rej) => { const g = db.transaction("rom", "readonly").objectStore("rom").get(k); g.onsuccess = () => res(g.result); g.onerror = () => rej(g.error); }); };
+const idbTx = (store, mode) => idb().then((db) => db.transaction(store, mode).objectStore(store));
+const idbPutIn = (store, k, v) => idbTx(store, "readwrite").then((os) => new Promise((res, rej) => { const q = os.put(v, k); q.onsuccess = res; q.onerror = () => rej(q.error); }));
+const idbGetIn = (store, k) => idbTx(store, "readonly").then((os) => new Promise((res, rej) => { const q = os.get(k); q.onsuccess = () => res(q.result); q.onerror = () => rej(q.error); }));
+const idbDelIn = (store, k) => idbTx(store, "readwrite").then((os) => new Promise((res, rej) => { const q = os.delete(k); q.onsuccess = res; q.onerror = () => rej(q.error); }));
+const idbPut = (k, v) => idbPutIn("rom", k, v);
+const idbGet = (k) => idbGetIn("rom", k);
+
+async function romCacheEntries() {
+  const os = await idbTx("romcache", "readonly");
+  return new Promise((res) => {
+    const out = [];
+    os.openCursor().onsuccess = (e) => {
+      const c = e.target.result;
+      if (c) { out.push({ key: c.key, size: c.value.size, t: c.value.t }); c.continue(); }
+      else res(out);
+    };
+  });
+}
+async function romCacheStats() {
+  const e = await romCacheEntries().catch(() => []);
+  return { count: e.length, bytes: e.reduce((n, x) => n + (x.size || 0), 0) };
+}
+async function romCacheClear() {
+  const os = await idbTx("romcache", "readwrite");
+  return new Promise((res) => { const q = os.clear(); q.onsuccess = res; q.onerror = res; });
+}
+async function romCacheEvict(need) {
+  let items = (await romCacheEntries().catch(() => [])).sort((a, b) => a.t - b.t);
+  let total = items.reduce((n, x) => n + x.size, 0);
+  while (total + need > ROM_CACHE_CAP && items.length) {
+    const v = items.shift();
+    await idbDelIn("romcache", v.key).catch(() => {});
+    total -= v.size;
+  }
+}
+// fetch a ROM, using the IndexedDB cache; onProgress(got,total,fromCache)
+async function fetchRom(key, url, onProgress) {
+  const hit = await idbGetIn("romcache", key).catch(() => null);
+  if (hit && hit.blob) {
+    idbPutIn("romcache", key, { ...hit, t: Date.now() }).catch(() => {});
+    onProgress && onProgress(hit.size, hit.size, true);
+    return URL.createObjectURL(hit.blob);
+  }
+  const resp = await fetch(url);
+  if (!resp.ok) throw new Error("HTTP " + resp.status);
+  const total = +resp.headers.get("content-length") || 0;
+  let blob;
+  if (resp.body && resp.body.getReader) {
+    const reader = resp.body.getReader();
+    const chunks = []; let got = 0;
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      chunks.push(value); got += value.length;
+      onProgress && onProgress(got, total, false);
+    }
+    blob = new Blob(chunks);
+  } else {
+    blob = await resp.blob();
+    onProgress && onProgress(blob.size, blob.size, false);
+  }
+  if (blob.size <= ROM_CACHE_MAX_ITEM) {
+    try { await romCacheEvict(blob.size); await idbPutIn("romcache", key, { blob, size: blob.size, t: Date.now() }); } catch { /* quota */ }
+  }
+  return URL.createObjectURL(blob);
+}
+const fmtBytes = (n) => !n ? "0 KB"
+  : n >= 1073741824 ? (n / 1073741824).toFixed(1) + " GB"
+  : n >= 1048576 ? Math.round(n / 1048576) + " MB"
+  : Math.max(1, Math.round(n / 1024)) + " KB";
 
 // file extension -> EmulatorJS system (EJS_core) for uploaded ROMs
 const EXT_CORE = {
@@ -402,22 +548,28 @@ async function startUpload(file) {
   location.hash = `#/play/upload/${encodeURIComponent(file.name)}`;
 }
 
-async function routePlayGame(sys, romParam) {
+const stateKey = (sys, file) => STATE_BASE + encodeURIComponent(sys) + "/" + file.split("/").map(encodeURIComponent).join("/");
+
+async function routePlayGame(sys, romParam, resume = false) {
   ++state.render;
   if (window.__emuUp) { location.reload(); return; }
   window.__emuUp = true;
   await getSystems().catch(() => {});
 
+  const loadEl = el("div", { className: "player-load", id: "player-load" }, "Booting emulator…");
+  const saveBtn = el("button", { className: "pbtn", id: "cloud-save", textContent: "☁ Save", title: "Save state to the server", hidden: true });
+  const loadBtn = el("button", { className: "pbtn", id: "cloud-load", textContent: "☁ Load", title: "Load the last server save state", hidden: true });
   const shell = el("div", { className: "player" },
     el("div", { className: "player-bar" },
       el("button", { className: "exit", textContent: "‹ Exit", onclick: exitPlayer }),
-      el("div", { className: "title", id: "player-title", textContent: "Loading…" })),
+      el("div", { className: "title", id: "player-title", textContent: "Loading…" }),
+      saveBtn, loadBtn),
     el("div", { className: "player-stage" },
-      el("div", { id: "game" }),
-      el("div", { className: "player-load", id: "player-load", textContent: "Booting emulator…" })));
+      el("div", { id: "game" }), loadEl));
   document.body.append(shell);
   view.replaceChildren();
 
+  const file = sys === "upload" ? null : romParam;
   let romUrl, romName, core;
   try {
     if (sys === "upload") {
@@ -425,17 +577,29 @@ async function routePlayGame(sys, romParam) {
       if (!u) throw 0;
       romUrl = URL.createObjectURL(u.blob); romName = u.name.replace(/\.[^.]+$/, ""); core = u.core;
     } else {
-      const file = romParam;
       romName = file.split("/").pop().replace(/\.[^.]+$/, "");
       core = meta(sys).core || EXT_CORE[file.split(".").pop().toLowerCase()];
-      romUrl = ROM_BASE + "rom/" + encodeURIComponent(sys) + "/" + file.split("/").map(encodeURIComponent).join("/");
+      if (!core) throw 0;
+      const url = ROM_BASE + "rom/" + encodeURIComponent(sys) + "/" + file.split("/").map(encodeURIComponent).join("/");
+      const cacheKey = sys + "/" + file;
+      const bar = el("div", { className: "dl-bar" }, el("i"));
+      loadEl.replaceChildren(el("div", { textContent: "Downloading ROM…" }), bar);
+      romUrl = await fetchRom(cacheKey, url, (got, tot, cached) => {
+        if (cached) { loadEl.replaceChildren("Loaded from cache — booting…"); return; }
+        bar.firstChild.style.width = tot ? (got / tot * 100).toFixed(1) + "%" : "40%";
+        bar.previousSibling.textContent = tot
+          ? `Downloading ROM… ${fmtBytes(got)} / ${fmtBytes(tot)}` : `Downloading ROM… ${fmtBytes(got)}`;
+      });
+      loadEl.replaceChildren("Booting emulator…");
     }
-    if (!core) throw 0;
   } catch {
-    $("#player-load").textContent = "Couldn't load that ROM — go back and try another.";
+    loadEl.textContent = "Couldn't load that ROM — go back and try another.";
     return;
   }
   $("#player-title").textContent = romName;
+  const g = { _sys: sys, id: null, name: romName, file, img: null };
+  const gm = sys !== "upload" && (state.cache[sys] || []).find((x) => x.file === file);
+  if (sys !== "upload") pushRecent(sys, file, romName, gm && gm.img);
 
   window.EJS_player = "#game";
   window.EJS_core = core;
@@ -446,7 +610,45 @@ async function routePlayGame(sys, romParam) {
   const bios = sys !== "upload" && meta(sys).bios;
   if (bios) window.EJS_biosUrl = ROM_BASE + "bios/" + encodeURIComponent(bios);
   window.EJS_Buttons = { restart: true, settings: true, fullscreen: true, saveState: true, loadState: true, gamepad: true };
-  window.EJS_onGameStart = () => $("#player-load")?.remove();
+  // Netplay signalling server — tailnet default; override with localStorage ssw:netplay ("off" disables).
+  const np = LS.get("netplay", NETPLAY_URL);
+  if (np && np !== "off") { window.EJS_netplayServer = np; window.EJS_Buttons.netplay = true; }
+
+  // cloud save-states — the stable EmulatorJS build has no onSaveState hook, so
+  // we drive it ourselves via gameManager.getState()/loadState() + our own buttons.
+  const key = sys === "upload" ? null : stateKey(sys, file);
+  let hasCloudSave = false;
+  if (key && resume) {
+    try { hasCloudSave = (await fetch(key, { method: "HEAD" })).ok; } catch { /* offline */ }
+  }
+  const cloudSave = async () => {
+    const gm = window.EJS_emulator?.gameManager;
+    if (!gm) return;
+    try {
+      const data = gm.getState();
+      await fetch(key, { method: "PUT", headers: { "content-type": "application/octet-stream" }, body: data });
+      toast("Saved to the server ☁");
+    } catch { toast("Cloud save failed"); }
+  };
+  const cloudLoad = async () => {
+    const gm = window.EJS_emulator?.gameManager;
+    if (!gm) return;
+    try {
+      const buf = await fetch(key).then((r) => { if (!r.ok) throw 0; return r.arrayBuffer(); });
+      gm.loadState(new Uint8Array(buf));
+      toast("Server save state loaded");
+    } catch { toast("No server save state for this game"); }
+  };
+
+  window.EJS_onGameStart = () => {
+    $("#player-load")?.remove();
+    if (key) {
+      saveBtn.hidden = false; saveBtn.onclick = cloudSave;
+      loadBtn.hidden = false; loadBtn.onclick = cloudLoad;
+      if (hasCloudSave) setTimeout(cloudLoad, 400);
+    }
+  };
+
   const s = el("script", { src: EMU_DATA + "loader.js" });
   s.onerror = () => { const l = $("#player-load"); if (l) l.textContent = "Emulator failed to load (CDN blocked?)."; };
   document.body.append(s);
@@ -492,7 +694,8 @@ async function routeMusic(albumIdx) {
   const trackList = el("div", { className: "track-list" });
   const renderTracks = (alb) => {
     trackList.replaceChildren(...alb.tracks.map((t, i) =>
-      el("div", { className: "track", dataset: { file: t.file },
+      el("div", { className: "track", tabIndex: 0, dataset: { file: t.file },
+        onkeydown: (e) => { if (e.key === "Enter") playTrack(alb, i); },
         onclick: () => playTrack(alb, i) },
         el("span", { className: "num", textContent: String(i + 1).padStart(2, "0") }),
         el("span", { textContent: t.title }))));
@@ -579,6 +782,114 @@ async function routeVideos() {
   view.replaceChildren(frag);
 }
 
+/* ---- routes: favorites / recent / cloud saves / cache ------- */
+function favTile(f) {
+  const play = !!f.file;
+  const art = el("div", { className: "tile-art" });
+  if (f.img) art.append(el("img", { src: f.img, loading: "lazy", alt: f.name }));
+  else art.append(el("div", { className: "ph", textContent: f.name }));
+  if (play) art.append(el("span", { className: "badge", textContent: "Play" }));
+  art.append(heartBtn({ _sys: f.sys, id: f.id, name: f.name, img: f.img, file: f.file, year: f.year, genre: f.genre }));
+  const href = play
+    ? `#/play/${f.sys}/${f.file.split("/").map(encodeURIComponent).join("/")}`
+    : `#/g/${f.sys}/${f.id}`;
+  return el("a", { className: "tile wide", href }, art,
+    el("div", { className: "tile-cap" },
+      el("div", { className: "t", textContent: f.name }),
+      el("div", { className: "s", textContent: sysName(f.sys) })));
+}
+async function routeFavorites() {
+  const token = ++state.render;
+  spinner();
+  await getSystems().catch(() => {});
+  if (token !== state.render) return;
+  const draw = () => {
+    const list = favList();
+    const box = el("div", {});
+    if (list.length) {
+      const grid = el("div", { className: "tile-grid" });
+      list.forEach((f) => grid.append(favTile(f)));
+      box.append(grid);
+    } else {
+      box.append(el("div", { className: "empty-state", textContent: "No favorites yet — tap the ♥ on any game." }));
+    }
+    view.replaceChildren(el("div", { className: "wrap" },
+      el("section", { className: "shelf", style: "padding:22px 0 0" },
+        el("div", { className: "shelf-head" }, el("h2", { textContent: "Favorites" }),
+          el("span", { className: "count", textContent: `${list.length}` })),
+        box)));
+  };
+  draw();
+  const on = () => { if (location.hash.startsWith("#/favorites")) draw(); };
+  window.removeEventListener("ssw-favs", on); window.addEventListener("ssw-favs", on);
+}
+
+async function routeSaves() {
+  const token = ++state.render;
+  spinner();
+  await getSystems().catch(() => {});
+  const saves = await fetch(STATE_BASE + "list").then((r) => r.json()).catch(() => null);
+  if (token !== state.render) return;
+  const frag = document.createDocumentFragment();
+  frag.append(el("section", { className: "shelf", style: "padding:22px var(--pad) 0" },
+    el("div", { className: "shelf-head" }, el("h2", { textContent: "Cloud save states" }),
+      el("span", { className: "count", textContent: saves ? `${saves.length}` : "—" }))));
+  const grid = el("div", { className: "tile-grid" });
+  if (!saves) {
+    grid.append(el("div", { className: "empty-state", textContent: "Can't reach the save-state server — you may be off the tailnet." }));
+  } else if (!saves.length) {
+    grid.append(el("div", { className: "empty-state", textContent: "No cloud saves yet. Save a state from the emulator menu and it syncs here automatically." }));
+  } else {
+    saves.sort((a, b) => b.mtime - a.mtime).forEach((s) => {
+      const gm = (state.cache[s.sys] || []).find((x) => x.file === s.file);
+      const art = el("div", { className: "tile-art" });
+      if (gm && gm.img) art.append(el("img", { src: gm.img, loading: "lazy", alt: s.name }));
+      else art.append(el("div", { className: "ph", textContent: s.name }));
+      art.append(el("span", { className: "badge", textContent: "Resume" }));
+      grid.append(el("a", { className: "tile wide",
+        href: `#/resume/${s.sys}/${s.file.split("/").map(encodeURIComponent).join("/")}` }, art,
+        el("div", { className: "tile-cap" },
+          el("div", { className: "t", textContent: s.name }),
+          el("div", { className: "s", textContent: `${sysName(s.sys)} · ${new Date(s.mtime).toLocaleDateString()}` }))));
+    });
+  }
+  frag.append(el("div", { className: "wrap" }, grid));
+  view.replaceChildren(frag);
+}
+
+async function routeCache() {
+  ++state.render;
+  const st = await romCacheStats();
+  const pct = Math.min(100, st.bytes / ROM_CACHE_CAP * 100);
+  const bar = el("div", { className: "dl-bar" }, el("i", { style: `width:${pct.toFixed(1)}%` }));
+  const clearBtn = el("button", { className: "btn btn-ghost", textContent: "Clear ROM cache" });
+  clearBtn.onclick = async () => { await romCacheClear(); toast("ROM cache cleared"); routeCache(); };
+  view.replaceChildren(el("section", { className: "pane center" },
+    el("div", { className: "big-emoji", textContent: "💾" }),
+    el("h1", { textContent: "Offline & cache" }),
+    el("p", { textContent: `Downloaded ROMs are kept in your browser so replaying a game is instant — capped at ${fmtBytes(ROM_CACHE_CAP)}, oldest evicted first.` }),
+    el("p", { className: "hint", style: "margin:0 0 6px", textContent: `${st.count} ROM${st.count === 1 ? "" : "s"} cached · ${fmtBytes(st.bytes)} used` }),
+    bar,
+    el("div", { style: "margin-top:16px" }, clearBtn),
+    el("div", { className: "hint", style: "margin-top:20px" },
+      "This site also installs as an app — look for “Install” / “Add to Home Screen” in your browser menu.")));
+}
+
+async function surpriseMe(sysId) {
+  await getSystems().catch(() => {});
+  let s;
+  if (sysId) s = meta(sysId);
+  else {
+    const pool = state.sys.systems.filter((x) => x.playable && x.count);
+    s = pool[Math.random() * pool.length | 0];
+  }
+  toast("🎲 Rolling…");
+  const games = await getSystem(s.id).catch(() => []);
+  if (!games.length) { if (!sysId) return surpriseMe(); toast("No games there"); return; }
+  const g = games[Math.random() * games.length | 0];
+  location.hash = `#/play/${s.id}/${g.file.split("/").map(encodeURIComponent).join("/")}`;
+}
+
 async function routeSearch(qRaw) {
   const token = ++state.render;
   const q = qRaw.trim().toLowerCase();
@@ -607,7 +918,7 @@ async function routeSearch(qRaw) {
 function parseHash() {
   return location.hash.replace(/^#\/?/, "").split(/[/?]/).map((s) => { try { return decodeURIComponent(s); } catch { return s; } });
 }
-const TOP_NAV = new Set(["home", "play", "movies", "music", "videos", "contact"]);
+const TOP_NAV = new Set(["home", "play", "favorites", "saves", "movies", "music", "videos", "contact"]);
 function setNav(name) {
   $$(".bar-link, .drawer a").forEach((a) => a.classList.toggle("active", a.dataset.nav === name));
   const top = TOP_NAV.has(name);
@@ -619,15 +930,20 @@ async function router() {
   const parts = parseHash();
   const [a, b] = parts;
   // an emulator is live and we're navigating away from it -> hard reset (kills audio/RAF)
-  if (window.__emuUp && !(a === "play" && parts.length > 2)) { window.__emuUp = false; location.reload(); return; }
+  if (window.__emuUp && !((a === "play" || a === "resume") && parts.length > 2)) { window.__emuUp = false; location.reload(); return; }
   if (a !== "q") $("#bar-search").hidden = true;
   if (a !== "music" && audioEl) audioEl.pause();
   window.scrollTo(0, 0);
   if (a === "s" && b) { setNav(null); return routeSystem(b); }
   if (a === "g" && b && parts[2]) { setNav(null); return routeGame(b, parts[2]); }
+  if (a === "resume" && b && parts.length > 2) { setNav("play"); return routePlayGame(b, parts.slice(2).join("/"), true); }
   if (a === "play" && b && parts.length > 2) { setNav("play"); return routePlayGame(b, parts.slice(2).join("/")); }
+  if (a === "play" && b === "random") { setNav("play"); return surpriseMe(); }
   if (a === "play" && b) { setNav("play"); return routePlaySystem(b); }
   if (a === "play") { setNav("play"); return routePlay(); }
+  if (a === "favorites") { setNav("favorites"); return routeFavorites(); }
+  if (a === "saves") { setNav("saves"); return routeSaves(); }
+  if (a === "cache") { setNav(null); return routeCache(); }
   if (a === "movies") { setNav("movies"); return routeMovies(); }
   if (a === "music") { setNav("music"); return routeMusic(b); }
   if (a === "videos") { setNav("videos"); return routeVideos(); }
@@ -655,5 +971,61 @@ qi.addEventListener("input", debounce(() => {
   else if (!v && location.hash.startsWith("#/q/")) location.hash = "#/";
 }, 250));
 qi.addEventListener("keydown", (e) => { if (e.key === "Escape") { sf.hidden = true; qi.blur(); } });
+
+/* ---- gamepad navigation for the site menus (not in-game) --------- */
+const NAV_SEL = "a.tile, a.btn, button.more, .bar-link, .drawer a, .album-btn, .social, .shelf-nav, .heart, #back-btn, #menu-btn, #search-btn, .track";
+const focusables = () => $$(NAV_SEL).filter((e) => e.offsetParent !== null && !e.disabled && !e.hidden);
+function moveFocus(dir) {
+  const list = focusables();
+  if (!list.length) return;
+  const cur = document.activeElement;
+  if (!cur || !list.includes(cur)) { list[0].focus(); list[0].scrollIntoView({ block: "center" }); return; }
+  const r = cur.getBoundingClientRect();
+  const cx = r.left + r.width / 2, cy = r.top + r.height / 2;
+  let best = null, bestScore = Infinity;
+  for (const e of list) {
+    if (e === cur) continue;
+    const b = e.getBoundingClientRect();
+    const bx = b.left + b.width / 2, by = b.top + b.height / 2;
+    const dx = bx - cx, dy = by - cy;
+    if (dir === "left" && dx > -6) continue;
+    if (dir === "right" && dx < 6) continue;
+    if (dir === "up" && dy > -6) continue;
+    if (dir === "down" && dy < 6) continue;
+    const horiz = dir === "left" || dir === "right";
+    const along = horiz ? Math.abs(dx) : Math.abs(dy);
+    const cross = horiz ? Math.abs(dy) : Math.abs(dx);
+    const score = along + cross * 2.5;
+    if (score < bestScore) { bestScore = score; best = e; }
+  }
+  if (best) { best.focus(); best.scrollIntoView({ block: "nearest", inline: "nearest" }); }
+}
+let _padRAF = 0; const _padPrev = {};
+function pollPad() {
+  _padRAF = requestAnimationFrame(pollPad);
+  if (window.__emuUp) return;                       // EmulatorJS owns the pad in-game
+  const pads = navigator.getGamepads ? navigator.getGamepads() : [];
+  const gp = [...pads].find(Boolean);
+  if (!gp) return;
+  const now = performance.now();
+  const edge = (id, active, fn, rate = 200) => {
+    if (active) { if (now - (_padPrev[id] || 0) > rate) { _padPrev[id] = now; fn(); } }
+    else if (_padPrev[id]) _padPrev[id] = 0;
+  };
+  const b = gp.buttons, ax = gp.axes;
+  edge("u", b[12]?.pressed || ax[1] < -0.6, () => moveFocus("up"));
+  edge("d", b[13]?.pressed || ax[1] > 0.6, () => moveFocus("down"));
+  edge("l", b[14]?.pressed || ax[0] < -0.6, () => moveFocus("left"));
+  edge("r", b[15]?.pressed || ax[0] > 0.6, () => moveFocus("right"));
+  edge("a", b[0]?.pressed, () => document.activeElement?.click(), 320);
+  edge("b", b[1]?.pressed, () => $("#back-btn")?.click() ?? history.back(), 320);
+}
+window.addEventListener("gamepadconnected", () => { if (!_padRAF) { toast("🎮 Controller connected"); pollPad(); } });
+if (navigator.getGamepads && [...navigator.getGamepads()].some(Boolean)) pollPad();
+
+/* ---- PWA service worker ---------------------------------------- */
+if ("serviceWorker" in navigator) {
+  addEventListener("load", () => navigator.serviceWorker.register("sw.js").catch(() => {}));
+}
 
 router();
