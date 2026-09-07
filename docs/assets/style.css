@@ -228,11 +228,16 @@ main { min-height: calc(100dvh - var(--bar-h) - 80px); }
   color: #fff;
   display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical; overflow: hidden;
 }
-.tile-art.console { background: radial-gradient(120% 100% at 50% 0%, var(--bg-3), var(--bg-1)); }
-.tile-art .console-logo {
-  max-width: 82%; max-height: 66%; object-fit: contain;
-  filter: brightness(1.15) drop-shadow(0 2px 8px rgba(0,0,0,.5));
+.tile-art.console {
+  background:
+    radial-gradient(90% 70% at 50% 30%, color-mix(in srgb, var(--accent) 10%, transparent), transparent 70%),
+    radial-gradient(120% 100% at 50% 0%, var(--bg-3), var(--bg-1));
 }
+.tile-art .console-logo {
+  max-width: 84%; max-height: 68%; object-fit: contain;
+  filter: brightness(1.4) contrast(1.1) drop-shadow(0 0 14px color-mix(in srgb, var(--accent) 45%, transparent));
+}
+.tile:hover .tile-art .console-logo, .tile:focus-visible .tile-art .console-logo { filter: brightness(1.6) drop-shadow(0 0 18px var(--accent)); }
 .tile-art .badge {
   position: absolute; left: 8px; top: 8px;
   padding: 3px 8px; border-radius: 6px;
