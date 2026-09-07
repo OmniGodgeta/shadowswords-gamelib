@@ -27,6 +27,8 @@ function toast(msg) {
 /* ---- config --------------------------------------------------------- */
 const TS = "https://shadow-1.tail51f9d6.ts.net";
 const SELF_HOSTED = location.hostname.endsWith(".ts.net");
+const IN_APP = /ShadowSwordsApp/.test(navigator.userAgent);   // native wrapper intercepts _blank → phone browser
+const extTarget = { target: "_blank", rel: "noopener" };      // keep the signal the app hooks on
 const ROM_BASE = SELF_HOSTED ? "/roms/" : TS + "/roms/";       // needs Funnel when off-tailnet
 const MUSIC_BASE = SELF_HOSTED ? "/music/" : TS + "/music/";
 const MOVIES_URL = TS + ":8443/";                               // opens in a new tab
@@ -662,8 +664,8 @@ function routeMovies() {
   view.replaceChildren(el("section", { className: "pane" },
     el("div", { className: "big-emoji", textContent: "🎬" }),
     el("h1", { textContent: "Movie library" }),
-    el("p", { textContent: "The full film & TV collection, streamed from the home server. Opens the Jellyfin player in a new tab — sign in with the shared account." }),
-    el("a", { className: "btn btn-primary", href: MOVIES_URL, target: "_blank", rel: "noopener", textContent: "Open the movie library ↗" }),
+    el("p", { textContent: "The full film & TV collection, streamed from the home server" + (IN_APP ? " — sign in with the shared account." : ". Opens the Jellyfin player in a new tab — sign in with the shared account.") }),
+    el("a", { className: "btn btn-primary", href: MOVIES_URL, ...extTarget, textContent: IN_APP ? "Open the movie library" : "Open the movie library ↗" }),
     el("div", { className: "hint" }, "Jellyfin at ", el("code", { textContent: host }),
       " — if it doesn't load, the server may be off or you're not on the tailnet.")));
 }
@@ -744,13 +746,13 @@ function routeContact() {
     el("h1", { textContent: "Contact & Socials" }),
     el("p", { textContent: "Follow ShadowSwords everywhere, or jump into the Discord to chat, request games, or report anything broken." }),
     el("div", { className: "socials" },
-      ...SOCIALS.map(([name, url, ic, col]) => el("a", { className: "social", href: url, target: "_blank", rel: "noopener" },
+      ...SOCIALS.map(([name, url, ic, col]) => el("a", { className: "social", href: url, ...extTarget },
         el("span", { className: "ic", style: `color:${col}`, textContent: ic }),
         el("span", {}, name, el("small", { textContent: url.replace(/^https?:\/\/(www\.)?/, "") }))))),
     el("div", { className: "discord-cta" },
       el("div", {}, el("strong", { style: "font-size:16px", textContent: "💬  Discord server" }),
         el("div", { style: "color:var(--muted);font-size:13px", textContent: "The best place to reach me." })),
-      el("a", { className: "btn btn-primary", href: DISCORD, target: "_blank", rel: "noopener", textContent: "Join the Discord ↗" }))));
+      el("a", { className: "btn btn-primary", href: DISCORD, ...extTarget, textContent: "Join the Discord ↗" }))));
 }
 
 /* ---- routes: videos --------------------------------------- */
@@ -762,7 +764,7 @@ async function routeVideos() {
   const frag = document.createDocumentFragment();
   frag.append(el("section", { className: "shelf", style: "padding:22px var(--pad) 6px" },
     el("div", { className: "shelf-head" }, el("h2", { textContent: "Latest videos" }),
-      el("a", { href: YT_CHANNEL, target: "_blank", rel: "noopener", textContent: "Full channel ›" }))));
+      el("a", { href: YT_CHANNEL, ...extTarget, textContent: "Full channel ›" }))));
   const grid = el("div", { className: "video-grid" });
   if (vids.length) {
     vids.slice(0, 15).forEach((v) => grid.append(el("div", {},
@@ -776,7 +778,7 @@ async function routeVideos() {
   } else {
     grid.append(el("div", { className: "video-embed channel" },
       el("div", {}, el("div", { style: "font-size:32px;margin-bottom:8px", textContent: "▶" }),
-        el("a", { className: "btn btn-primary", href: YT_CHANNEL, target: "_blank", rel: "noopener", textContent: "Open the YouTube channel ↗" }))));
+        el("a", { className: "btn btn-primary", href: YT_CHANNEL, ...extTarget, textContent: "Open the YouTube channel ↗" }))));
   }
   frag.append(el("div", { className: "wrap" }, grid));
   view.replaceChildren(frag);
