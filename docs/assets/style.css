@@ -234,10 +234,15 @@ main { min-height: calc(100dvh - var(--bar-h) - 80px); }
     radial-gradient(120% 100% at 50% 0%, var(--bg-3), var(--bg-1));
 }
 .tile-art .console-logo {
-  max-width: 84%; max-height: 68%; object-fit: contain;
-  filter: brightness(1.4) contrast(1.1) drop-shadow(0 0 14px color-mix(in srgb, var(--accent) 45%, transparent));
+  width: 82%; max-height: 62%; object-fit: contain;
+  filter: brightness(0) invert(1) drop-shadow(0 1px 6px rgba(0,0,0,.6));
+  opacity: .92;
+  transition: filter .14s, opacity .14s;
 }
-.tile:hover .tile-art .console-logo, .tile:focus-visible .tile-art .console-logo { filter: brightness(1.6) drop-shadow(0 0 18px var(--accent)); }
+.tile:hover .tile-art .console-logo, .tile:focus-visible .tile-art .console-logo {
+  opacity: 1;
+  filter: brightness(0) invert(1) drop-shadow(0 0 16px color-mix(in srgb, var(--focus) 70%, transparent));
+}
 .tile-art .badge {
   position: absolute; left: 8px; top: 8px;
   padding: 3px 8px; border-radius: 6px;
