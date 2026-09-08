@@ -711,6 +711,7 @@ async function routePlayGame(sys, romParam, resume = false) {
   ++state.render;
   if (window.__emuUp) { location.reload(); return; }
   window.__emuUp = true;
+  if (MP.ai && !MP.ai.paused) { MP.ai.pause(); toast("Music paused for the game"); }
   await getSystems().catch(() => {});
 
   const loadEl = el("div", { className: "player-load", id: "player-load" }, "Booting emulator…");
