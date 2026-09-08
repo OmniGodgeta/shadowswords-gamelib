@@ -664,6 +664,26 @@ window.sswOfflineStats = async () => {
   const [rom, ejs] = await Promise.all([romCacheStats(), ejsCacheStats()]);
   return { rom, ejs, offlineReady: ejs.count > 2 };
 };
+// EJS_core value -> default libretro core (from EmulatorJS getCores(), stable channel)
+const EJS_LIBRETRO = {
+  nes: "fceumm", snes: "snes9x", gb: "gambatte", gba: "mgba", n64: "mupen64plus_next",
+  nds: "melonds", segaMD: "genesis_plus_gx", segaMS: "smsplus", segaGG: "genesis_plus_gx",
+  segaCD: "genesis_plus_gx", sega32x: "picodrive", pce: "mednafen_pce", pcfx: "mednafen_pcfx",
+  atari2600: "stella2014", atari5200: "a5200", atari7800: "prosystem", lynx: "handy",
+  jaguar: "virtualjaguar", ws: "mednafen_wswan", ngp: "mednafen_ngp", vb: "beetle_vb",
+  coleco: "gearcoleco", c64: "vice_x64sc", vic20: "vice_xvic", plus4: "vice_xplus4",
+  psx: "pcsx_rearmed", arcade: "fbneo", mame: "mame2003_plus", "3do": "opera", amiga: "puae",
+};
+// libretro core names for every playable system — for the app's "download all cores" list
+window.sswCores = async () => {
+  await getSystems().catch(() => {});
+  const cores = new Set();
+  for (const s of (state.sys?.systems || [])) {
+    if (!s.playable || !s.core) continue;
+    cores.add(EJS_LIBRETRO[s.core] || s.core);
+  }
+  return [...cores].sort();
+};
 async function romCacheEvict(need) {
   let items = (await romCacheEntries().catch(() => [])).sort((a, b) => a.t - b.t);
   let total = items.reduce((n, x) => n + x.size, 0);
