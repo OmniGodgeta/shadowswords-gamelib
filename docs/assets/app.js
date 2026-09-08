@@ -1000,7 +1000,11 @@ const cleanAlbum = (n) => parseAlbum(n).album;
 function parseAlbum(name) {
   const m = name.match(/^(.+?)\s+[-–]\s+(.+)$/);
   let artist = m ? m[1] : "";
-  let album = (m ? m[2] : name).replace(/\[[^\]]*\]/g, "").replace(/\([^)]*\)/g, "").replace(/\s{2,}/g, " ").trim();
+  let album = (m ? m[2] : name)
+    .replace(/\[[^\]]*\]/g, "").replace(/\([^)]*\)/g, "")
+    .replace(/\s[-–]\s*[A-Za-z0-9]{1,14}$/, "")     // trailing "-Sc4r3cr0w" release tag
+    .replace(/(\s+(FLAC|MP3|320kbps|320|V0|WEB|vtwin88cube?))+$/i, "")
+    .replace(/\s{2,}/g, " ").trim();
   artist = artist.replace(/\[[^\]]*\]/g, "").replace(/\s{2,}/g, " ").trim();
   return { artist, album: album || name };
 }
