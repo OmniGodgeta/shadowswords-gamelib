@@ -1014,6 +1014,9 @@ const fmtTime = (s) => !isFinite(s) || s < 0 ? "0:00"
 function shuffleInPlace(a) { for (let i = a.length - 1; i > 0; i--) { const j = (Math.random() * (i + 1)) | 0;[a[i], a[j]] = [a[j], a[i]]; } return a; }
 
 // order = [{alb, tr}] play queue; pos = index into it; ctxAlb = source album (-1 = whole library)
+// the page owns the OS media session only in a browser; inside the native
+// wrapper the app runs its own MediaSession (SSMediaBridge) to avoid flicker.
+const MS = (!IN_APP && "mediaSession" in navigator) ? navigator.mediaSession : null;
 const MP = { data: null, ai: null, order: [], pos: -1, ctxAlb: -1, alb: -1, tr: -1,
   shuffle: false, repeat: "off", ctx: null, an: null, src: null, _viz: 0 };
 const musicArtUrl = (name) => MUSIC_BASE + "art/" + encodeURIComponent(name);
@@ -1058,9 +1061,8 @@ function mpAudio() {
   MP.ai.addEventListener("pause", mpSync);
   MP.ai.addEventListener("timeupdate", mpTick);
   MP.ai.addEventListener("loadedmetadata", mpTick);
-  if ("mediaSession" in navigator) {
-    const h = navigator.mediaSession;
-    const set = (a, fn) => { try { h.setActionHandler(a, fn); } catch { /* unsupported */ } };
+  if (MS) {
+    const set = (a, fn) => { try { MS.setActionHandler(a, fn); } catch { /* unsupported */ } };
     set("play", () => { MP.ai.play(); });
     set("pause", () => { MP.ai.pause(); });
     set("previoustrack", () => mpPrev());
@@ -1079,8 +1081,8 @@ function mpTick() {
   const c = $("#mp-cur"), d = $("#mp-dur");
   if (c) c.textContent = fmtTime(ai.currentTime);
   if (d) d.textContent = fmtTime(ai.duration);
-  if ("mediaSession" in navigator && isFinite(ai.duration) && "setPositionState" in navigator.mediaSession) {
-    try { navigator.mediaSession.setPositionState({ duration: ai.duration, position: ai.currentTime, playbackRate: ai.playbackRate }); } catch { /* */ }
+  if (MS && isFinite(ai.duration) && "setPositionState" in MS) {
+    try { MS.setPositionState({ duration: ai.duration, position: ai.currentTime, playbackRate: ai.playbackRate }); } catch { /* */ }
   }
 }
 function mpViz(canvas) {
@@ -1122,12 +1124,12 @@ function mpSync() {
   $$(".track").forEach((r) => r.classList.toggle("playing",
     +r.dataset.alb === MP.alb && +r.dataset.tr === MP.tr));
   $$(".album-btn").forEach((b) => b.classList.toggle("nowplaying", +b.dataset.alb === MP.alb));
-  if ("mediaSession" in navigator && MP.data && MP.alb >= 0) {
+  if (MS && MP.data && MP.alb >= 0) {
     const alb = MP.data.albums[MP.alb], tr = alb.tracks[MP.tr], meta = parseAlbum(alb.name);
     const art = alb.art ? [{ src: new URL(musicArtUrl(alb.name), location.href).href, sizes: "512x512", type: "image/jpeg" }] : [];
-    navigator.mediaSession.metadata = new MediaMetadata({
+    MS.metadata = new MediaMetadata({
       title: tr.title, album: meta.album, artist: meta.artist || "ShadowSwords", artwork: art });
-    navigator.mediaSession.playbackState = playing ? "playing" : "paused";
+    MS.playbackState = playing ? "playing" : "paused";
   }
   const q = $("#mp-queue-list");
   if (q) $$("#mp-queue-list .qrow").forEach((r, i) => r.classList.toggle("playing", i === MP.pos));
@@ -1230,7 +1232,7 @@ function mpStop() {
   const b = $("#mini-player"); if (b) b.hidden = true;
   document.body.classList.remove("has-mp");
   cancelAnimationFrame(MP._viz);
-  if ("mediaSession" in navigator) navigator.mediaSession.playbackState = "none";
+  if (MS) MS.playbackState = "none";
 }
 
 // stable API for the native app wrapper (media-session bridge)
