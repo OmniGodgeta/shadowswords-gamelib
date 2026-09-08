@@ -1,7 +1,7 @@
 /* ShadowSwords Arcade — service worker.
    Shell + assets: cache-first. HTML + small data JSON: network-first with fallback.
    ROMs, BIOS, music, save-states, search.json, cross-origin (EmulatorJS CDN): never touched. */
-const CACHE = "ssw-v2.5";
+const CACHE = "ssw-v2.6";
 const SHELL = [
   "./", "./index.html", "./assets/app.js", "./assets/style.css",
   "./assets/img/logo.webp", "./manifest.json",

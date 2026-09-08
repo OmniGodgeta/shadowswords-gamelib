@@ -1131,6 +1131,7 @@ function mpSync() {
   }
   const q = $("#mp-queue-list");
   if (q) $$("#mp-queue-list .qrow").forEach((r, i) => r.classList.toggle("playing", i === MP.pos));
+  if (window.SSMusic) mpEmit();
 }
 function mpLoad(pos) {
   const d = MP.data; if (!d) return;
@@ -1230,6 +1231,41 @@ function mpStop() {
   document.body.classList.remove("has-mp");
   cancelAnimationFrame(MP._viz);
   if ("mediaSession" in navigator) navigator.mediaSession.playbackState = "none";
+}
+
+// stable API for the native app wrapper (media-session bridge)
+window.SSMusic = {
+  next: () => mpNext(),
+  prev: () => mpPrev(),
+  toggle: () => mpToggle(),
+  play: () => MP.ai && MP.ai.play().catch(() => {}),
+  pause: () => MP.ai && MP.ai.pause(),
+  stop: () => mpStop(),
+  seek: (sec) => { if (MP.ai && isFinite(MP.ai.duration)) MP.ai.currentTime = Math.max(0, Math.min(+sec || 0, MP.ai.duration)); },
+  getState: () => {
+    const ai = MP.ai, cur = mpCur();
+    if (!ai || !cur || !MP.data) return { playing: false, active: false };
+    const alb = MP.data.albums[cur.alb], m = parseAlbum(alb.name);
+    return {
+      active: true,
+      playing: !ai.paused && !ai.ended,
+      title: alb.tracks[cur.tr].title,
+      artist: m.artist || "ShadowSwords",
+      album: m.album,
+      artworkUrl: alb.art ? new URL(musicArtUrl(alb.name), location.href).href : null,
+      position: ai.currentTime || 0,
+      duration: isFinite(ai.duration) ? ai.duration : 0,
+      shuffle: MP.shuffle,
+      repeat: MP.repeat,
+      queueLength: MP.order.length,
+      queuePos: MP.pos,
+    };
+  },
+};
+// fired on every track / play-state change so the wrapper can update the native session without polling
+function mpEmit() {
+  try { window.dispatchEvent(new CustomEvent("ssmusic", { detail: window.SSMusic.getState() })); } catch { /* */ }
+  if (window.SSMediaBridge?.update) try { window.SSMediaBridge.update(JSON.stringify(window.SSMusic.getState())); } catch { /* */ }
 }
 function renderQueue() {
   const host = $("#mp-queue-list"); if (!host) return;
