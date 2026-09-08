@@ -636,6 +636,29 @@ async function romCacheClear() {
   const os = await idbTx("romcache", "readwrite");
   return new Promise((res) => { const q = os.clear(); q.onsuccess = res; q.onerror = res; });
 }
+// the service worker's EmulatorJS core-file cache (populated as you play)
+async function ejsCacheStats() {
+  try {
+    const c = await caches.open("ssw-ejs");
+    const keys = await c.keys();
+    let bytes = 0;
+    for (const k of keys) {
+      const r = await c.match(k);
+      const len = +(r && r.headers.get("content-length"));
+      bytes += len || (r ? (await r.clone().blob()).size : 0);
+    }
+    return { count: keys.length, bytes };
+  } catch { return { count: 0, bytes: 0 }; }
+}
+async function ejsCacheClear() {
+  try { await caches.delete("ssw-ejs"); } catch { /* */ }
+  navigator.serviceWorker?.controller?.postMessage("clear-ejs");
+}
+// exposed for the native wrapper's offline UX
+window.sswOfflineStats = async () => {
+  const [rom, ejs] = await Promise.all([romCacheStats(), ejsCacheStats()]);
+  return { rom, ejs, offlineReady: ejs.count > 2 };
+};
 async function romCacheEvict(need) {
   let items = (await romCacheEntries().catch(() => [])).sort((a, b) => a.t - b.t);
   let total = items.reduce((n, x) => n + x.size, 0);
@@ -1704,26 +1727,40 @@ async function routeSaves() {
 
 async function routeCache() {
   ++state.render;
-  const st = await romCacheStats();
+  document.title = "Offline & cache — ShadowSwords";
+  const [st, ejs] = await Promise.all([romCacheStats(), ejsCacheStats()]);
   const pct = Math.min(100, st.bytes / ROM_CACHE_CAP * 100);
   const bar = el("div", { className: "dl-bar" }, el("i", { style: `width:${pct.toFixed(1)}%` }));
   const clearBtn = el("button", { className: "btn btn-ghost", textContent: "Clear ROM cache" });
   clearBtn.onclick = async () => { await romCacheClear(); toast("ROM cache cleared"); routeCache(); };
+  const clearEjs = el("button", { className: "btn btn-ghost", textContent: "Clear emulator files" });
+  clearEjs.onclick = async () => { await ejsCacheClear(); toast("Emulator cache cleared"); routeCache(); };
   const tokIn = el("input", { type: "password", placeholder: "access token (only if the site is public)",
     value: LS.get("token", ""), style: "width:100%;max-width:340px;padding:9px 12px;background:var(--bg-1);color:var(--text);border:1px solid var(--line-2);border-radius:9px;outline:none" });
   tokIn.onchange = () => { LS.set("token", tokIn.value.trim()); toast("Saved"); };
+  const section = (title, body) => el("div", { style: "margin-top:22px;border-top:1px solid var(--line);padding-top:18px;text-align:left" },
+    el("h3", { style: "margin:0 0 8px;font-size:15px", textContent: title }), body);
   view.replaceChildren(el("section", { className: "pane center" },
     el("div", { className: "big-emoji", textContent: "💾" }),
     el("h1", { textContent: "Offline & cache" }),
     el("p", { textContent: `Downloaded ROMs are kept in your browser so replaying a game is instant — capped at ${fmtBytes(ROM_CACHE_CAP)}, oldest evicted first.` }),
     el("p", { className: "hint", style: "margin:0 0 6px", textContent: `${st.count} ROM${st.count === 1 ? "" : "s"} cached · ${fmtBytes(st.bytes)} used` }),
     bar,
-    el("div", { style: "margin-top:16px" }, clearBtn),
-    el("div", { className: "hint", style: "margin-top:20px" },
-      "This site also installs as an app — look for “Install” / “Add to Home Screen” in your browser menu."),
-    el("div", { style: "margin-top:22px;border-top:1px solid var(--line);padding-top:18px" },
-      el("div", { className: "hint", style: "margin-bottom:8px", textContent: "Access token — only needed if this instance has been made public with a write password." }),
-      tokIn)));
+    el("div", { style: "margin-top:16px;display:flex;gap:10px;justify-content:center;flex-wrap:wrap" }, clearBtn),
+
+    section("Play offline", el("div", {},
+      el("p", { className: "hint", style: "margin:0 0 6px" },
+        "Each console's emulator is saved the first time you play a game on it. After that, a saved emulator + a cached ROM (use “Save all for offline” on a console page) = plays with no connection."),
+      el("p", { className: "hint", style: "margin:0 0 10px" },
+        `${ejs.count} emulator file${ejs.count === 1 ? "" : "s"} saved · ${fmtBytes(ejs.bytes)}${ejs.count > 2 ? " · ✅ some consoles ready offline" : ""}`),
+      clearEjs)),
+
+    section("Install", el("p", { className: "hint", style: "margin:0" },
+      "This site installs as an app — look for “Install” / “Add to Home Screen” in your browser menu.")),
+
+    section("Access token", el("div", {},
+      el("p", { className: "hint", style: "margin:0 0 8px" }, "Only needed if this instance has been made public with a write password."),
+      tokIn))));
 }
 
 const AVATARS = ["🎮", "👾", "🕹️", "🎯", "🦊", "🐉", "⚡", "💀", "🍄", "👑", "🚀", "🎸", "🌚", "🔥", "🧙", "🤖"];
