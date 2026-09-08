@@ -100,10 +100,11 @@ h1, h2, h3 { letter-spacing: -.01em; }
 #acct-chip:hover { border-color: var(--cyan); box-shadow: var(--glow-cyan); }
 #acct-chip .ac-av { font-size: 16px; line-height: 1; flex: 0 0 auto; }
 #acct-chip .ac-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-@media (max-width: 620px) {
-  #acct-chip .ac-name { display: none; }
-  #acct-chip { padding: 6px; }
+@media (max-width: 700px) { #acct-chip .ac-name { display: none; } #acct-chip { padding: 6px; } }
+@media (max-width: 560px) {
+  #acct-chip { display: none; }          /* the ☰ drawer carries the account state here */
   .brand .logo { height: 34px; }
+  .bar { gap: 4px; padding: 0 8px; }
 }
 .bar-search {
   position: absolute; inset: 0; z-index: 2; display: flex; align-items: center;
