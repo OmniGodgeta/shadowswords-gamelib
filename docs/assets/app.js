@@ -996,13 +996,25 @@ async function routeMovies() {
 const spinnerEl = () => el("div", { className: "spinner", textContent: "Loading…" });
 
 /* ---- music: a player that survives navigation --------------- */
-const cleanAlbum = (n) => n
-  .replace(/\[[^\]]*\]/g, "").replace(/\([^)]*\)/g, "")
-  .replace(/[-–]\s*[A-Za-z0-9]+\s*$/, "")
-  .replace(/\s{2,}/g, " ").trim() || n;
+const cleanAlbum = (n) => parseAlbum(n).album;
+function parseAlbum(name) {
+  const m = name.match(/^(.+?)\s+[-–]\s+(.+)$/);
+  let artist = m ? m[1] : "";
+  let album = (m ? m[2] : name).replace(/\[[^\]]*\]/g, "").replace(/\([^)]*\)/g, "").replace(/\s{2,}/g, " ").trim();
+  artist = artist.replace(/\[[^\]]*\]/g, "").replace(/\s{2,}/g, " ").trim();
+  return { artist, album: album || name };
+}
+const fmtTime = (s) => !isFinite(s) || s < 0 ? "0:00"
+  : `${(s / 60) | 0}:${String((s % 60) | 0).padStart(2, "0")}`;
+function shuffleInPlace(a) { for (let i = a.length - 1; i > 0; i--) { const j = (Math.random() * (i + 1)) | 0;[a[i], a[j]] = [a[j], a[i]]; } return a; }
 
-const MP = { data: null, ai: null, alb: -1, tr: -1, shuffle: false, ctx: null, an: null, wired: false };
+// order = [{alb, tr}] play queue; pos = index into it; ctxAlb = source album (-1 = whole library)
+const MP = { data: null, ai: null, order: [], pos: -1, ctxAlb: -1, alb: -1, tr: -1,
+  shuffle: false, repeat: "off", ctx: null, an: null, src: null, _viz: 0 };
 const musicArtUrl = (name) => MUSIC_BASE + "art/" + encodeURIComponent(name);
+const mpCur = () => MP.order[MP.pos] || null;
+const allTrackRefs = () => MP.data.albums.flatMap((a, alb) => a.tracks.map((_, tr) => ({ alb, tr })));
+const albTrackRefs = (alb) => MP.data.albums[alb].tracks.map((_, tr) => ({ alb, tr }));
 
 async function mpData() {
   if (!MP.data) MP.data = await fetch(MUSIC_BASE + "index.json").then((r) => r.json()).catch(() => null);
@@ -1011,42 +1023,60 @@ async function mpData() {
 function mpBar() {
   let b = $("#mini-player");
   if (b) return b;
+  const prog = el("div", { className: "mp-prog", id: "mp-prog" }, el("i", { id: "mp-prog-fill" }));
+  prog.onclick = (e) => {
+    const ai = MP.ai; if (!ai || !isFinite(ai.duration)) return;
+    const r = prog.getBoundingClientRect();
+    ai.currentTime = ((e.clientX - r.left) / r.width) * ai.duration;
+  };
   b = el("div", { id: "mini-player", hidden: true },
     el("img", { id: "mp-art", alt: "", hidden: true }),
-    el("button", { className: "mp-b", id: "mp-prev", textContent: "⏮", title: "Previous" }),
-    el("button", { className: "mp-b mp-play", id: "mp-toggle", textContent: "▶" }),
-    el("button", { className: "mp-b", id: "mp-next", textContent: "⏭", title: "Next" }),
-    el("div", { className: "mp-meta", id: "mp-meta", onclick: () => { location.hash = "#/music" + (MP.alb >= 0 ? "/" + MP.alb : ""); } },
-      el("div", { className: "mp-t", id: "mp-title" }), el("div", { className: "mp-s", id: "mp-sub" })),
-    el("button", { className: "mp-b mp-sh", id: "mp-shuffle", textContent: "🔀", title: "Shuffle" }),
-    el("button", { className: "mp-b", id: "mp-close", textContent: "✕", title: "Stop" }));
+    el("button", { className: "mp-b", id: "mp-prev", textContent: "⏮", title: "Previous", onclick: mpPrev }),
+    el("button", { className: "mp-b mp-play", id: "mp-toggle", textContent: "▶", onclick: mpToggle }),
+    el("button", { className: "mp-b", id: "mp-next", textContent: "⏭", title: "Next", onclick: mpNext }),
+    el("div", { className: "mp-meta", id: "mp-meta" },
+      el("div", { className: "mp-t", id: "mp-title", onclick: () => { location.hash = "#/music" + (MP.alb >= 0 ? "/" + MP.alb : ""); } }),
+      el("div", { className: "mp-s", id: "mp-sub" }),
+      el("div", { className: "mp-prog-row" }, el("span", { id: "mp-cur", textContent: "0:00" }), prog, el("span", { id: "mp-dur", textContent: "0:00" }))),
+    el("button", { className: "mp-b mp-sh", id: "mp-shuffle", textContent: "🔀", title: "Shuffle", onclick: mpToggleShuffle }),
+    el("button", { className: "mp-b mp-rp", id: "mp-repeat", textContent: "🔁", title: "Repeat", onclick: mpCycleRepeat }),
+    el("button", { className: "mp-b", id: "mp-close", textContent: "✕", title: "Stop", onclick: mpStop }));
   document.body.append(b);
-  $("#mp-prev").onclick = mpPrev;
-  $("#mp-next").onclick = mpNext;
-  $("#mp-toggle").onclick = mpToggle;
-  $("#mp-shuffle").onclick = () => { MP.shuffle = !MP.shuffle; $("#mp-shuffle").classList.toggle("on", MP.shuffle); toast(MP.shuffle ? "Shuffle on" : "Shuffle off"); };
-  $("#mp-close").onclick = mpStop;
   return b;
 }
 function mpAudio() {
   if (MP.ai) return MP.ai;
   MP.ai = $("#player-audio");
   MP.ai.hidden = true;
-  MP.ai.addEventListener("ended", mpNext);
+  MP.ai.addEventListener("ended", () => { if (MP.repeat === "one") { MP.ai.currentTime = 0; MP.ai.play(); } else mpNext(); });
   MP.ai.addEventListener("play", mpSync);
   MP.ai.addEventListener("pause", mpSync);
+  MP.ai.addEventListener("timeupdate", mpTick);
+  MP.ai.addEventListener("loadedmetadata", mpTick);
   if ("mediaSession" in navigator) {
     const h = navigator.mediaSession;
-    try {
-      h.setActionHandler("play", () => mpToggle());
-      h.setActionHandler("pause", () => mpToggle());
-      h.setActionHandler("previoustrack", () => mpPrev());
-      h.setActionHandler("nexttrack", () => mpNext());
-      h.setActionHandler("stop", () => mpStop());
-      h.setActionHandler("seekto", (e) => { if (e.seekTime != null && isFinite(MP.ai.duration)) MP.ai.currentTime = e.seekTime; });
-    } catch { /* some handlers unsupported */ }
+    const set = (a, fn) => { try { h.setActionHandler(a, fn); } catch { /* unsupported */ } };
+    set("play", () => { MP.ai.play(); });
+    set("pause", () => { MP.ai.pause(); });
+    set("previoustrack", () => mpPrev());
+    set("nexttrack", () => mpNext());
+    set("stop", () => mpStop());
+    set("seekto", (e) => { if (e.seekTime != null && isFinite(MP.ai.duration)) MP.ai.currentTime = e.seekTime; });
+    set("seekforward", (e) => { MP.ai.currentTime = Math.min(MP.ai.duration || 1e9, MP.ai.currentTime + (e.seekOffset || 10)); });
+    set("seekbackward", (e) => { MP.ai.currentTime = Math.max(0, MP.ai.currentTime - (e.seekOffset || 10)); });
   }
   return MP.ai;
+}
+function mpTick() {
+  const ai = MP.ai; if (!ai) return;
+  const f = $("#mp-prog-fill");
+  if (f && isFinite(ai.duration)) f.style.width = (ai.currentTime / ai.duration * 100) + "%";
+  const c = $("#mp-cur"), d = $("#mp-dur");
+  if (c) c.textContent = fmtTime(ai.currentTime);
+  if (d) d.textContent = fmtTime(ai.duration);
+  if ("mediaSession" in navigator && isFinite(ai.duration) && "setPositionState" in navigator.mediaSession) {
+    try { navigator.mediaSession.setPositionState({ duration: ai.duration, position: ai.currentTime, playbackRate: ai.playbackRate }); } catch { /* */ }
+  }
 }
 function mpViz(canvas) {
   const ai = mpAudio();
@@ -1084,53 +1114,131 @@ function mpSync() {
   const ai = MP.ai; if (!ai) return;
   const playing = !ai.paused && !ai.ended;
   const t = $("#mp-toggle"); if (t) t.textContent = playing ? "⏸" : "▶";
-  $$(".track").forEach((r, n) => r.classList.toggle("playing",
-    +r.dataset.alb === MP.alb && n === MP.tr));
+  $$(".track").forEach((r) => r.classList.toggle("playing",
+    +r.dataset.alb === MP.alb && +r.dataset.tr === MP.tr));
+  $$(".album-btn").forEach((b) => b.classList.toggle("nowplaying", +b.dataset.alb === MP.alb));
   if ("mediaSession" in navigator && MP.data && MP.alb >= 0) {
-    const alb = MP.data.albums[MP.alb], tr = alb.tracks[MP.tr];
+    const alb = MP.data.albums[MP.alb], tr = alb.tracks[MP.tr], meta = parseAlbum(alb.name);
     const art = alb.art ? [{ src: new URL(musicArtUrl(alb.name), location.href).href, sizes: "512x512", type: "image/jpeg" }] : [];
-    navigator.mediaSession.metadata = new MediaMetadata({ title: tr.title, album: cleanAlbum(alb.name), artist: "ShadowSwords", artwork: art });
+    navigator.mediaSession.metadata = new MediaMetadata({
+      title: tr.title, album: meta.album, artist: meta.artist || "ShadowSwords", artwork: art });
     navigator.mediaSession.playbackState = playing ? "playing" : "paused";
   }
+  const q = $("#mp-queue-list");
+  if (q) $$("#mp-queue-list .qrow").forEach((r, i) => r.classList.toggle("playing", i === MP.pos));
 }
-function mpPlay(albIdx, trIdx) {
+function mpLoad(pos) {
   const d = MP.data; if (!d) return;
-  MP.alb = albIdx; MP.tr = trIdx;
-  const alb = d.albums[albIdx], t = alb.tracks[trIdx];
+  MP.pos = Math.max(0, Math.min(pos, MP.order.length - 1));
+  const ref = mpCur(); if (!ref) return;
+  MP.alb = ref.alb; MP.tr = ref.tr;
+  const alb = d.albums[ref.alb], tk = alb.tracks[ref.tr], m = parseAlbum(alb.name);
   const ai = mpAudio();
-  ai.src = MUSIC_BASE + "file/" + t.file.split("/").map(encodeURIComponent).join("/");
+  ai.src = MUSIC_BASE + "file/" + tk.file.split("/").map(encodeURIComponent).join("/");
   ai.play().catch(() => {});
   mpBar().hidden = false;
   document.body.classList.add("has-mp");
-  $("#mp-title").textContent = t.title;
-  $("#mp-sub").textContent = cleanAlbum(alb.name);
+  $("#mp-title").textContent = tk.title;
+  $("#mp-sub").textContent = [m.artist, m.album].filter(Boolean).join(" — ");
   const art = $("#mp-art");
-  if (alb.art) { art.src = musicArtUrl(alb.name); art.hidden = false; }
-  else art.hidden = true;
-  document.title = `▶ ${t.title} — ShadowSwords`;
+  if (alb.art) { art.src = musicArtUrl(alb.name); art.hidden = false; } else art.hidden = true;
+  document.title = `▶ ${tk.title} — ShadowSwords`;
   mpViz();
   mpSync();
 }
+function mpQueueAlbum(albIdx, shuffle) {
+  MP.ctxAlb = albIdx;
+  MP.shuffle = !!shuffle;
+  MP.order = albTrackRefs(albIdx);
+  if (shuffle) shuffleInPlace(MP.order);
+  $("#mp-shuffle")?.classList.toggle("on", MP.shuffle);
+  mpLoad(0);
+  renderQueue();
+}
+function mpQueueAll(shuffle) {
+  MP.ctxAlb = -1;
+  MP.shuffle = !!shuffle;
+  MP.order = allTrackRefs();
+  if (shuffle) shuffleInPlace(MP.order);
+  $("#mp-shuffle")?.classList.toggle("on", MP.shuffle);
+  mpLoad(0);
+  renderQueue();
+}
+// clicking a track in a list
+function mpPlayTrackAt(albIdx, trIdx) {
+  if (MP.ctxAlb === albIdx && MP.order.length) {
+    const at = MP.order.findIndex((x) => x.alb === albIdx && x.tr === trIdx);
+    if (at >= 0) return mpLoad(at);
+  }
+  // fresh context from this album
+  MP.ctxAlb = albIdx;
+  MP.order = albTrackRefs(albIdx);
+  if (MP.shuffle) {
+    const pick = MP.order.splice(trIdx, 1)[0];
+    shuffleInPlace(MP.order);
+    MP.order.unshift(pick);
+    mpLoad(0);
+  } else mpLoad(trIdx);
+  renderQueue();
+}
 function mpToggle() { const ai = MP.ai; if (!ai) return; ai.paused ? ai.play().catch(() => {}) : ai.pause(); }
 function mpNext() {
-  const d = MP.data; if (!d || MP.alb < 0) return;
-  const alb = d.albums[MP.alb];
-  if (MP.shuffle) return mpPlay(MP.alb, Math.random() * alb.tracks.length | 0);
-  if (MP.tr + 1 < alb.tracks.length) return mpPlay(MP.alb, MP.tr + 1);
-  if (MP.alb + 1 < d.albums.length) return mpPlay(MP.alb + 1, 0);
+  if (!MP.order.length) return;
+  if (MP.pos + 1 < MP.order.length) return mpLoad(MP.pos + 1);
+  if (MP.repeat === "all") return mpLoad(0);
+  // reached the end
+  MP.ai && MP.ai.pause();
 }
 function mpPrev() {
-  if (MP.alb < 0) return;
+  if (!MP.order.length) return;
   if (MP.ai && MP.ai.currentTime > 3) { MP.ai.currentTime = 0; return; }
-  if (MP.tr > 0) return mpPlay(MP.alb, MP.tr - 1);
-  if (MP.alb > 0) return mpPlay(MP.alb - 1, MP.data.albums[MP.alb - 1].tracks.length - 1);
+  if (MP.pos > 0) return mpLoad(MP.pos - 1);
+  if (MP.repeat === "all") return mpLoad(MP.order.length - 1);
+  MP.ai.currentTime = 0;
+}
+function mpToggleShuffle() {
+  MP.shuffle = !MP.shuffle;
+  $("#mp-shuffle")?.classList.toggle("on", MP.shuffle);
+  const cur = mpCur();
+  const base = MP.ctxAlb >= 0 ? albTrackRefs(MP.ctxAlb) : allTrackRefs();
+  if (MP.shuffle && cur) {
+    const rest = base.filter((x) => !(x.alb === cur.alb && x.tr === cur.tr));
+    shuffleInPlace(rest);
+    MP.order = [cur, ...rest]; MP.pos = 0;
+  } else if (cur) {
+    MP.order = base;
+    MP.pos = base.findIndex((x) => x.alb === cur.alb && x.tr === cur.tr);
+  }
+  toast(MP.shuffle ? "🔀 Shuffle on" : "Shuffle off");
+  renderQueue(); mpSync();
+}
+function mpCycleRepeat() {
+  MP.repeat = MP.repeat === "off" ? "all" : MP.repeat === "all" ? "one" : "off";
+  const b = $("#mp-repeat");
+  if (b) { b.textContent = MP.repeat === "one" ? "🔂" : "🔁"; b.classList.toggle("on", MP.repeat !== "off"); }
+  toast(MP.repeat === "off" ? "Repeat off" : MP.repeat === "all" ? "🔁 Repeat album" : "🔂 Repeat track");
 }
 function mpStop() {
   if (MP.ai) { MP.ai.pause(); MP.ai.removeAttribute("src"); MP.ai.load(); }
-  MP.alb = MP.tr = -1;
+  MP.order = []; MP.pos = MP.alb = MP.tr = -1; MP.ctxAlb = -1;
   const b = $("#mini-player"); if (b) b.hidden = true;
   document.body.classList.remove("has-mp");
   cancelAnimationFrame(MP._viz);
+  if ("mediaSession" in navigator) navigator.mediaSession.playbackState = "none";
+}
+function renderQueue() {
+  const host = $("#mp-queue-list"); if (!host) return;
+  const panel = host.closest(".queue-panel");
+  if (panel) panel.hidden = MP.pos < 0 || !MP.order.length;
+  const upcoming = MP.order.slice(MP.pos, MP.pos + 40);
+  host.replaceChildren(...upcoming.map((ref, i) => {
+    const alb = MP.data.albums[ref.alb], tk = alb.tracks[ref.tr];
+    return el("div", { className: "qrow" + (i === 0 ? " playing" : ""), onclick: () => mpLoad(MP.pos + i) },
+      el("span", { className: "q-t", textContent: tk.title }),
+      el("span", { className: "q-a", textContent: parseAlbum(alb.name).album }));
+  }));
+  const c = $("#mp-queue-count");
+  if (c) c.textContent = `${MP.order.length - MP.pos - 1} up next`;
 }
 
 async function routeMusic(albumIdx) {
@@ -1146,49 +1254,73 @@ async function routeMusic(albumIdx) {
       el("div", { className: "hint" }, "Served from ", el("code", { textContent: new URL(MUSIC_BASE, location.href).host }))));
     return;
   }
+  document.title = "Music — ShadowSwords";
   const idx = Math.min(Math.max(0, albumIdx | 0), data.albums.length - 1);
   const album = data.albums[idx];
+  const am = parseAlbum(album.name);
 
   const trackList = el("div", { className: "track-list" },
     ...album.tracks.map((t, i) => el("div", {
       className: "track" + (MP.alb === idx && MP.tr === i ? " playing" : ""),
-      tabIndex: 0, dataset: { alb: String(idx) },
-      onkeydown: (e) => { if (e.key === "Enter") mpPlay(idx, i); },
-      onclick: () => mpPlay(idx, i),
+      tabIndex: 0, dataset: { alb: String(idx), tr: String(i) },
+      onkeydown: (e) => { if (e.key === "Enter") mpPlayTrackAt(idx, i); },
+      onclick: () => mpPlayTrackAt(idx, i),
     },
       el("span", { className: "num", textContent: String(i + 1).padStart(2, "0") }),
-      el("span", { textContent: t.title }))));
+      el("span", { textContent: t.title }),
+      el("span", { className: "tk-play", textContent: "▶" }))));
 
   const viz = el("canvas", { className: "viz" });
-  const albumList = el("div", { className: "album-list" },
-    ...data.albums.map((a, i) => el("button", {
-      className: "album-btn" + (i === idx ? " active" : ""),
-      onclick: () => { location.hash = `#/music/${i}`; },
-    },
-      a.art
-        ? el("img", { className: "alb-thumb", src: musicArtUrl(a.name), loading: "lazy", alt: "" })
-        : el("span", { className: "alb-thumb ph", textContent: "♪" }),
-      el("span", { className: "alb-txt" },
-        el("span", { textContent: cleanAlbum(a.name) }),
-        el("small", { textContent: `${a.tracks.length} track${a.tracks.length > 1 ? "s" : ""}` })))));
+
+  // searchable album list (with artist / album split)
+  const albSearch = el("input", { type: "search", className: "alb-search", placeholder: "Filter albums…" });
+  const albumList = el("div", { className: "album-list" });
+  const drawAlbums = () => {
+    const q = albSearch.value.trim().toLowerCase();
+    albumList.replaceChildren(...data.albums.map((a, i) => {
+      const m = parseAlbum(a.name);
+      if (q && !(m.album + " " + m.artist + " " + a.name).toLowerCase().includes(q)) return null;
+      return el("button", {
+        className: "album-btn" + (i === idx ? " active" : "") + (MP.alb === i ? " nowplaying" : ""),
+        dataset: { alb: String(i) },
+        onclick: () => { location.hash = `#/music/${i}`; },
+      },
+        a.art
+          ? el("img", { className: "alb-thumb", src: musicArtUrl(a.name), loading: "lazy", alt: "" })
+          : el("span", { className: "alb-thumb ph", textContent: "♪" }),
+        el("span", { className: "alb-txt" },
+          el("span", { textContent: m.album }),
+          el("small", { textContent: `${m.artist ? m.artist + " · " : ""}${a.tracks.length} track${a.tracks.length > 1 ? "s" : ""}` })));
+    }).filter(Boolean));
+  };
+  albSearch.oninput = debounce(drawAlbums, 120);
+  drawAlbums();
 
   const albHead = el("div", { className: "alb-head" });
   if (album.art) albHead.append(el("img", { className: "alb-cover", src: musicArtUrl(album.name), alt: "" }));
-  albHead.append(el("div", {},
-    el("h3", { style: "margin:0 0 4px", textContent: cleanAlbum(album.name) }),
-    el("button", { className: "btn btn-ghost sm", textContent: "▶ Play album", onclick: () => mpPlay(idx, 0) })));
+  albHead.append(el("div", { className: "alb-head-info" },
+    am.artist && el("div", { className: "alb-artist", textContent: am.artist }),
+    el("h3", { style: "margin:2px 0 8px", textContent: am.album }),
+    el("div", { className: "alb-actions" },
+      el("button", { className: "btn btn-primary sm", textContent: "▶ Play", onclick: () => mpQueueAlbum(idx, false) }),
+      el("button", { className: "btn btn-ghost sm", textContent: "🔀 Shuffle album", onclick: () => mpQueueAlbum(idx, true) }))));
+
+  const queuePanel = el("div", { className: "queue-panel", hidden: MP.pos < 0 },
+    el("div", { className: "queue-head" }, el("h4", { textContent: "Up next" }),
+      el("span", { className: "hint", id: "mp-queue-count" })),
+    el("div", { id: "mp-queue-list" }));
 
   view.replaceChildren(el("div", { className: "wrap" },
     el("section", { className: "shelf", style: "padding:22px 0 6px" },
       el("div", { className: "shelf-head" }, el("h2", { textContent: "Music" }),
         el("span", { className: "count", textContent: `${data.albums.length} album${data.albums.length > 1 ? "s" : ""}` }),
-        el("a", { href: "javascript:void 0", textContent: "▶ Shuffle all", onclick: () => {
-          MP.shuffle = true; $("#mp-shuffle")?.classList.add("on");
-          mpPlay(Math.random() * data.albums.length | 0, 0);
-        } }))),
-    el("div", { className: "music-layout" }, albumList,
-      el("div", {}, albHead, trackList, viz))));
+        el("a", { href: "javascript:void 0", textContent: "🔀 Shuffle everything", onclick: () => mpQueueAll(true) }))),
+    el("div", { className: "music-layout" },
+      el("div", { className: "album-col" }, albSearch, albumList),
+      el("div", {}, albHead, queuePanel, trackList, viz))));
   mpBar();
+  mpAudio();
+  renderQueue();
   if (MP.alb >= 0) mpViz(viz);
 }
 

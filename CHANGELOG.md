@@ -2,7 +2,27 @@
 
 All notable changes to the ShadowSwords Arcade website.
 
-## [2.4.0] — 2026-09-08 — Trending, movie shelves, album art, offline packs, safety
+## [2.5.0] — 2026-09-08 — Music player rework
+
+### Added
+- **Proper play queue.** "Play" or "Shuffle" an album builds a real queue you
+  can see ("Up next"), reorder into, and jump around. Shuffle keeps the current
+  track and reshuffles the rest; turning it off restores album order.
+- **Shuffle album** button on every album (next to Play), plus **Shuffle
+  everything** across the whole library.
+- **Repeat** — off / repeat album / repeat one track, toggled from the player.
+- **Seekable progress bar** with elapsed / total time in the mini-player.
+- **Artist / album split** — album folders like "AC-DC - Discography…" now show
+  the artist separately, in the list, the header, and (importantly) in the
+  `mediaSession` metadata — so a **car's Bluetooth display and steering-wheel
+  next/previous buttons** show the right artist and work. Also wired
+  `seekforward` / `seekbackward` / `setPositionState` for car head-units.
+- **Filter box** for the album list.
+- Now-playing album is marked in the list.
+
+### Changed
+- The music section is reorganised: searchable album column, album header with
+  artwork + artist + Play/Shuffle, queue, then track list.
 
 ### Added
 - **Trending shelf** on the home page — the games people actually played this week.
