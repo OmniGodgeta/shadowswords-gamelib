@@ -2,6 +2,34 @@
 
 All notable changes to the ShadowSwords Arcade website.
 
+## [2.6.0] — 2026-09-08 — Accounts & profile settings
+
+### Added
+- **Accounts** — create a username + password, and your **cloud save-states,
+  favorites and settings are tied to your account** and follow you to every
+  device. Sign in from the account chip in the header or `#/login`.
+  - Cloud saves are now stored per-account (`states/<user>/…`). Pre-account
+    saves still work — they live in a shared pool everyone can read, and any
+    old save you had still resumes until you make a fresh one.
+  - Registration is open to anyone on the tailnet; set
+    `"registration": "closed"` in the server config to lock it to existing
+    accounts.
+- **Profile & settings page** (`#/profile`) — avatar (emoji), display name,
+  change password, sign out, plus:
+  - **Emulator video filter** — pixel-perfect / smooth / CRT-scanlines
+  - **Prefer game region** — USA / Europe / Japan (used by "Surprise me")
+  - **Auto-resume cloud saves** — load your last save when you open a game
+  - **Shuffle albums by default**
+  - **Lite mode** (moved here from the footer)
+  - **"People playing now" popups** on/off
+  - **Confirm before overwriting a cloud save**
+  - Settings sync to your account; when signed out they're per-device.
+- Account chip in the header showing your avatar + name.
+
+### Security
+- Passwords hashed with scrypt; sessions are signed HMAC tokens (45-day),
+  stored only in your browser. Auth endpoints are rate-limited.
+
 ## [2.5.0] — 2026-09-08 — Music player rework
 
 ### Added

@@ -100,6 +100,60 @@ function pushRecent(sys, file, name, img) {
   LS.set("recent", l.slice(0, 24));
 }
 
+/* ---- accounts + preferences -------------------------------------- */
+const PREF_DEFAULTS = {
+  lite: false, autoResume: false, musicShuffle: false, videoFilter: "pixel",
+  region: "", playingToasts: true, confirmOverwrite: false,
+};
+const AUTH = { token: LS.get("auth", null), user: null };
+const authHdr = () => AUTH.token ? { "x-ssw-auth": AUTH.token } : {};
+const signedIn = () => !!AUTH.user;
+
+function prefs() {
+  const local = LS.get("settings", {});
+  const remote = (AUTH.user && AUTH.user.settings) || {};
+  return { ...PREF_DEFAULTS, ...local, ...remote };
+}
+function setPref(k, v) {
+  const local = LS.get("settings", {}); local[k] = v; LS.set("settings", local);
+  if (AUTH.user) {
+    AUTH.user.settings = { ...(AUTH.user.settings || {}), [k]: v };
+    apiAuth("update", { settings: { [k]: v } }).catch(() => {});
+  }
+  window.dispatchEvent(new Event("ssw-prefs"));
+}
+async function apiAuth(action, body) {
+  const r = await fetch(`${API}/auth/${action}`, {
+    method: action === "me" ? "GET" : "POST",
+    headers: { "content-type": "application/json", ...authHdr() },
+    body: action === "me" ? undefined : JSON.stringify(body || {}),
+  });
+  const data = await r.json().catch(() => ({}));
+  if (!r.ok) throw Object.assign(new Error(data.error || r.statusText), { status: r.status });
+  return data;
+}
+function setSession(token, user) {
+  AUTH.token = token || AUTH.token; AUTH.user = user;
+  if (token) LS.set("auth", token);
+  window.dispatchEvent(new Event("ssw-auth"));
+  applyPrefs();
+}
+function signOut() {
+  AUTH.token = null; AUTH.user = null;
+  try { localStorage.removeItem("ssw:auth"); } catch { /* */ }
+  window.dispatchEvent(new Event("ssw-auth"));
+  toast("Signed out");
+}
+async function hydrateAuth() {
+  if (!AUTH.token) { applyPrefs(); return; }
+  try { const { user } = await apiAuth("me"); setSession(null, user); }
+  catch (e) { if (e.status === 401) signOut(); applyPrefs(); }
+}
+function applyPrefs() {
+  const p = prefs();
+  document.body.classList.toggle("lite", p.lite === true);
+}
+
 /* ---- data ---------------------------------------------------------- */
 async function getSystems() {
   if (!state.sys) {
@@ -335,7 +389,7 @@ async function routeHome() {
       linkTile("#/contact", "📡", "Contact", "Socials & Discord"),
       linkTile("#/favorites", "♥", "Favorites", "Your starred games"),
       linkTile("#/saves", "☁", "Cloud saves", "Resume on any device"),
-      linkTile("#/profile", "👤", "Profile", "Your stats"),
+      linkTile("#/profile", "👤", "Profile", signedIn() ? AUTH.user.display : "Sign in & settings"),
       linkTile("#/stats", "📊", "Stats", "Trending & reports"),
       linkTile("#/cache", "💾", "Offline", "Install & ROM cache"))));
   view.replaceChildren(frag);
@@ -773,6 +827,9 @@ async function routePlayGame(sys, romParam, resume = false) {
   window.EJS_Buttons = { restart: true, settings: true, fullscreen: true, saveState: true,
     loadState: true, screenshot: true, cheat: true, gamepad: true };
   window.EJS_RETROACHIEVEMENTS = true;          // enables the RA login in the settings menu (build-permitting)
+  const vf = prefs().videoFilter;
+  window.EJS_defaultOptions = vf === "crt" ? { shader: "crt-aperture.glslp" }
+    : vf === "smooth" ? { shader: "bicubic.glslp" } : {};
   // Netplay signalling server — tailnet default; override with localStorage ssw:netplay ("off" disables).
   const np = LS.get("netplay", NETPLAY_URL);
   if (np && np !== "off") { window.EJS_netplayServer = np; window.EJS_Buttons.netplay = true; }
@@ -780,16 +837,19 @@ async function routePlayGame(sys, romParam, resume = false) {
   // cloud save-states — the stable EmulatorJS build has no onSaveState hook, so
   // we drive it ourselves via gameManager.getState()/loadState() + our own buttons.
   const key = sys === "upload" ? null : stateKey(sys, file);
+  const wantResume = resume || prefs().autoResume;
   let hasCloudSave = false;
-  if (key && resume) {
-    try { hasCloudSave = (await fetch(key, { method: "HEAD" })).ok; } catch { /* offline */ }
+  if (key && wantResume) {
+    try { hasCloudSave = (await fetch(key, { method: "HEAD", headers: authHdr() })).ok; } catch { /* offline */ }
   }
   const cloudSave = async () => {
     const gm = window.EJS_emulator?.gameManager;
     if (!gm) return;
+    if (prefs().confirmOverwrite && hasCloudSave && !confirm("Overwrite your cloud save for this game?")) return;
     try {
       const data = gm.getState();
-      await fetch(key, { method: "PUT", headers: { "content-type": "application/octet-stream", ...tokenHdr() }, body: data });
+      await fetch(key, { method: "PUT", headers: { "content-type": "application/octet-stream", ...tokenHdr(), ...authHdr() }, body: data });
+      hasCloudSave = true;
       toast("Saved to the server ☁");
     } catch { toast("Cloud save failed"); }
   };
@@ -797,7 +857,7 @@ async function routePlayGame(sys, romParam, resume = false) {
     const gm = window.EJS_emulator?.gameManager;
     if (!gm) return;
     try {
-      const buf = await fetch(key).then((r) => { if (!r.ok) throw 0; return r.arrayBuffer(); });
+      const buf = await fetch(key, { headers: authHdr() }).then((r) => { if (!r.ok) throw 0; return r.arrayBuffer(); });
       gm.loadState(new Uint8Array(buf));
       toast("Server save state loaded");
     } catch { toast("No server save state for this game"); }
@@ -807,7 +867,7 @@ async function routePlayGame(sys, romParam, resume = false) {
   const autoSave = async () => {
     const g2 = window.EJS_emulator?.gameManager;
     if (!key || !g2) return;
-    try { await fetch(key, { method: "PUT", headers: { "content-type": "application/octet-stream", ...tokenHdr() }, body: g2.getState() }); }
+    try { await fetch(key, { method: "PUT", headers: { "content-type": "application/octet-stream", ...tokenHdr(), ...authHdr() }, body: g2.getState() }); }
     catch { /* offline */ }
   };
   window.__emuAutoSave = autoSave;
@@ -1345,7 +1405,7 @@ async function routeMusic(albumIdx) {
     am.artist && el("div", { className: "alb-artist", textContent: am.artist }),
     el("h3", { style: "margin:2px 0 8px", textContent: am.album }),
     el("div", { className: "alb-actions" },
-      el("button", { className: "btn btn-primary sm", textContent: "▶ Play", onclick: () => mpQueueAlbum(idx, false) }),
+      el("button", { className: "btn btn-primary sm", textContent: "▶ Play", onclick: () => mpQueueAlbum(idx, prefs().musicShuffle === true) }),
       el("button", { className: "btn btn-ghost sm", textContent: "🔀 Shuffle album", onclick: () => mpQueueAlbum(idx, true) }))));
 
   const queuePanel = el("div", { className: "queue-panel", hidden: MP.pos < 0 },
@@ -1611,12 +1671,14 @@ async function routeSaves() {
   const token = ++state.render;
   spinner();
   await getSystems().catch(() => {});
-  const saves = await fetch(STATE_BASE + "list").then((r) => r.json()).catch(() => null);
+  const saves = await fetch(STATE_BASE + "list", { headers: authHdr() }).then((r) => r.json()).catch(() => null);
   if (token !== state.render) return;
   const frag = document.createDocumentFragment();
   frag.append(el("section", { className: "shelf", style: "padding:22px var(--pad) 0" },
     el("div", { className: "shelf-head" }, el("h2", { textContent: "Cloud save states" }),
-      el("span", { className: "count", textContent: saves ? `${saves.length}` : "—" }))));
+      el("span", { className: "count", textContent: saves ? `${saves.length}` : "—" }),
+      signedIn() ? el("span", { className: "hint", textContent: `signed in as ${AUTH.user.display}` })
+        : el("a", { href: "#/login", textContent: "Sign in to keep saves private ›" }))));
   const grid = el("div", { className: "tile-grid" });
   if (!saves) {
     grid.append(el("div", { className: "empty-state", textContent: "Can't reach the save-state server — you may be off the tailnet." }));
@@ -1628,7 +1690,7 @@ async function routeSaves() {
       const art = el("div", { className: "tile-art" });
       if (gm && gm.img) art.append(el("img", { src: artUrl(gm.img), loading: "lazy", alt: s.name }));
       else art.append(el("div", { className: "ph", textContent: s.name }));
-      art.append(el("span", { className: "badge", textContent: "Resume" }));
+      art.append(el("span", { className: "badge", textContent: s.shared ? "Shared" : "Resume" }));
       grid.append(el("a", { className: "tile wide",
         href: `#/resume/${s.sys}/${s.file.split("/").map(encodeURIComponent).join("/")}` }, art,
         el("div", { className: "tile-cap" },
@@ -1664,6 +1726,124 @@ async function routeCache() {
       tokIn)));
 }
 
+const AVATARS = ["🎮", "👾", "🕹️", "🎯", "🦊", "🐉", "⚡", "💀", "🍄", "👑", "🚀", "🎸", "🌚", "🔥", "🧙", "🤖"];
+
+function signInPrompt() {
+  return el("div", { className: "acct-card" },
+    el("div", { className: "acct-av", textContent: "👤" }),
+    el("div", { style: "flex:1;min-width:0" },
+      el("strong", { textContent: "Not signed in" }),
+      el("div", { className: "hint", textContent: "Cloud saves, favorites and settings are stored on this device only." })),
+    el("a", { className: "btn btn-primary", href: "#/login", textContent: "Sign in" }));
+}
+function accountCard() {
+  const u = AUTH.user;
+  const nameIn = el("input", { type: "text", value: u.display, maxLength: 40, style: "font-weight:700;font-size:15px" });
+  const avPick = el("div", { className: "av-grid" },
+    ...AVATARS.map((a) => el("button", { className: "av-opt" + (a === u.avatar ? " on" : ""), textContent: a,
+      onclick: async () => {
+        try { const d = await apiAuth("update", { avatar: a }); setSession(null, d.user); toast("Avatar updated"); routeProfile(); }
+        catch { toast("Couldn't save"); }
+      } })));
+  const saveName = el("button", { className: "btn btn-ghost sm", textContent: "Save name", onclick: async () => {
+    try { const d = await apiAuth("update", { display: nameIn.value }); setSession(null, d.user); toast("Saved"); }
+    catch { toast("Couldn't save"); }
+  } });
+  // change password
+  const pOld = el("input", { type: "password", placeholder: "Current password", autocomplete: "current-password" });
+  const pNew = el("input", { type: "password", placeholder: "New password", autocomplete: "new-password" });
+  const pStatus = el("div", { className: "hint" });
+  const pBtn = el("button", { className: "btn btn-ghost sm", textContent: "Change password", onclick: async () => {
+    pStatus.textContent = "";
+    try {
+      const d = await apiAuth("update", { password: pOld.value, newPassword: pNew.value });
+      if (d.token) AUTH.token = d.token, LS.set("auth", d.token);
+      setSession(null, d.user); pOld.value = pNew.value = ""; pStatus.textContent = "Password changed ✓";
+    } catch (e) { pStatus.textContent = e.message || "Couldn't change password"; }
+  } });
+  return el("div", {},
+    el("div", { className: "acct-card" },
+      el("div", { className: "acct-av", textContent: u.avatar }),
+      el("div", { style: "flex:1;min-width:0" }, nameIn,
+        el("div", { className: "hint", textContent: `@${u.name} · joined ${new Date(u.created).toLocaleDateString()}` })),
+      saveName,
+      el("button", { className: "btn btn-ghost sm", textContent: "Sign out",
+        onclick: () => { signOut(); routeProfile(); } })),
+    el("details", { className: "acct-more" },
+      el("summary", { textContent: "Avatar & password" }),
+      el("div", { style: "padding:12px 2px 4px" },
+        el("div", { className: "hint", style: "margin-bottom:6px", textContent: "Avatar" }), avPick,
+        el("div", { className: "hint", style: "margin:16px 0 6px", textContent: "Change password" }),
+        el("div", { className: "pw-row" }, pOld, pNew), pBtn, pStatus)));
+}
+function settingsCard() {
+  const p = prefs();
+  const toggle = (k, label, hint) => {
+    const cb = el("input", { type: "checkbox", checked: p[k] === true });
+    cb.onchange = () => setPref(k, cb.checked);
+    return el("label", { className: "set-row" }, cb,
+      el("div", {}, el("div", { textContent: label }), hint && el("div", { className: "hint", textContent: hint })));
+  };
+  const select = (k, label, opts) => {
+    const s = el("select", {}, ...opts.map(([v, t]) => el("option", { value: v, textContent: t, selected: p[k] === v })));
+    s.onchange = () => setPref(k, s.value);
+    return el("label", { className: "set-row" }, s, el("div", {}, el("div", { textContent: label })));
+  };
+  return el("div", {},
+    el("h3", { style: "margin:22px 0 10px", textContent: "Settings" }),
+    el("div", { className: "set-list" },
+      select("videoFilter", "Emulator video filter", [["pixel", "Pixel-perfect"], ["smooth", "Smooth"], ["crt", "CRT / scanlines"]]),
+      select("region", "Prefer game region", [["", "No preference"], ["USA", "USA"], ["Europe", "Europe"], ["Japan", "Japan"]]),
+      toggle("autoResume", "Auto-resume cloud saves", "Load your last save automatically when you open a game"),
+      toggle("musicShuffle", "Shuffle albums by default", "Start an album shuffled when you hit Play"),
+      toggle("lite", "Lite mode", "Drop the scanlines, glow and animations"),
+      toggle("playingToasts", "Show “people playing now” popups", ""),
+      toggle("confirmOverwrite", "Confirm before overwriting a cloud save", "")),
+    signedIn()
+      ? el("div", { className: "hint", style: "margin-top:8px", textContent: "Settings are saved to your account and sync across devices." })
+      : el("div", { className: "hint", style: "margin-top:8px" }, "Settings are stored on this device. ",
+        el("a", { href: "#/login", textContent: "Sign in" }), " to sync them."));
+}
+
+async function routeLogin() {
+  ++state.render;
+  document.title = "Sign in — ShadowSwords";
+  if (signedIn()) { location.hash = "#/profile"; return; }
+  let mode = "in";  // "in" | "up"
+  const uName = el("input", { type: "text", placeholder: "Username", autocomplete: "username", maxLength: 24 });
+  const uPw = el("input", { type: "password", placeholder: "Password", autocomplete: "current-password" });
+  const status = el("div", { className: "hint", style: "margin:8px 0;min-height:16px" });
+  const submit = el("button", { className: "btn btn-primary", style: "width:100%" });
+  const toggle = el("a", { href: "javascript:void 0" });
+  const render = () => {
+    submit.textContent = mode === "in" ? "Sign in" : "Create account";
+    toggle.textContent = mode === "in" ? "New here? Create an account" : "Already have an account? Sign in";
+    uPw.autocomplete = mode === "in" ? "current-password" : "new-password";
+    document.title = (mode === "in" ? "Sign in" : "Create account") + " — ShadowSwords";
+  };
+  toggle.onclick = () => { mode = mode === "in" ? "up" : "in"; status.textContent = ""; render(); };
+  const go = async () => {
+    status.textContent = ""; submit.disabled = true;
+    try {
+      const d = await apiAuth(mode === "in" ? "login" : "register",
+        { username: uName.value.trim(), password: uPw.value });
+      setSession(d.token, d.user);
+      toast(`Welcome, ${d.user.display}`);
+      location.hash = "#/profile";
+    } catch (e) { status.textContent = e.message || "Something went wrong"; }
+    submit.disabled = false;
+  };
+  submit.onclick = go;
+  uPw.onkeydown = (e) => { if (e.key === "Enter") go(); };
+  render();
+  view.replaceChildren(el("section", { className: "pane center" },
+    el("div", { className: "big-emoji", textContent: "🔐" }),
+    el("h1", { textContent: "Your account" }),
+    el("p", { textContent: "Sign in so your cloud save-states, favorites and settings follow you to every device." }),
+    el("div", { className: "auth-form" }, uName, uPw, status, submit,
+      el("div", { style: "margin-top:14px" }, toggle))));
+}
+
 async function routeProfile() {
   ++state.render; spinner();
   await getSystems().catch(() => {});
@@ -1678,8 +1858,14 @@ async function routeProfile() {
     el("div", { className: "stat-n", textContent: n }), el("div", { className: "stat-l", textContent: l }));
   const frag = document.createDocumentFragment();
   frag.append(el("section", { className: "shelf", style: "padding:22px var(--pad) 0" },
-    el("div", { className: "shelf-head" }, el("h2", { textContent: "Your profile" }))),
+    el("div", { className: "shelf-head" }, el("h2", { textContent: "Your profile" }))));
+
+  frag.append(el("div", { className: "wrap" }, signedIn() ? accountCard() : signInPrompt()));
+  frag.append(el("div", { className: "wrap" }, settingsCard()));
+
+  frag.append(
     el("div", { className: "wrap" },
+      el("h3", { style: "margin:22px 0 10px", textContent: "Activity" }),
       el("div", { className: "stat-row" },
         stat(hrs >= 1 ? hrs.toFixed(1) + " h" : Math.round(totalSec / 60) + " m", "played in browser"),
         stat(recent.length, "games launched"),
@@ -1809,6 +1995,7 @@ async function router() {
   if (a === "saves") { setNav("saves"); return routeSaves(); }
   if (a === "cache") { setNav(null); return routeCache(); }
   if (a === "profile") { setNav(null); return routeProfile(); }
+  if (a === "login") { setNav(null); return routeLogin(); }
   if (a === "stats") { setNav(null); return routeStats(); }
   if (a === "collections") { setNav(null); return routeCollections(); }
   if (a === "collection" && b) { setNav(null); return routeCollection(b); }
@@ -1866,12 +2053,29 @@ qi.addEventListener("keydown", (e) => {
 qi.addEventListener("blur", () => setTimeout(() => { acBox.hidden = true; }, 150));
 
 /* ---- lite mode + reduced motion ------------------------------ */
-const applyLite = () => document.body.classList.toggle("lite", LS.get("lite", false) === true);
-applyLite();
-if (matchMedia("(prefers-reduced-motion: reduce)").matches && LS.get("lite", null) === null) {
+// migrate the old standalone ssw:lite key into settings
+{ const old = LS.get("lite", null); if (old !== null && LS.get("settings", {}).lite === undefined) setPref("lite", old === true); }
+if (matchMedia("(prefers-reduced-motion: reduce)").matches && LS.get("lite", null) === null && LS.get("settings", {}).lite === undefined) {
   document.body.classList.add("lite");
 }
-window.toggleLite = () => { LS.set("lite", !(LS.get("lite", false) === true)); applyLite(); toast(document.body.classList.contains("lite") ? "Lite mode on" : "Lite mode off"); };
+applyPrefs();
+window.toggleLite = () => { setPref("lite", !(prefs().lite === true)); toast(document.body.classList.contains("lite") ? "Lite mode on" : "Lite mode off"); };
+
+/* ---- account chip in the header ---------------------------- */
+function renderAcctChip() {
+  let c = $("#acct-chip");
+  if (!c) {
+    c = el("a", { id: "acct-chip", href: "#/profile" });
+    $("#bar").append(c);
+  }
+  c.replaceChildren(el("span", { className: "ac-av", textContent: AUTH.user ? AUTH.user.avatar : "👤" }),
+    el("span", { className: "ac-name", textContent: AUTH.user ? AUTH.user.display : "Sign in" }));
+  c.href = AUTH.user ? "#/profile" : "#/login";
+}
+addEventListener("ssw-auth", renderAcctChip);
+addEventListener("ssw-prefs", applyPrefs);
+renderAcctChip();
+hydrateAuth();
 
 /* ---- keyboard shortcuts ------------------------------------- */
 const HELP = [["/", "search"], ["g h", "home"], ["g p", "play"], ["g m", "music"], ["g v", "videos"],
@@ -1920,7 +2124,7 @@ function toggleHelp() {
 (async () => {
   try {
     const s = await fetch(`${API}/play/stats`).then((r) => r.json());
-    if (s && s.playingNow > 1) toast(`👾 ${s.playingNow} people playing right now`);
+    if (s && s.playingNow > 1 && prefs().playingToasts !== false) toast(`👾 ${s.playingNow} people playing right now`);
   } catch { /* */ }
 })();
 

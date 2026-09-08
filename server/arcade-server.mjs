@@ -10,6 +10,7 @@ import http from "node:http";
 import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
+import crypto from "node:crypto";
 import { fileURLToPath } from "node:url";
 
 const PORT = 8710;
@@ -22,11 +23,55 @@ const DATA = path.join(os.homedir(), ".local", "share", "ssw-arcade");
 const STATES = path.join(DATA, "states");
 const EJS_CACHE = path.join(DATA, "ejs-cache");
 const STATS_FILE = path.join(DATA, "stats.json");
+const ACCOUNTS_FILE = path.join(DATA, "accounts.json");
 const STATE_MAX = 96 * 1024 * 1024;   // reject absurd save-state uploads
 for (const d of [STATES, EJS_CACHE]) {
   try { fs.mkdirSync(d, { recursive: true }); }
   catch (e) { console.warn("dir unavailable:", d, e.message); }
 }
+
+// ---- accounts + auth ------------------------------------------------------
+// accounts.json: { secret, users: { <lcname>: {id, name, display, avatar, pwHash, salt, created, settings} } }
+let ACCT = null;
+function accts() {
+  if (ACCT) return ACCT;
+  try { ACCT = JSON.parse(fs.readFileSync(ACCOUNTS_FILE, "utf8")); }
+  catch { ACCT = { secret: crypto.randomBytes(32).toString("hex"), users: {} }; }
+  ACCT.users ||= {};
+  if (!ACCT.secret) ACCT.secret = crypto.randomBytes(32).toString("hex");
+  return ACCT;
+}
+function saveAccts() {
+  try { fs.writeFileSync(ACCOUNTS_FILE, JSON.stringify(accts(), null, 2), { mode: 0o600 }); }
+  catch (e) { console.warn("accounts write failed:", e.message); }
+}
+const hashPw = (pw, salt) => crypto.scryptSync(pw, salt, 32).toString("hex");
+const b64u = (b) => Buffer.from(b).toString("base64url");
+const unb64u = (s) => Buffer.from(s, "base64url");
+function mkToken(uid) {
+  const body = b64u(JSON.stringify({ u: uid, e: Date.now() + 45 * 864e5 }));
+  const sig = crypto.createHmac("sha256", accts().secret).update(body).digest("base64url");
+  return body + "." + sig;
+}
+function readToken(tok) {
+  if (!tok || tok.indexOf(".") < 0) return null;
+  const [body, sig] = tok.split(".");
+  const want = crypto.createHmac("sha256", accts().secret).update(body).digest("base64url");
+  if (sig.length !== want.length || !crypto.timingSafeEqual(Buffer.from(sig), Buffer.from(want))) return null;
+  try {
+    const p = JSON.parse(unb64u(body).toString());
+    if (!p.u || p.e < Date.now()) return null;
+    return p.u;
+  } catch { return null; }
+}
+function userByToken(req) {
+  const tok = req.headers["x-ssw-auth"] || "";
+  const uid = readToken(tok);
+  if (!uid) return null;
+  return Object.values(accts().users).find((u) => u.id === uid) || null;
+}
+const pubUser = (u) => u && ({ id: u.id, name: u.name, display: u.display || u.name,
+  avatar: u.avatar || "🎮", created: u.created, settings: u.settings || {} });
 
 // ---- optional config: ~/.config/ssw-arcade/config.json --------------------
 //   { "twitch": "shadowswords",
@@ -74,7 +119,7 @@ const MIME = {
 };
 const CORS = {
   "access-control-allow-origin": "*",
-  "access-control-allow-headers": "range, content-type, x-ssw-token",
+  "access-control-allow-headers": "range, content-type, x-ssw-token, x-ssw-auth",
   "access-control-allow-methods": "GET, HEAD, POST, PUT, DELETE, OPTIONS",
 };
 
@@ -299,34 +344,65 @@ function serveMusic(req, res, rel) {
   }
 }
 
-// ---- cloud save-states --------------------------------------------------
+// ---- cloud save-states (per-account namespaces) ------------------------
+// layout: STATES/<ns>/<sys>/<base64url(rompath)>.state
+//   ns = user id when signed in, else "_shared" (the pre-accounts pool)
 const stateSys = (s) => /^[a-z0-9-]+$/i.test(s) && PLAYABLE.has(s);
-const stateFile = (sys, rel) => path.join(STATES, sys, Buffer.from(rel).toString("base64url") + ".state");
+const nsFor = (req) => { const u = userByToken(req); return u ? u.id : "_shared"; };
+const stateFile = (ns, sys, rel) => path.join(STATES, ns, sys, Buffer.from(rel).toString("base64url") + ".state");
+const nsOK = (ns) => /^(_shared|u_[a-z0-9]+)$/i.test(ns);
 
-function statesList(req, res) {
-  const out = [];
+// one-time migration: legacy STATES/<sys>/*.state -> STATES/_shared/<sys>/
+(function migrateStates() {
   try {
-    for (const sys of fs.readdirSync(STATES)) {
-      const dir = path.join(STATES, sys);
-      if (!fs.statSync(dir).isDirectory()) continue;
+    for (const e of fs.readdirSync(STATES)) {
+      if (!stateSys(e)) continue;                           // only playable-system dirs, skip _shared / u_*
+      const from = path.join(STATES, e), to = path.join(STATES, "_shared", e);
+      fs.mkdirSync(path.dirname(to), { recursive: true });
+      fs.renameSync(from, to);
+      console.log("migrated legacy save-states:", e, "-> _shared/");
+    }
+  } catch { /* nothing to migrate */ }
+})();
+
+function nsList(ns, shared) {
+  const out = [];
+  const scan = (base, isShared) => {
+    let sysDirs = [];
+    try { sysDirs = fs.readdirSync(base); } catch { return; }
+    for (const sys of sysDirs) {
+      const dir = path.join(base, sys);
+      try { if (!fs.statSync(dir).isDirectory()) continue; } catch { continue; }
       for (const f of fs.readdirSync(dir)) {
         if (!f.endsWith(".state")) continue;
         let rel;
         try { rel = Buffer.from(f.slice(0, -6), "base64url").toString("utf8"); } catch { continue; }
         const st = fs.statSync(path.join(dir, f));
         out.push({ sys, file: rel, name: rel.split("/").pop().replace(/\.[^.]+$/, ""),
-          size: st.size, mtime: st.mtimeMs });
+          size: st.size, mtime: st.mtimeMs, shared: isShared || undefined });
       }
     }
-  } catch { /* none yet */ }
+  };
+  scan(path.join(STATES, ns), false);
+  if (shared && ns !== "_shared") scan(path.join(STATES, "_shared"), true);
+  return out;
+}
+function statesList(req, res) {
+  const ns = nsFor(req);
   res.writeHead(200, { ...CORS, "content-type": "application/json", "cache-control": "no-store" })
-    .end(JSON.stringify(out));
+    .end(JSON.stringify(nsList(ns, true)));
 }
 
 function stateGet(req, res, sys, rel) {
   if (!stateSys(sys) || rel.split(/[/\\]/).includes("..")) { res.writeHead(400, CORS).end("bad"); return; }
-  let st, full = stateFile(sys, rel);
-  try { st = fs.statSync(full); } catch { res.writeHead(404, CORS).end("no save"); return; }
+  const ns = nsFor(req);
+  let full = stateFile(ns, sys, rel), st;
+  try { st = fs.statSync(full); }
+  catch {
+    // fall back to the shared pool (pre-accounts saves)
+    if (ns !== "_shared") { full = stateFile("_shared", sys, rel); try { st = fs.statSync(full); } catch { /* */ } }
+    if (!st) { res.writeHead(404, CORS).end("no save"); return; }
+  }
   res.writeHead(200, { ...CORS, "content-type": "application/octet-stream",
     "content-length": st.size, "cache-control": "no-store" });
   if (req.method === "HEAD") return res.end();
@@ -335,7 +411,7 @@ function stateGet(req, res, sys, rel) {
 
 function statePut(req, res, sys, rel) {
   if (!stateSys(sys) || rel.split(/[/\\]/).includes("..")) { res.writeHead(400, CORS).end("bad"); return; }
-  const full = stateFile(sys, rel);
+  const full = stateFile(nsFor(req), sys, rel);
   fs.mkdirSync(path.dirname(full), { recursive: true });
   const chunks = []; let n = 0;
   req.on("data", (c) => {
@@ -352,8 +428,61 @@ function statePut(req, res, sys, rel) {
 
 function stateDelete(req, res, sys, rel) {
   if (!stateSys(sys) || rel.split(/[/\\]/).includes("..")) { res.writeHead(400, CORS).end("bad"); return; }
-  try { fs.unlinkSync(stateFile(sys, rel)); } catch { /* already gone */ }
+  try { fs.unlinkSync(stateFile(nsFor(req), sys, rel)); } catch { /* already gone */ }
   res.writeHead(200, { ...CORS, "content-type": "application/json" }).end('{"ok":true}');
+}
+
+// ---- auth endpoints ---------------------------------------------------
+const NAME_RE = /^[a-z0-9_.-]{2,24}$/i;
+async function authRegister(req, res) {
+  if (cfg().registration === "closed" && Object.keys(accts().users).length) {
+    return jsonRes(res, 403, { error: "registration is closed" });
+  }
+  let b = {};
+  try { b = JSON.parse((await readBody(req, 4096)).toString() || "{}"); } catch { return jsonRes(res, 400, { error: "bad request" }); }
+  const name = String(b.username || "").trim();
+  const pw = String(b.password || "");
+  if (!NAME_RE.test(name)) return jsonRes(res, 400, { error: "username must be 2–24 letters / digits / . _ -" });
+  if (pw.length < 4) return jsonRes(res, 400, { error: "password must be at least 4 characters" });
+  const A = accts();
+  if (A.users[name.toLowerCase()]) return jsonRes(res, 409, { error: "that username is taken" });
+  const salt = crypto.randomBytes(16).toString("hex");
+  const u = { id: "u_" + crypto.randomBytes(8).toString("hex"), name, display: name,
+    avatar: (b.avatar || "🎮"), pwHash: hashPw(pw, salt), salt, created: Date.now(), settings: {} };
+  A.users[name.toLowerCase()] = u; saveAccts();
+  jsonRes(res, 200, { token: mkToken(u.id), user: pubUser(u) });
+}
+async function authLogin(req, res) {
+  let b = {};
+  try { b = JSON.parse((await readBody(req, 4096)).toString() || "{}"); } catch { return jsonRes(res, 400, { error: "bad request" }); }
+  const u = accts().users[String(b.username || "").trim().toLowerCase()];
+  const ok = u && crypto.timingSafeEqual(Buffer.from(hashPw(String(b.password || ""), u.salt)), Buffer.from(u.pwHash));
+  if (!ok) return jsonRes(res, 401, { error: "wrong username or password" });
+  jsonRes(res, 200, { token: mkToken(u.id), user: pubUser(u) });
+}
+function authMe(req, res) {
+  const u = userByToken(req);
+  if (!u) return jsonRes(res, 401, { error: "not signed in" });
+  jsonRes(res, 200, { user: pubUser(u) });
+}
+async function authUpdate(req, res) {
+  const u = userByToken(req);
+  if (!u) return jsonRes(res, 401, { error: "not signed in" });
+  let b = {};
+  try { b = JSON.parse((await readBody(req, 8192)).toString() || "{}"); } catch { return jsonRes(res, 400, { error: "bad request" }); }
+  if (typeof b.display === "string") u.display = b.display.trim().slice(0, 40) || u.name;
+  if (typeof b.avatar === "string") u.avatar = [...b.avatar].slice(0, 2).join("") || u.avatar;
+  if (b.settings && typeof b.settings === "object") u.settings = { ...u.settings, ...b.settings };
+  if (b.newPassword) {
+    const cur = accts().users[u.name.toLowerCase()];
+    const ok = crypto.timingSafeEqual(Buffer.from(hashPw(String(b.password || ""), cur.salt)), Buffer.from(cur.pwHash));
+    if (!ok) return jsonRes(res, 403, { error: "current password is wrong" });
+    if (String(b.newPassword).length < 4) return jsonRes(res, 400, { error: "new password too short" });
+    u.salt = crypto.randomBytes(16).toString("hex");
+    u.pwHash = hashPw(String(b.newPassword), u.salt);
+  }
+  saveAccts();
+  jsonRes(res, 200, { user: pubUser(u), ...(b.newPassword ? { token: mkToken(u.id) } : {}) });
 }
 
 // ---- read a (small) request body ----------------------------------------
@@ -603,15 +732,23 @@ function tokenOK(req) {
 }
 
 http.createServer((req, res) => {
-  if (req.method === "OPTIONS") { res.writeHead(204, { ...CORS, "access-control-max-age": "86400", "access-control-allow-headers": "range, content-type, x-ssw-token" }).end(); return; }
+  if (req.method === "OPTIONS") { res.writeHead(204, { ...CORS, "access-control-max-age": "86400", "access-control-allow-headers": "range, content-type, x-ssw-token, x-ssw-auth" }).end(); return; }
 
   {
     const u0 = new URL(req.url, "http://x");
     const P = u0.pathname;
+
+    // ---- auth ----
+    if (P === "/auth/register" && req.method === "POST") { if (rateLimited(req, res, 10, 60000)) return; authRegister(req, res); return; }
+    if (P === "/auth/login" && req.method === "POST") { if (rateLimited(req, res, 12, 60000)) return; authLogin(req, res); return; }
+    if (P === "/auth/me" && req.method === "GET") { authMe(req, res); return; }
+    if (P === "/auth/update" && req.method === "POST") { if (rateLimited(req, res, 20, 60000)) return; authUpdate(req, res); return; }
+
     const writeEP = req.method === "PUT" || req.method === "DELETE"
       || (req.method === "POST" && (P === "/request" || P === "/report"));
     if (writeEP && rateLimited(req, res, 40, 60000)) return;
-    if (writeEP && !tokenOK(req)) { res.writeHead(401, CORS).end("token required"); return; }
+    // a valid account token also authorises writes when a writeToken is configured
+    if (writeEP && !tokenOK(req) && !userByToken(req)) { res.writeHead(401, CORS).end("token required"); return; }
 
     if (P === "/states/list" && req.method === "GET") { statesList(req, res); return; }
     const sm = P.match(/^\/states\/([^/]+)\/(.+)$/);
