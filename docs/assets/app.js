@@ -2071,6 +2071,9 @@ function renderAcctChip() {
   c.replaceChildren(el("span", { className: "ac-av", textContent: AUTH.user ? AUTH.user.avatar : "👤" }),
     el("span", { className: "ac-name", textContent: AUTH.user ? AUTH.user.display : "Sign in" }));
   c.href = AUTH.user ? "#/profile" : "#/login";
+  // mirror into the mobile drawer
+  const dl = $('#drawer a[data-nav="profile"]');
+  if (dl) dl.textContent = AUTH.user ? `${AUTH.user.avatar} ${AUTH.user.display}` : "Sign in / Profile";
 }
 addEventListener("ssw-auth", renderAcctChip);
 addEventListener("ssw-prefs", applyPrefs);

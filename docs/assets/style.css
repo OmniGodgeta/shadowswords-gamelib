@@ -102,7 +102,10 @@ h1, h2, h3 { letter-spacing: -.01em; }
 #acct-chip:hover { border-color: var(--cyan); box-shadow: var(--glow-cyan); }
 #acct-chip .ac-av { font-size: 16px; line-height: 1; flex: 0 0 auto; }
 #acct-chip .ac-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-@media (max-width: 560px) { #acct-chip .ac-name { display: none; } #acct-chip { padding: 6px; } }
+@media (max-width: 620px) {
+  #acct-chip { display: none; }          /* the drawer carries the account state on narrow screens */
+  .brand .logo { height: 34px; }
+}
 .bar-btn:hover { color: var(--cyan); border-color: var(--line-2); box-shadow: var(--glow-cyan); }
 #back-btn { justify-self: start; font-size: 26px; }
 #menu-btn { display: none; }
