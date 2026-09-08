@@ -1900,17 +1900,26 @@ async function routeProfile() {
   view.replaceChildren(frag);
 }
 
+// arcade systems whose romsets rarely match EmulatorJS's FBNeo/MAME build —
+// fine to try on purpose, but keep them out of the random pool
+const RANDOM_SKIP = new Set(["neogeo", "cps1", "cps2", "mame", "amiga", "amiga500"]);
 async function surpriseMe(sysId) {
   await getSystems().catch(() => {});
   let s;
   if (sysId) s = meta(sysId);
   else {
-    const pool = state.sys.systems.filter((x) => x.playable && x.count);
+    const pool = state.sys.systems.filter((x) => x.playable && x.count && !RANDOM_SKIP.has(x.id));
     s = pool[Math.random() * pool.length | 0];
   }
   toast("🎲 Rolling…");
-  const games = await getSystem(s.id).catch(() => []);
+  const region = prefs().region;
+  let games = await getSystem(s.id).catch(() => []);
   if (!games.length) { if (!sysId) return surpriseMe(); toast("No games there"); return; }
+  if (region) {
+    const inRegion = games.filter((g) => (g.region || "").toLowerCase().includes(region.toLowerCase())
+      || new RegExp(`\\(${region === "USA" ? "USA|U" : region === "Japan" ? "Japan|J" : "Europe|E"}[,)]`, "i").test(g.file));
+    if (inRegion.length >= 5) games = inRegion;
+  }
   const g = games[Math.random() * games.length | 0];
   location.hash = `#/play/${s.id}/${g.file.split("/").map(encodeURIComponent).join("/")}`;
 }
@@ -2066,7 +2075,7 @@ function renderAcctChip() {
   let c = $("#acct-chip");
   if (!c) {
     c = el("a", { id: "acct-chip", href: "#/profile" });
-    $("#bar").append(c);
+    ($("#bar-right") || $("#bar")).prepend(c);
   }
   c.replaceChildren(el("span", { className: "ac-av", textContent: AUTH.user ? AUTH.user.avatar : "👤" }),
     el("span", { className: "ac-name", textContent: AUTH.user ? AUTH.user.display : "Sign in" }));

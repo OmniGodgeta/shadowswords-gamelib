@@ -24,22 +24,26 @@
 <body>
 <div class="scanlines" aria-hidden="true"></div>
 <header class="bar" id="bar">
-  <button class="bar-btn" id="back-btn" aria-label="Back" hidden>‹</button>
-  <nav class="bar-nav" id="bar-nav">
-    <a href="#/" data-nav="home" class="bar-link">Home</a>
-    <a href="#/play" data-nav="play" class="bar-link">Play</a>
-    <a href="#/favorites" data-nav="favorites" class="bar-link">Favorites</a>
-    <a href="#/saves" data-nav="saves" class="bar-link">Saves</a>
-    <a href="#/movies" data-nav="movies" class="bar-link">Movies</a>
-    <a href="#/music" data-nav="music" class="bar-link">Music</a>
-    <a href="#/videos" data-nav="videos" class="bar-link">Videos</a>
-    <a href="#/contact" data-nav="contact" class="bar-link">Contact</a>
-  </nav>
+  <div class="bar-side bar-left">
+    <button class="bar-btn" id="back-btn" aria-label="Back" hidden>‹</button>
+    <nav class="bar-nav" id="bar-nav">
+      <a href="#/" data-nav="home" class="bar-link">Home</a>
+      <a href="#/play" data-nav="play" class="bar-link">Play</a>
+      <a href="#/favorites" data-nav="favorites" class="bar-link">Favorites</a>
+      <a href="#/saves" data-nav="saves" class="bar-link">Saves</a>
+      <a href="#/movies" data-nav="movies" class="bar-link">Movies</a>
+      <a href="#/music" data-nav="music" class="bar-link">Music</a>
+      <a href="#/videos" data-nav="videos" class="bar-link">Videos</a>
+      <a href="#/contact" data-nav="contact" class="bar-link">Contact</a>
+    </nav>
+  </div>
   <a class="brand" href="#/" aria-label="ShadowSwords home">
     <img class="logo" src="assets/img/logo.webp" alt="ShadowSwords" width="272" height="50">
   </a>
-  <button class="bar-btn" id="menu-btn" aria-label="Menu">☰</button>
-  <button class="bar-btn" id="search-btn" aria-label="Search">⌕</button>
+  <div class="bar-side bar-right" id="bar-right">
+    <button class="bar-btn" id="menu-btn" aria-label="Menu">☰</button>
+    <button class="bar-btn" id="search-btn" aria-label="Search">⌕</button>
+  </div>
   <form class="bar-search" id="bar-search" hidden>
     <input id="q" type="search" placeholder="Search every system…" autocomplete="off" spellcheck="false">
   </form>
