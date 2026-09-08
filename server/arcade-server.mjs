@@ -71,7 +71,7 @@ function userByToken(req) {
   return Object.values(accts().users).find((u) => u.id === uid) || null;
 }
 const pubUser = (u) => u && ({ id: u.id, name: u.name, display: u.display || u.name,
-  avatar: u.avatar || "🎮", created: u.created, settings: u.settings || {} });
+  avatar: u.avatar || "🎮", created: u.created, settings: u.settings || {}, admin: isAdmin(u) });
 
 // ---- optional config: ~/.config/ssw-arcade/config.json --------------------
 //   { "twitch": "shadowswords",
@@ -349,20 +349,38 @@ function serveMusic(req, res, rel) {
 //   ns = user id when signed in, else "_shared" (the pre-accounts pool)
 const stateSys = (s) => /^[a-z0-9-]+$/i.test(s) && PLAYABLE.has(s);
 const nsFor = (req) => { const u = userByToken(req); return u ? u.id : "_shared"; };
-const stateFile = (ns, sys, rel) => path.join(STATES, ns, sys, Buffer.from(rel).toString("base64url") + ".state");
-const nsOK = (ns) => /^(_shared|u_[a-z0-9]+)$/i.test(ns);
+const slotOf = (u0) => (u0.searchParams.get("s") || "auto").replace(/[^a-z0-9_ -]/gi, "").slice(0, 24) || "auto";
+// STATES/<ns>/<sys>/<base64url(rompath)>/<slot>.state
+const stateDir = (ns, sys, rel) => path.join(STATES, ns, sys, Buffer.from(rel).toString("base64url"));
+const stateFile = (ns, sys, rel, slot) => path.join(stateDir(ns, sys, rel), (slot || "auto") + ".state");
 
-// one-time migration: legacy STATES/<sys>/*.state -> STATES/_shared/<sys>/
+// migrations: legacy STATES/<sys>/ -> _shared/<sys>/ ; then <b64>.state file -> <b64>/auto.state
 (function migrateStates() {
   try {
     for (const e of fs.readdirSync(STATES)) {
-      if (!stateSys(e)) continue;                           // only playable-system dirs, skip _shared / u_*
-      const from = path.join(STATES, e), to = path.join(STATES, "_shared", e);
+      if (!stateSys(e)) continue;
+      const to = path.join(STATES, "_shared", e);
       fs.mkdirSync(path.dirname(to), { recursive: true });
-      fs.renameSync(from, to);
+      fs.renameSync(path.join(STATES, e), to);
       console.log("migrated legacy save-states:", e, "-> _shared/");
     }
-  } catch { /* nothing to migrate */ }
+  } catch { /* */ }
+  try {
+    for (const ns of fs.readdirSync(STATES)) {
+      const nsd = path.join(STATES, ns);
+      if (!fs.statSync(nsd).isDirectory()) continue;
+      for (const sys of fs.readdirSync(nsd)) {
+        const sd = path.join(nsd, sys);
+        if (!fs.statSync(sd).isDirectory()) continue;
+        for (const f of fs.readdirSync(sd)) {
+          if (!f.endsWith(".state") || !fs.statSync(path.join(sd, f)).isFile()) continue;
+          const b64 = f.slice(0, -6), gd = path.join(sd, b64);
+          fs.mkdirSync(gd, { recursive: true });
+          fs.renameSync(path.join(sd, f), path.join(gd, "auto.state"));
+        }
+      }
+    }
+  } catch { /* */ }
 })();
 
 function nsList(ns, shared) {
@@ -371,15 +389,22 @@ function nsList(ns, shared) {
     let sysDirs = [];
     try { sysDirs = fs.readdirSync(base); } catch { return; }
     for (const sys of sysDirs) {
-      const dir = path.join(base, sys);
-      try { if (!fs.statSync(dir).isDirectory()) continue; } catch { continue; }
-      for (const f of fs.readdirSync(dir)) {
-        if (!f.endsWith(".state")) continue;
+      const sd = path.join(base, sys);
+      try { if (!fs.statSync(sd).isDirectory()) continue; } catch { continue; }
+      for (const b64 of fs.readdirSync(sd)) {
+        const gd = path.join(sd, b64);
         let rel;
-        try { rel = Buffer.from(f.slice(0, -6), "base64url").toString("utf8"); } catch { continue; }
-        const st = fs.statSync(path.join(dir, f));
+        try { if (!fs.statSync(gd).isDirectory()) continue; rel = Buffer.from(b64, "base64url").toString("utf8"); } catch { continue; }
+        const slots = [];
+        for (const sf of fs.readdirSync(gd)) {
+          if (!sf.endsWith(".state")) continue;
+          const st = fs.statSync(path.join(gd, sf));
+          slots.push({ slot: sf.slice(0, -6), size: st.size, mtime: st.mtimeMs });
+        }
+        if (!slots.length) continue;
+        slots.sort((a, b) => b.mtime - a.mtime);
         out.push({ sys, file: rel, name: rel.split("/").pop().replace(/\.[^.]+$/, ""),
-          size: st.size, mtime: st.mtimeMs, shared: isShared || undefined });
+          slots, size: slots[0].size, mtime: slots[0].mtime, shared: isShared || undefined });
       }
     }
   };
@@ -393,14 +418,13 @@ function statesList(req, res) {
     .end(JSON.stringify(nsList(ns, true)));
 }
 
-function stateGet(req, res, sys, rel) {
+function stateGet(req, res, sys, rel, u0) {
   if (!stateSys(sys) || rel.split(/[/\\]/).includes("..")) { res.writeHead(400, CORS).end("bad"); return; }
-  const ns = nsFor(req);
-  let full = stateFile(ns, sys, rel), st;
+  const ns = nsFor(req), slot = slotOf(u0);
+  let full = stateFile(ns, sys, rel, slot), st;
   try { st = fs.statSync(full); }
   catch {
-    // fall back to the shared pool (pre-accounts saves)
-    if (ns !== "_shared") { full = stateFile("_shared", sys, rel); try { st = fs.statSync(full); } catch { /* */ } }
+    if (ns !== "_shared") { full = stateFile("_shared", sys, rel, slot); try { st = fs.statSync(full); } catch { /* */ } }
     if (!st) { res.writeHead(404, CORS).end("no save"); return; }
   }
   res.writeHead(200, { ...CORS, "content-type": "application/octet-stream",
@@ -409,9 +433,9 @@ function stateGet(req, res, sys, rel) {
   fs.createReadStream(full).pipe(res);
 }
 
-function statePut(req, res, sys, rel) {
+function statePut(req, res, sys, rel, u0) {
   if (!stateSys(sys) || rel.split(/[/\\]/).includes("..")) { res.writeHead(400, CORS).end("bad"); return; }
-  const full = stateFile(nsFor(req), sys, rel);
+  const full = stateFile(nsFor(req), sys, rel, slotOf(u0));
   fs.mkdirSync(path.dirname(full), { recursive: true });
   const chunks = []; let n = 0;
   req.on("data", (c) => {
@@ -426,9 +450,10 @@ function statePut(req, res, sys, rel) {
   });
 }
 
-function stateDelete(req, res, sys, rel) {
+function stateDelete(req, res, sys, rel, u0) {
   if (!stateSys(sys) || rel.split(/[/\\]/).includes("..")) { res.writeHead(400, CORS).end("bad"); return; }
-  try { fs.unlinkSync(stateFile(nsFor(req), sys, rel)); } catch { /* already gone */ }
+  try { fs.unlinkSync(stateFile(nsFor(req), sys, rel, slotOf(u0))); } catch { /* already gone */ }
+  try { fs.rmdirSync(stateDir(nsFor(req), sys, rel)); } catch { /* not empty */ }
   res.writeHead(200, { ...CORS, "content-type": "application/json" }).end('{"ok":true}');
 }
 
@@ -484,6 +509,32 @@ async function authUpdate(req, res) {
   saveAccts();
   jsonRes(res, 200, { user: pubUser(u), ...(b.newPassword ? { token: mkToken(u.id) } : {}) });
 }
+
+// ---- disk cache housekeeping (LRU by mtime, run hourly) ---------------
+function pruneCache(dir, capBytes) {
+  try {
+    const files = [];
+    const walk = (p) => { for (const e of fs.readdirSync(p, { withFileTypes: true })) {
+      const f = path.join(p, e.name);
+      if (e.isDirectory()) walk(f);
+      else { const st = fs.statSync(f); files.push({ f, size: st.size, mtime: st.mtimeMs }); }
+    } };
+    walk(dir);
+    let total = files.reduce((n, x) => n + x.size, 0);
+    if (total <= capBytes) return;
+    files.sort((a, b) => a.mtime - b.mtime);
+    for (const x of files) {
+      if (total <= capBytes) break;
+      try { fs.unlinkSync(x.f); total -= x.size; } catch { /* */ }
+    }
+    console.log(`pruned ${path.basename(dir)} to ${(total / 1048576) | 0} MB`);
+  } catch { /* */ }
+}
+setInterval(() => {
+  pruneCache(EJS_CACHE, 300 * 1048576);      // 300 MB of emulator files
+  pruneCache(path.join(DATA, "thumb-cache"), 800 * 1048576);
+  pruneCache(path.join(DATA, "music-art"), 200 * 1048576);
+}, 3600_000).unref?.();
 
 // ---- read a (small) request body ----------------------------------------
 function readBody(req, cap = 1 << 20) {
@@ -583,9 +634,17 @@ const now = () => Date.now();
 function stats() {
   if (STATS) return STATS;
   try { STATS = JSON.parse(fs.readFileSync(STATS_FILE, "utf8")); }
-  catch { STATS = { plays: {}, sessions: {}, reports: {} }; }
+  catch { STATS = {}; }
   STATS.plays ||= {}; STATS.sessions ||= {}; STATS.reports ||= {};
+  STATS.requests ||= []; STATS.userPlays ||= {}; STATS.banner ??= null;
   return STATS;
+}
+// first account created is the owner; also cfg().admins (usernames)
+function isAdmin(u) {
+  if (!u) return false;
+  const A = accts();
+  const first = Object.values(A.users).sort((a, b) => a.created - b.created)[0];
+  return (first && first.id === u.id) || (Array.isArray(cfg().admins) && cfg().admins.includes(u.name));
 }
 let statsDirty = false;
 function saveStats() {
@@ -598,13 +657,21 @@ async function playPing(req, res) {
   try { body = JSON.parse((await readBody(req, 4096)).toString() || "{}"); } catch { /* */ }
   const s = stats();
   const key = `${body.sys}/${body.file}`;
+  const u = userByToken(req);
   if (body.sys && body.file && PLAYABLE.has(body.sys)) {
     const p = s.plays[key] || { sys: body.sys, file: body.file, name: body.name || body.file, count: 0, last: 0 };
-    if (body.start) { p.count++; }
+    if (body.start) {
+      p.count++;
+      if (u) {
+        const up = (s.userPlays[u.id] ||= {});
+        const e = (up[key] ||= { sys: body.sys, file: body.file, name: body.name || body.file, count: 0, last: 0 });
+        e.count++; e.last = now(); e.name = body.name || e.name;
+      }
+    }
     p.last = now(); p.name = body.name || p.name;
     s.plays[key] = p;
   }
-  if (body.cid) s.sessions[body.cid] = { game: body.name || null, at: now() };
+  if (body.cid) s.sessions[body.cid] = { game: body.name || null, at: now(), who: u ? u.display : null };
   statsDirty = true;
   jsonRes(res, 200, { ok: true });
 }
@@ -621,8 +688,82 @@ function playStats(req, res) {
     .sort((a, b) => b.n - a.n).slice(0, 30)
     .map(({ sys, file, name, n, issues }) => ({ sys, file, name, n, issues }));
   const cutoff = now() - 90000;
-  const playingNow = Object.values(s.sessions).filter((x) => x.at > cutoff).length;
-  jsonRes(res, 200, { top, trending, reported, playingNow });
+  const live = Object.values(s.sessions).filter((x) => x.at > cutoff);
+  jsonRes(res, 200, { top, trending, reported, playingNow: live.length,
+    nowPlaying: live.filter((x) => x.who && x.game).map((x) => ({ who: x.who, game: x.game })).slice(0, 12) });
+}
+
+// ---- public profile -------------------------------------------------
+function publicProfile(req, res, name) {
+  const u = accts().users[String(name || "").toLowerCase()];
+  if (!u || !(u.settings && u.settings.publicProfile)) return jsonRes(res, 404, { error: "no public profile" });
+  const s = stats();
+  const mine = Object.values(s.userPlays[u.id] || {});
+  const top = mine.sort((a, b) => b.count - a.count).slice(0, 24)
+    .map(({ sys, file, name: n, count }) => ({ sys, file, name: n, count }));
+  jsonRes(res, 200, {
+    display: u.display || u.name, name: u.name, avatar: u.avatar || "🎮", created: u.created,
+    accent: (u.settings || {}).accent || null,
+    stats: { games: new Set(mine.map((p) => p.file)).size, plays: mine.reduce((a, p) => a + p.count, 0),
+      systems: new Set(mine.map((p) => p.sys)).size },
+    top,
+  });
+}
+
+// ---- site banner (owner-set) --------------------------------------
+function getBanner(req, res) {
+  const b = stats().banner;
+  jsonRes(res, 200, (b && (!b.until || b.until > now())) ? b : null);
+}
+
+// ---- admin ---------------------------------------------------------
+async function admin(req, res, action, u0) {
+  const u = userByToken(req);
+  if (!isAdmin(u)) return jsonRes(res, 403, { error: "not an admin" });
+  const s = stats(), A = accts();
+  if (action === "summary" && req.method === "GET") {
+    return jsonRes(res, 200, {
+      users: Object.values(A.users).map((x) => ({ name: x.name, display: x.display, avatar: x.avatar,
+        created: x.created, admin: isAdmin(x) })),
+      registration: cfg().registration === "closed" ? "closed" : "open",
+      requests: s.requests.filter((r) => !r.done).slice(-50).reverse(),
+      reports: Object.entries(s.reports).filter(([, r]) => !r.done && r.n > 0)
+        .map(([k, r]) => ({ key: k, ...r })).sort((a, b) => b.last - a.last).slice(0, 50),
+      banner: s.banner,
+      diskMB: dirSizeMB(DATA),
+    });
+  }
+  const body = await readBody(req, 8192).then((b) => { try { return JSON.parse(b.toString() || "{}"); } catch { return {}; } });
+  if (action === "resolve" && req.method === "POST") {
+    if (body.request != null && s.requests[body.request]) s.requests[body.request].done = true;
+    if (body.report && s.reports[body.report]) s.reports[body.report].done = true;
+    statsDirty = true; return jsonRes(res, 200, { ok: true });
+  }
+  if (action === "banner" && req.method === "POST") {
+    s.banner = body.text ? { text: String(body.text).slice(0, 300), kind: body.kind || "info",
+      until: body.hours ? now() + body.hours * 36e5 : 0, at: now() } : null;
+    statsDirty = true; saveStats(); return jsonRes(res, 200, { ok: true, banner: s.banner });
+  }
+  if (action === "registration" && req.method === "POST") {
+    // write to the config file
+    try {
+      const c = { ...cfg() }; c.registration = body.open ? "open" : "closed";
+      fs.mkdirSync(path.dirname(CONFIG_FILE), { recursive: true });
+      fs.writeFileSync(CONFIG_FILE, JSON.stringify(c, null, 2), { mode: 0o600 });
+      configAt = 0;
+      return jsonRes(res, 200, { ok: true, registration: c.registration });
+    } catch (e) { return jsonRes(res, 500, { error: e.message }); }
+  }
+  jsonRes(res, 400, { error: "bad admin action" });
+}
+function dirSizeMB(d) {
+  let n = 0;
+  const walk = (p) => { try { for (const e of fs.readdirSync(p, { withFileTypes: true })) {
+    const f = path.join(p, e.name);
+    if (e.isDirectory()) walk(f); else try { n += fs.statSync(f).size; } catch { /* */ }
+  } } catch { /* */ } };
+  walk(d);
+  return Math.round(n / 1048576);
 }
 
 // ---- report a broken game ------------------------------------------
@@ -634,7 +775,8 @@ async function gameReport(req, res) {
   if (!sys || !file) return jsonRes(res, 400, { ok: false });
   const s = stats();
   const key = `${sys}/${file}`;
-  const r = s.reports[key] || { sys, file, name: body.name || file, n: 0, issues: {}, last: 0 };
+  const r = s.reports[key] || { sys, file, name: body.name || file, n: 0, issues: {}, last: 0, done: false };
+  if (r.done && r.n > 0) { r.done = false; }   // reopen on a new report
   r.n++; r.issues[issue] = (r.issues[issue] || 0) + 1; r.last = now(); r.name = body.name || r.name;
   s.reports[key] = r; statsDirty = true;
   const hook = cfg().discordWebhook;
@@ -661,23 +803,23 @@ async function twitchStatus(req, res) {
   jsonRes(res, 200, { configured: true, ...twCache, user });
 }
 
-// ---- request-a-game -> Discord webhook -------------------------------
+// ---- request-a-game -> stored + optional Discord webhook -----------
 async function gameRequest(req, res) {
-  const hook = cfg().discordWebhook;
-  if (!hook) return jsonRes(res, 501, { ok: false, error: "not configured" });
   let body = {};
   try { body = JSON.parse((await readBody(req, 8192)).toString() || "{}"); } catch { return jsonRes(res, 400, { ok: false }); }
   const title = String(body.title || "").trim().slice(0, 200);
   const note = String(body.note || "").trim().slice(0, 500);
-  const who = String(body.who || "anon").trim().slice(0, 60);
+  const u = userByToken(req);
+  const who = (u ? u.display : String(body.who || "").trim()).slice(0, 60) || "anon";
   if (!title) return jsonRes(res, 400, { ok: false, error: "no title" });
-  try {
-    await fetch(hook, {
-      method: "POST", headers: { "content-type": "application/json" },
-      body: JSON.stringify({ content: `🎮 **Game request** from **${who}**\n> ${title}${note ? `\n> _${note}_` : ""}` }),
-    });
-    jsonRes(res, 200, { ok: true });
-  } catch { jsonRes(res, 502, { ok: false }); }
+  const s = stats();
+  s.requests.push({ title, note, who, at: now(), done: false });
+  if (s.requests.length > 500) s.requests = s.requests.slice(-500);
+  statsDirty = true; saveStats();
+  const hook = cfg().discordWebhook;
+  if (hook) fetch(hook, { method: "POST", headers: { "content-type": "application/json" },
+    body: JSON.stringify({ content: `🎮 **Game request** from **${who}**\n> ${title}${note ? `\n> _${note}_` : ""}` }) }).catch(() => {});
+  jsonRes(res, 200, { ok: true });
 }
 
 // ---- Discord invite counts (public, no auth) ------------------------
@@ -743,6 +885,11 @@ http.createServer((req, res) => {
     if (P === "/auth/login" && req.method === "POST") { if (rateLimited(req, res, 12, 60000)) return; authLogin(req, res); return; }
     if (P === "/auth/me" && req.method === "GET") { authMe(req, res); return; }
     if (P === "/auth/update" && req.method === "POST") { if (rateLimited(req, res, 20, 60000)) return; authUpdate(req, res); return; }
+    const pp = P.match(/^\/u\/([^/]+)$/);
+    if (pp && req.method === "GET") { publicProfile(req, res, decodeURIComponent(pp[1])); return; }
+    if (P === "/banner" && req.method === "GET") { getBanner(req, res); return; }
+    const am = P.match(/^\/admin\/([a-z]+)$/);
+    if (am) { if (rateLimited(req, res, 60, 60000)) return; admin(req, res, am[1], u0); return; }
 
     const writeEP = req.method === "PUT" || req.method === "DELETE"
       || (req.method === "POST" && (P === "/request" || P === "/report"));
@@ -753,10 +900,10 @@ http.createServer((req, res) => {
     if (P === "/states/list" && req.method === "GET") { statesList(req, res); return; }
     const sm = P.match(/^\/states\/([^/]+)\/(.+)$/);
     if (sm) {
-      const sys = decodeURIComponent(sm[1]), rel = decodeURIComponent(sm[2]);
-      if (req.method === "GET" || req.method === "HEAD") { stateGet(req, res, sys, rel); return; }
-      if (req.method === "PUT") { statePut(req, res, sys, rel); return; }
-      if (req.method === "DELETE") { stateDelete(req, res, sys, rel); return; }
+      const sys = decodeURIComponent(sm[1]), rel = decodeURIComponent(sm[2].replace(/\?.*$/, ""));
+      if (req.method === "GET" || req.method === "HEAD") { stateGet(req, res, sys, rel, u0); return; }
+      if (req.method === "PUT") { statePut(req, res, sys, rel, u0); return; }
+      if (req.method === "DELETE") { stateDelete(req, res, sys, rel, u0); return; }
       res.writeHead(405, CORS).end("no"); return;
     }
     // POST/GET dynamic endpoints

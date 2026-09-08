@@ -139,12 +139,13 @@ async function apiAuth(action, body) {
 }
 function setSession(token, user) {
   AUTH.token = token || AUTH.token; AUTH.user = user;
+  AUTH.isAdmin = !!(user && user.admin);
   if (token) LS.set("auth", token);
   window.dispatchEvent(new Event("ssw-auth"));
   applyPrefs();
 }
 function signOut() {
-  AUTH.token = null; AUTH.user = null;
+  AUTH.token = null; AUTH.user = null; AUTH.isAdmin = false;
   try { localStorage.removeItem("ssw:auth"); } catch { /* */ }
   window.dispatchEvent(new Event("ssw-auth"));
   toast("Signed out");
@@ -154,9 +155,14 @@ async function hydrateAuth() {
   try { const { user } = await apiAuth("me"); setSession(null, user); }
   catch (e) { if (e.status === 401) signOut(); applyPrefs(); }
 }
+const ACCENTS = { cyan: "#22e0ff", pink: "#ff33c6", green: "#38f5a8", orange: "#ff9d3d", purple: "#b57cff", gold: "#ffcf3d" };
 function applyPrefs() {
   const p = prefs();
   document.body.classList.toggle("lite", p.lite === true);
+  const a = ACCENTS[p.accent];
+  const r = document.documentElement.style;
+  if (a) { r.setProperty("--cyan", a); r.setProperty("--accent-2", a); }
+  else { r.removeProperty("--cyan"); r.removeProperty("--accent-2"); }
 }
 
 /* ---- data ---------------------------------------------------------- */
@@ -817,8 +823,9 @@ async function routePlayGame(sys, romParam, resume = false) {
   await getSystems().catch(() => {});
 
   const loadEl = el("div", { className: "player-load", id: "player-load" }, "Booting emulator…");
-  const saveBtn = el("button", { className: "pbtn", id: "cloud-save", textContent: "☁ Save", title: "Save state to the server", hidden: true });
-  const loadBtn = el("button", { className: "pbtn", id: "cloud-load", textContent: "☁ Load", title: "Load the last server save state", hidden: true });
+  const saveBtn = el("button", { className: "pbtn", id: "cloud-save", textContent: "☁ Save", title: "Save state (right-click / long-press to name a slot)", hidden: true });
+  const saveAsBtn = el("button", { className: "pbtn", id: "cloud-save-as", textContent: "＋", title: "Save to a named slot", hidden: true });
+  const loadBtn = el("button", { className: "pbtn", id: "cloud-load", textContent: "☁ Load", title: "Load a save slot", hidden: true });
   const flagBtn = el("button", { className: "pbtn", id: "flag-btn", textContent: "⚑", title: "Report a problem with this game" });
   if (sys !== "upload") flagBtn.onclick = () => reportGame(sys, file, romName);
   else flagBtn.hidden = true;
@@ -826,7 +833,7 @@ async function routePlayGame(sys, romParam, resume = false) {
     el("div", { className: "player-bar" },
       el("button", { className: "exit", textContent: "‹ Exit", onclick: exitPlayer }),
       el("div", { className: "title", id: "player-title", textContent: "Loading…" }),
-      saveBtn, loadBtn, flagBtn),
+      saveBtn, saveAsBtn, loadBtn, flagBtn),
     el("div", { className: "player-stage" },
       el("div", { id: "game" }), loadEl));
   document.body.append(shell);
@@ -875,7 +882,6 @@ async function routePlayGame(sys, romParam, resume = false) {
   if (bios) window.EJS_biosUrl = ROM_BASE + "bios/" + encodeURIComponent(bios);
   window.EJS_Buttons = { restart: true, settings: true, fullscreen: true, saveState: true,
     loadState: true, screenshot: true, cheat: true, gamepad: true };
-  window.EJS_RETROACHIEVEMENTS = true;          // enables the RA login in the settings menu (build-permitting)
   const vf = prefs().videoFilter;
   window.EJS_defaultOptions = vf === "crt" ? { shader: "crt-aperture.glslp" }
     : vf === "smooth" ? { shader: "bicubic.glslp" } : {};
@@ -885,47 +891,70 @@ async function routePlayGame(sys, romParam, resume = false) {
 
   // cloud save-states — the stable EmulatorJS build has no onSaveState hook, so
   // we drive it ourselves via gameManager.getState()/loadState() + our own buttons.
+  // named slots via ?s=<slot>; "auto" is the default / auto-save / resume slot.
   const key = sys === "upload" ? null : stateKey(sys, file);
+  const slotUrl = (slot) => key + "?s=" + encodeURIComponent(slot || "auto");
   const wantResume = resume || prefs().autoResume;
   let hasCloudSave = false;
   if (key && wantResume) {
-    try { hasCloudSave = (await fetch(key, { method: "HEAD", headers: authHdr() })).ok; } catch { /* offline */ }
+    try { hasCloudSave = (await fetch(slotUrl("auto"), { method: "HEAD", headers: authHdr() })).ok; } catch { /* offline */ }
   }
-  const cloudSave = async () => {
+  const putSlot = async (slot) => {
     const gm = window.EJS_emulator?.gameManager;
-    if (!gm) return;
-    if (prefs().confirmOverwrite && hasCloudSave && !confirm("Overwrite your cloud save for this game?")) return;
+    if (!gm || !key) return false;
     try {
-      const data = gm.getState();
-      await fetch(key, { method: "PUT", headers: { "content-type": "application/octet-stream", ...tokenHdr(), ...authHdr() }, body: data });
-      hasCloudSave = true;
-      toast("Saved to the server ☁");
-    } catch { toast("Cloud save failed"); }
+      await fetch(slotUrl(slot), { method: "PUT",
+        headers: { "content-type": "application/octet-stream", ...tokenHdr(), ...authHdr() }, body: gm.getState() });
+      hasCloudSave = true; return true;
+    } catch { return false; }
   };
-  const cloudLoad = async () => {
+  const cloudSave = async () => {
+    if (prefs().confirmOverwrite && hasCloudSave && !confirm("Overwrite your “auto” cloud save?")) return;
+    toast(await putSlot("auto") ? "Saved to the server ☁" : "Cloud save failed");
+  };
+  const cloudSaveAs = async () => {
+    const name = (prompt("Name this save slot (e.g. “before boss”):", "") || "").trim().replace(/[^a-z0-9_ -]/gi, "").slice(0, 24);
+    if (!name || name === "auto") return;
+    toast(await putSlot(name) ? `Saved to “${name}” ☁` : "Cloud save failed");
+  };
+  const cloudLoad = async (slot) => {
     const gm = window.EJS_emulator?.gameManager;
     if (!gm) return;
+    if (slot === undefined) return slotPicker();
     try {
-      const buf = await fetch(key, { headers: authHdr() }).then((r) => { if (!r.ok) throw 0; return r.arrayBuffer(); });
+      const buf = await fetch(slotUrl(slot), { headers: authHdr() }).then((r) => { if (!r.ok) throw 0; return r.arrayBuffer(); });
       gm.loadState(new Uint8Array(buf));
-      toast("Server save state loaded");
-    } catch { toast("No server save state for this game"); }
+      toast(slot === "auto" ? "Server save loaded" : `Loaded “${slot}”`);
+    } catch { toast("Couldn't load that save"); }
+  };
+  const slotPicker = async () => {
+    let slots = [];
+    try {
+      const list = await fetch(STATE_BASE + "list", { headers: authHdr() }).then((r) => r.json());
+      slots = (list.find((x) => x.sys === sys && x.file === file) || {}).slots || [];
+    } catch { /* */ }
+    const o = el("div", { id: "help-overlay", onclick: (e) => { if (e.target.id === "help-overlay") o.remove(); } },
+      el("div", { className: "help-card" }, el("h3", { textContent: "Load a save" }),
+        slots.length ? el("div", {}, ...slots.map((s) => el("div", { className: "slot-row" },
+          el("button", { className: "btn btn-ghost", style: "flex:1;text-align:left",
+            textContent: `${s.slot === "auto" ? "Auto-save" : s.slot} · ${new Date(s.mtime).toLocaleString()}`,
+            onclick: () => { o.remove(); cloudLoad(s.slot); } }),
+          el("button", { className: "btn btn-ghost", textContent: "✕", title: "Delete",
+            onclick: async () => { await fetch(slotUrl(s.slot), { method: "DELETE", headers: { ...tokenHdr(), ...authHdr() } }); o.remove(); toast("Slot deleted"); } }))))
+          : el("p", { className: "hint", textContent: "No saves for this game yet." }),
+        el("button", { className: "btn btn-ghost", style: "margin-top:10px", textContent: "Cancel", onclick: () => o.remove() })));
+    document.body.append(o);
   };
 
-  // silent cloud auto-save (no toast) — on a timer and on exit
-  const autoSave = async () => {
-    const g2 = window.EJS_emulator?.gameManager;
-    if (!key || !g2) return;
-    try { await fetch(key, { method: "PUT", headers: { "content-type": "application/octet-stream", ...tokenHdr(), ...authHdr() }, body: g2.getState() }); }
-    catch { /* offline */ }
-  };
+  // silent cloud auto-save (no toast) — on a timer and on exit, to "auto"
+  const autoSave = () => putSlot("auto");
   window.__emuAutoSave = autoSave;
 
   // play-stats ping + local playtime accounting
   const ptKey = sys === "upload" ? null : `${sys}/${file}`;
   let ptStart = 0;
   const ping = (start) => fetch(`${API}/play/ping`, {
-    method: "POST", headers: { "content-type": "application/json" },
+    method: "POST", headers: { "content-type": "application/json", ...authHdr() },
     body: JSON.stringify({ sys, file, name: romName, start, cid: CID }),
   }).catch(() => {});
   const flushPlaytime = () => {
@@ -944,9 +973,12 @@ async function routePlayGame(sys, romParam, resume = false) {
     window.__emuHeartbeat = setInterval(() => { ping(false); flushPlaytime(); }, 60000);
     window.__emuAutoSaveT = key ? setInterval(autoSave, 180000) : 0;
     if (key) {
-      saveBtn.hidden = false; saveBtn.onclick = cloudSave;
-      loadBtn.hidden = false; loadBtn.onclick = cloudLoad;
-      if (hasCloudSave) setTimeout(cloudLoad, 400);
+      saveBtn.hidden = false;
+      saveBtn.onclick = cloudSave;
+      saveBtn.oncontextmenu = (e) => { e.preventDefault(); cloudSaveAs(); };
+      saveAsBtn.hidden = false; saveAsBtn.onclick = cloudSaveAs;
+      loadBtn.hidden = false; loadBtn.onclick = () => cloudLoad();
+      if (hasCloudSave) setTimeout(() => cloudLoad("auto"), 400);
     }
     // stash this core's binary in the ssw-ejs cache so the native wrapper can
     // serve it offline (EmulatorJS loads it from a blob worker that bypasses the SW).
@@ -1614,6 +1646,11 @@ async function routeStats() {
       el("div", { className: "tile-cap" }, el("div", { className: "t", textContent: p.name }),
         el("div", { className: "s", textContent: `${sysName(p.sys)} · ${extra(p)}` })));
   };
+  if (s.nowPlaying && s.nowPlaying.length) frag.append(el("div", { className: "wrap" },
+    el("h3", { style: "margin:14px 0 8px", textContent: "Playing right now" }),
+    el("div", { className: "np-list" }, ...s.nowPlaying.map((x) =>
+      el("div", { className: "np-item" }, el("span", { className: "np-dot" }),
+        el("strong", { textContent: x.who }), " — ", el("span", { textContent: x.game }))))));
   if (s.top && s.top.length) frag.append(shelf({ title: "Most played", count: s.top.length,
     tiles: s.top.map((p) => gtile(p, (x) => `${x.count} play${x.count === 1 ? "" : "s"}`)) }));
   if (s.reported && s.reported.length) {
@@ -1846,6 +1883,7 @@ function accountCard() {
       el("div", { style: "flex:1;min-width:0" }, nameIn,
         el("div", { className: "hint", textContent: `@${u.name} · joined ${new Date(u.created).toLocaleDateString()}` })),
       saveName,
+      AUTH.isAdmin ? el("a", { className: "btn btn-ghost sm", href: "#/admin", textContent: "Admin" }) : null,
       el("button", { className: "btn btn-ghost sm", textContent: "Sign out",
         onclick: () => { signOut(); routeProfile(); } })),
     el("details", { className: "acct-more" },
@@ -1868,20 +1906,109 @@ function settingsCard() {
     s.onchange = () => setPref(k, s.value);
     return el("label", { className: "set-row" }, s, el("div", {}, el("div", { textContent: label })));
   };
+  const accentRow = el("div", { className: "set-row" },
+    el("div", { className: "accent-picker" }, ...Object.entries(ACCENTS).map(([k, hex]) =>
+      el("button", { className: "accent-dot" + ((p.accent || "cyan") === k ? " on" : ""),
+        style: `background:${hex}`, title: k, onclick: () => { setPref("accent", k); routeProfile(); } }))),
+    el("div", {}, el("div", { textContent: "Accent colour" })));
   return el("div", {},
     el("h3", { style: "margin:22px 0 10px", textContent: "Settings" }),
     el("div", { className: "set-list" },
       select("videoFilter", "Emulator video filter", [["pixel", "Pixel-perfect"], ["smooth", "Smooth"], ["crt", "CRT / scanlines"]]),
       select("region", "Prefer game region", [["", "No preference"], ["USA", "USA"], ["Europe", "Europe"], ["Japan", "Japan"]]),
+      accentRow,
       toggle("autoResume", "Auto-resume cloud saves", "Load your last save automatically when you open a game"),
       toggle("musicShuffle", "Shuffle albums by default", "Start an album shuffled when you hit Play"),
       toggle("lite", "Lite mode", "Drop the scanlines, glow and animations"),
       toggle("playingToasts", "Show “people playing now” popups", ""),
-      toggle("confirmOverwrite", "Confirm before overwriting a cloud save", "")),
+      toggle("confirmOverwrite", "Confirm before overwriting a cloud save", ""),
+      signedIn() ? toggle("publicProfile", "Public profile",
+        "Let anyone see your avatar, name and most-played games at " + location.host + "/#/u/" + AUTH.user.name) : null),
     signedIn()
       ? el("div", { className: "hint", style: "margin-top:8px", textContent: "Settings are saved to your account and sync across devices." })
       : el("div", { className: "hint", style: "margin-top:8px" }, "Settings are stored on this device. ",
         el("a", { href: "#/login", textContent: "Sign in" }), " to sync them."));
+}
+
+async function routePublicProfile(name) {
+  ++state.render; spinner();
+  await getSystems().catch(() => {});
+  const d = await fetch(`${API}/u/${encodeURIComponent(name)}`).then((r) => r.ok ? r.json() : null).catch(() => null);
+  if (!d) { view.replaceChildren(el("section", { className: "pane center" },
+    el("div", { className: "big-emoji", textContent: "🕶️" }), el("h1", { textContent: "No public profile" }),
+    el("p", { textContent: `@${name} either doesn't exist or keeps their profile private.` }))); return; }
+  document.title = `${d.display} — ShadowSwords`;
+  const frag = document.createDocumentFragment();
+  frag.append(el("section", { className: "shelf", style: "padding:22px var(--pad) 0" },
+    el("div", { className: "shelf-head" }, el("h2", { textContent: d.display }))),
+    el("div", { className: "wrap" }, el("div", { className: "acct-card" },
+      el("div", { className: "acct-av", textContent: d.avatar }),
+      el("div", { style: "flex:1" }, el("strong", { style: "font-size:16px", textContent: d.display }),
+        el("div", { className: "hint", textContent: `@${d.name} · joined ${new Date(d.created).toLocaleDateString()}` })),
+      el("div", { className: "stat-row", style: "flex:0" },
+        ...[[d.stats.plays, "plays"], [d.stats.games, "games"], [d.stats.systems, "systems"]].map(([n, l]) =>
+          el("div", { className: "stat", style: "flex:0 0 90px" },
+            el("div", { className: "stat-n", textContent: n }), el("div", { className: "stat-l", textContent: l })))))));
+  if (d.top && d.top.length) frag.append(shelf({ title: "Most played", count: d.top.length,
+    tiles: d.top.map((p) => favTile({ sys: p.sys, id: null, name: p.name, img: null, file: p.file })) }));
+  view.replaceChildren(frag);
+}
+
+async function routeAdmin() {
+  ++state.render; spinner();
+  document.title = "Admin — ShadowSwords";
+  const d = await fetch(`${API}/admin/summary`, { headers: authHdr() }).then((r) => r.ok ? r.json() : null).catch(() => null);
+  if (!d) { view.replaceChildren(el("section", { className: "pane center" },
+    el("div", { className: "big-emoji", textContent: "🔒" }), el("h1", { textContent: "Admin" }),
+    el("p", { textContent: signedIn() ? "Only the site owner can see this." : "Sign in as the owner." }),
+    el("a", { className: "btn btn-ghost", href: "#/", textContent: "Home" }))); return; }
+  const post = (action, body) => fetch(`${API}/admin/${action}`, { method: "POST",
+    headers: { "content-type": "application/json", ...authHdr() }, body: JSON.stringify(body) });
+  const frag = document.createDocumentFragment();
+  frag.append(el("section", { className: "shelf", style: "padding:22px var(--pad) 0" },
+    el("div", { className: "shelf-head" }, el("h2", { textContent: "Admin" }),
+      el("span", { className: "hint", textContent: `${d.users.length} accounts · ${d.diskMB} MB on disk` }))));
+  const wrap = el("div", { className: "wrap", style: "display:flex;flex-direction:column;gap:24px;padding-bottom:50px" });
+
+  // banner
+  const bText = el("input", { type: "text", placeholder: "Site-wide banner message (blank = none)",
+    value: d.banner?.text || "", style: "flex:1" });
+  const bKind = el("select", {}, ...["info", "warn", "hype"].map((k) => el("option", { value: k, textContent: k, selected: d.banner?.kind === k })));
+  wrap.append(el("div", { className: "adm-card" }, el("h3", { textContent: "Banner" }),
+    el("div", { style: "display:flex;gap:8px;flex-wrap:wrap" }, bText, bKind,
+      el("button", { className: "btn btn-primary sm", textContent: "Save", onclick: async () => {
+        await post("banner", { text: bText.value, kind: bKind.value }); toast("Banner updated"); checkBanner();
+      } }))));
+
+  // registration
+  wrap.append(el("div", { className: "adm-card" }, el("h3", { textContent: "Registration" }),
+    el("label", { className: "set-row" },
+      (() => { const cb = el("input", { type: "checkbox", checked: d.registration === "open" });
+        cb.onchange = async () => { await post("registration", { open: cb.checked }); toast(cb.checked ? "Registration open" : "Registration closed"); };
+        return cb; })(),
+      el("div", {}, el("div", { textContent: "Allow new accounts" })))));
+
+  // requests
+  wrap.append(el("div", { className: "adm-card" }, el("h3", { textContent: `Game requests (${d.requests.length})` }),
+    d.requests.length ? el("div", {}, ...d.requests.map((r, i) => el("div", { className: "adm-row" },
+      el("div", { style: "flex:1" }, el("strong", { textContent: r.title }),
+        el("div", { className: "hint", textContent: `${r.who}${r.note ? " · " + r.note : ""} · ${new Date(r.at).toLocaleDateString()}` })),
+      el("button", { className: "btn btn-ghost sm", textContent: "Done",
+        onclick: async (e) => { await post("resolve", { request: d.requests.length - 1 - i }); e.target.closest(".adm-row").remove(); } }))))
+      : el("p", { className: "hint", textContent: "None pending." })));
+
+  // reports
+  wrap.append(el("div", { className: "adm-card" }, el("h3", { textContent: `Broken-game reports (${d.reports.length})` }),
+    d.reports.length ? el("div", {}, ...d.reports.map((r) => el("div", { className: "adm-row" },
+      el("div", { style: "flex:1" }, el("strong", { textContent: r.name }),
+        el("div", { className: "hint", textContent: `${r.sys} · ${r.n}× · ${Object.keys(r.issues || {}).join(", ")}` })),
+      el("a", { className: "btn btn-ghost sm", href: `#/g/${r.sys}/`, textContent: r.sys }),
+      el("button", { className: "btn btn-ghost sm", textContent: "Dismiss",
+        onclick: async (e) => { await post("resolve", { report: r.key }); e.target.closest(".adm-row").remove(); } }))))
+      : el("p", { className: "hint", textContent: "None pending." })));
+
+  frag.append(wrap);
+  view.replaceChildren(frag);
 }
 
 async function routeLogin() {
@@ -2085,6 +2212,8 @@ async function router() {
   if (a === "profile") { setNav(null); return routeProfile(); }
   if (a === "login") { setNav(null); return routeLogin(); }
   if (a === "stats") { setNav(null); return routeStats(); }
+  if (a === "admin") { setNav(null); return routeAdmin(); }
+  if (a === "u" && b) { setNav(null); return routePublicProfile(b); }
   if (a === "collections") { setNav(null); return routeCollections(); }
   if (a === "collection" && b) { setNav(null); return routeCollection(b); }
   if (a === "franchises") { setNav(null); return routeFranchises(); }
@@ -2095,7 +2224,17 @@ async function router() {
   if (a === "contact") { setNav("contact"); return routeContact(); }
   if (a === "browse") { setNav("home"); return routeBrowse(); }
   if (a === "q" && b) { setNav(null); return routeSearch(b); }
+  if (a && a !== "") { setNav(null); return route404(); }
   setNav("home"); $("#q").value = ""; return routeHome();
+}
+function route404() {
+  ++state.render;
+  document.title = "Not found — ShadowSwords";
+  view.replaceChildren(el("section", { className: "pane center" },
+    el("div", { className: "big-emoji", textContent: "🕹️" }),
+    el("h1", { textContent: "Nothing here" }),
+    el("p", { textContent: "That page doesn't exist — maybe an old link." }),
+    el("a", { className: "btn btn-primary", href: "#/", textContent: "Back to the arcade" })));
 }
 window.addEventListener("hashchange", router);
 
@@ -2234,6 +2373,23 @@ async function checkServer() {
 }
 checkServer();
 setInterval(checkServer, 120000);
+
+/* ---- owner-set site banner --------------------------------- */
+async function checkBanner() {
+  try {
+    const b = await fetch(`${API}/banner`, { cache: "no-store" }).then((r) => r.json());
+    const ex = $("#site-banner");
+    if (b && b.text && LS.get("bannerseen", "") !== b.at + b.text) {
+      const bar = ex || el("div", { id: "site-banner" });
+      bar.className = "kind-" + (b.kind || "info");
+      bar.replaceChildren(el("span", { textContent: b.text }),
+        el("button", { textContent: "✕", onclick: () => { bar.remove(); LS.set("bannerseen", b.at + b.text); } }));
+      if (!ex) document.body.prepend(bar);
+    } else if (!b && ex) ex.remove();
+  } catch { /* */ }
+}
+checkBanner();
+setInterval(checkBanner, 300000);
 
 /* ---- gamepad navigation for the site menus (not in-game) --------- */
 const NAV_SEL = "a.tile, a.btn, button.more, .bar-link, .drawer a, .album-btn, .social, .shelf-nav, .heart, #back-btn, #menu-btn, #search-btn, .track";

@@ -580,6 +580,31 @@ body.has-mp .foot { margin-bottom: 74px; }
 .player-bar #flag-btn { color: var(--muted); }
 .player-bar #flag-btn:hover { color: var(--pink); border-color: var(--pink); }
 
+/* ---- site banner (owner-set) ---- */
+#site-banner {
+  position: sticky; top: 0; z-index: 300; display: flex; align-items: center; gap: 10px;
+  padding: 9px 16px; font-size: 13px; font-weight: 600;
+  background: #10233a; color: #cfe6ff; border-bottom: 1px solid var(--cyan);
+}
+#site-banner.kind-warn { background: #3a2a10; color: #ffe6c0; border-bottom-color: var(--pink); }
+#site-banner.kind-hype { background: linear-gradient(90deg, #2a1030, #10233a); color: #fff; border-bottom-color: var(--pink); }
+#site-banner button { margin-left: auto; background: none; border: 0; color: inherit; cursor: pointer; font-size: 14px; }
+
+/* ---- save slot picker + accent + admin + now-playing ---- */
+.slot-row { display: flex; gap: 6px; margin-bottom: 6px; }
+.accent-picker { display: flex; gap: 8px; flex: 0 0 auto; }
+.accent-dot { width: 24px; height: 24px; border-radius: 999px; border: 2px solid transparent; cursor: pointer; }
+.accent-dot.on { border-color: #fff; box-shadow: 0 0 10px currentColor; }
+.adm-card { border: 1px solid var(--line-2); border-radius: 14px; padding: 16px 18px; background: var(--bg-1); }
+.adm-card h3 { margin: 0 0 10px; font-size: 15px; }
+.adm-card input[type=text], .adm-card select { padding: 8px 11px; background: var(--bg); color: var(--text); border: 1px solid var(--line-2); border-radius: 8px; outline: none; font-family: inherit; }
+.adm-row { display: flex; align-items: center; gap: 10px; padding: 9px 0; border-bottom: 1px solid var(--line); }
+.adm-row:last-child { border-bottom: 0; }
+.np-list { display: flex; flex-direction: column; gap: 6px; }
+.np-item { font-size: 13.5px; display: flex; align-items: center; gap: 8px; }
+.np-dot { width: 8px; height: 8px; border-radius: 999px; background: var(--cyan); box-shadow: var(--glow-cyan); animation: livepulse 1.6s ease-in-out infinite; flex: 0 0 auto; }
+#cloud-save-as { padding: 0 8px; }
+
 /* ---- accounts: login form, profile card, settings ---- */
 .auth-form { max-width: 320px; margin: 8px auto 0; text-align: left; }
 .auth-form input {

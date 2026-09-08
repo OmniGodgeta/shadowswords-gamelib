@@ -264,6 +264,40 @@ LIBRETRO = {
     "apple2": "Apple - II", "bbcmicro": "Acorn - BBC Micro", "electron": "Acorn - Electron",
     "archimedes": "Acorn - Archimedes", "oric": "Tangerine - Oric", "samcoupe": "MGT - SAM Coupe",
     "pv1000": "Casio - PV-1000", "tic80": "TIC-80", "n-gage": "Nokia - N-Gage",
+    "mame": "MAME", "dos": "DOS", "neogeo": "FBNeo - Arcade Games",
+    "cps1": "FBNeo - Arcade Games", "cps2": "FBNeo - Arcade Games", "fbneo": "FBNeo - Arcade Games",
+    "sega32x": "Sega - 32X", "sg-1000": "Sega - SG-1000", "gamegear": "Sega - Game Gear",
+    "intellivision": "Mattel - Intellivision", "atarilynx": "Atari - Lynx", "atarijaguar": "Atari - Jaguar",
+    "fds": "Nintendo - Family Computer Disk System",
+}
+
+# ES-DE system id -> libretro-database name (for metadat/*.dat: genre, year, players…).
+# Console/cartridge systems only — home-computer + disc collections have no flat dats.
+LR_DB = {
+    "nes": "Nintendo - Nintendo Entertainment System", "fds": "Nintendo - Family Computer Disk System",
+    "snes": "Nintendo - Super Nintendo Entertainment System", "satellaview": "Nintendo - Satellaview",
+    "sufami": "Nintendo - Sufami Turbo", "gb": "Nintendo - Game Boy", "gbc": "Nintendo - Game Boy Color",
+    "gba": "Nintendo - Game Boy Advance", "n64": "Nintendo - Nintendo 64", "n64dd": "Nintendo - Nintendo 64DD",
+    "nds": "Nintendo - Nintendo DS", "n3ds": "Nintendo - Nintendo 3DS", "virtualboy": "Nintendo - Virtual Boy",
+    "genesis": "Sega - Mega Drive - Genesis", "megadrive": "Sega - Mega Drive - Genesis",
+    "megadrivejp": "Sega - Mega Drive - Genesis", "mastersystem": "Sega - Master System - Mark III",
+    "gamegear": "Sega - Game Gear", "sega32x": "Sega - 32X", "sg-1000": "Sega - SG-1000",
+    "pcengine": "NEC - PC Engine - TurboGrafx 16", "supergrafx": "NEC - PC Engine SuperGrafx",
+    "atari2600": "Atari - 2600", "atari5200": "Atari - 5200", "atari7800": "Atari - 7800",
+    "atarilynx": "Atari - Lynx", "atarijaguar": "Atari - Jaguar",
+    "wonderswan": "Bandai - WonderSwan", "wonderswancolor": "Bandai - WonderSwan Color",
+    "ngp": "SNK - Neo Geo Pocket", "ngpc": "SNK - Neo Geo Pocket Color",
+    "colecovision": "Coleco - ColecoVision", "intellivision": "Mattel - Intellivision",
+    "vectrex": "GCE - Vectrex", "msx": "Microsoft - MSX", "msx1": "Microsoft - MSX", "msx2": "Microsoft - MSX2",
+    "channelf": "Fairchild - Channel F", "odyssey2": "Magnavox - Odyssey2",
+    "supervision": "Watara - Supervision", "gamecom": "Tiger - Game.com", "crvision": "VTech - CreatiVision",
+    "arcadia": "Emerson - Arcadia 2001", "scv": "Epoch - Super Cassette Vision",
+    "psp": "Sony - PlayStation Portable",
+}
+LR_META_ATTRS = {  # metadat folder -> (key in the .dat, output field)
+    "genre": ("genre", "genre"), "releaseyear": ("releaseyear", "year"),
+    "maxusers": ("users", "players"), "developer": ("developer", "developer"),
+    "publisher": ("publisher", "publisher"), "franchise": ("franchise", "franchise"),
 }
 LR_TAG_RE = re.compile(r"[\(\[][^\)\]]*[\)\]]")
 LR_CACHE = Path(__file__).parent / ".lr-cache"
@@ -275,7 +309,10 @@ def _lr_norm(s: str) -> str:
 
 
 def _lr_loose(s: str) -> str:
-    return re.sub(r"\s{2,}", " ", LR_TAG_RE.sub("", s)).strip().lower()
+    s = LR_TAG_RE.sub("", s).lower().replace(" - ", " ")
+    s = re.sub(r"\bthe\b", "", s)
+    s = re.sub(r"[^a-z0-9]+", " ", s)
+    return re.sub(r"\s+", " ", s).strip()
 
 
 def libretro_index(sid: str) -> dict:
@@ -329,6 +366,65 @@ def libretro_match(idx: dict, stem: str) -> str | None:
     ex, lo = idx.get("exact", {}), idx.get("loose", {})
     return (ex.get(stem.lower()) or ex.get(_lr_norm(stem).lower())
             or lo.get(_lr_loose(stem)))
+
+
+_GAME_SPLIT = re.compile(r"\ngame \(")
+
+
+def _parse_dat(text: str, key: str) -> dict:
+    """clrmamepro .dat -> {loose comment name: value}."""
+    out = {}
+    for block in _GAME_SPLIT.split(text)[1:]:
+        mc = re.search(r'comment "([^"]+)"', block)
+        mv = re.search(rf'\b{key}\s+"?([^"\n]+?)"?\s*\n', block)
+        if mc and mv:
+            out[_lr_loose(mc.group(1))] = mv.group(1).strip()
+    return out
+
+
+def libretro_metadata(sid: str) -> dict:
+    """{loose name: {genre, year, players, developer, publisher, franchise}} from
+    libretro-database metadat/*.dat.  Cached to .lr-cache/<sid>.meta.json."""
+    repo = LR_DB.get(sid)
+    if not repo:
+        return {}
+    LR_CACHE.mkdir(exist_ok=True)
+    cache = LR_CACHE / f"{sid}.meta.json"
+    if cache.is_file():
+        try:
+            return json.loads(cache.read_text())
+        except ValueError:
+            pass
+    if "--no-lr" in sys.argv or "--no-net" in sys.argv:
+        return {}
+    import urllib.request
+    import urllib.error
+    merged: dict = {}
+    got = 0
+    for folder, (key, field) in LR_META_ATTRS.items():
+        url = (f"https://raw.githubusercontent.com/libretro/libretro-database/master/"
+               f"metadat/{folder}/{quote(repo)}.dat")
+        try:
+            with urllib.request.urlopen(urllib.request.Request(url, headers={"User-Agent": _UA}), timeout=30) as r:
+                text = r.read().decode("utf-8", "replace")
+        except (urllib.error.HTTPError, urllib.error.URLError, TimeoutError):
+            continue
+        got += 1
+        for name, val in _parse_dat(text, key).items():
+            if field == "year":
+                m = re.match(r"(\d{4})", val)
+                val = int(m.group(1)) if m else None
+            elif field == "players":
+                val = val if not val.isdigit() else int(val)
+            if val:
+                merged.setdefault(name, {})[field] = val
+    try:
+        cache.write_text(json.dumps(merged, separators=(",", ":")))
+    except OSError:
+        pass
+    if merged:
+        print(f"  libretro-db {sid}: {len(merged)} games, {got}/6 attrs")
+    return merged
 
 
 # filename region / year hints for systems with no gamelist
@@ -770,6 +866,7 @@ def main():
 
         gl = load_gamelist(sid)
         lr = libretro_index(sid)
+        lm = libretro_metadata(sid)
         core = EMU_CORE.get(sid)
         games, genres, with_art = [], {}, 0
         seen_ids = set()
@@ -793,7 +890,13 @@ def main():
                 if meta["desc"]:
                     rec["desc"] = meta["desc"][:1200]
 
-            # fill year / region from the filename when the gamelist didn't
+            # fill gaps from libretro-database (genre / year / players / dev / pub / franchise)
+            md = lm.get(_lr_loose(base_stem)) if lm else None
+            if md:
+                for k, v in md.items():
+                    rec.setdefault(k, v)
+
+            # fill year / region from the filename when nothing else did
             if "year" not in rec:
                 ym = YEAR_RE.search(rel)
                 if ym:

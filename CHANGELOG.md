@@ -2,6 +2,38 @@
 
 All notable changes to the ShadowSwords Arcade website.
 
+## [2.7.0] — 2026-09-08 — Metadata, save slots, public profiles, admin
+
+### Added
+- **Game metadata for ~35 more systems** — genre, year, player count, developer,
+  publisher and franchise pulled from the libretro database for the cartridge
+  consoles ES-DE never scraped (NES, SNES, Genesis, Game Boy, PC Engine, Atari,
+  WonderSwan, Neo Geo Pocket, ColecoVision, MSX and more). Filters, sorting,
+  collections and "2+ players" now work across far more of the library.
+  (Home-computer and disc collections still have no free metadata source.)
+- **Named save slots** — the ☁ Save button has a "＋" for a named slot ("before
+  boss", "co-op run"), and ☁ Load opens a slot picker with delete. Auto-save and
+  auto-resume still use the "auto" slot.
+- **Public profiles** — turn on "Public profile" in settings and your avatar,
+  name and most-played games are visible at `/#/u/<name>`.
+- **Admin panel** (`#/admin`, owner only) — review and clear the game-request
+  and broken-report queues, open/close registration, and post a **site-wide
+  banner** (info / warn / hype).
+- **"Playing right now"** on the Stats page — who's in a game (signed-in users).
+- **Accent colour** picker in settings — cyan / pink / green / orange / purple /
+  gold.
+- A proper "page not found" screen for bad links.
+- More box art — MAME, DOS, FBNeo, and a looser name-match added a few thousand.
+
+### Changed
+- Cloud saves are stored per-game-per-slot; existing saves migrated to "auto".
+- Game requests are now stored (and shown in the admin panel), not just relayed
+  to Discord.
+- The server prunes its emulator / thumbnail / album-art disk caches hourly.
+- **RetroAchievements** was investigated and dropped — the stable EmulatorJS
+  build has no support for it, and moving to the nightly channel would break the
+  offline-play caching. Revisit if EmulatorJS backports it.
+
 ## [2.6.0] — 2026-09-08 — Accounts & profile settings
 
 ### Added

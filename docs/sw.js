@@ -3,7 +3,7 @@
    /emulatorjs/* (self-host EJS proxy): cached in a separate persistent bucket so
    a console you've played once still runs with no network.
    ROMs, BIOS, music, save-states, search.json, cross-origin CDN: never touched. */
-const CACHE = "ssw-v2.10";
+const CACHE = "ssw-v2.11";
 const EJS_CACHE = "ssw-ejs";        // persists across version bumps; managed from the Offline page
 const KEEP = [CACHE, EJS_CACHE];
 const SHELL = [
@@ -43,7 +43,7 @@ self.addEventListener("fetch", (e) => {
     return;
   }
   // large / dynamic / API — never cache
-  if (/^\/(roms|music|states|netplay|thumb|jellyfin|play|twitch|discord|search|request|auth)(\/|$|\?)/.test(u.pathname)) return;
+  if (/^\/(roms|music|states|netplay|thumb|jellyfin|play|twitch|discord|search|request|auth|admin|banner|u)(\/|$|\?)/.test(u.pathname)) return;
   if (u.pathname.endsWith("search.json")) return;                  // 6 MB, not worth caching
 
   const isDoc = req.mode === "navigate" || u.pathname.endsWith(".html");
