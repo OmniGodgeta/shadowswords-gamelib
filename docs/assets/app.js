@@ -922,6 +922,19 @@ async function routePlayGame(sys, romParam, resume = false) {
       loadBtn.hidden = false; loadBtn.onclick = cloudLoad;
       if (hasCloudSave) setTimeout(cloudLoad, 400);
     }
+    // stash this core's binary in the ssw-ejs cache so the native wrapper can
+    // serve it offline (EmulatorJS loads it from a blob worker that bypasses the SW)
+    if (SELF_HOSTED && (IN_APP || LS.get("settings", {}).offlineCores)) setTimeout(async () => {
+      const cn = window.EJS_emulator && window.EJS_emulator.coreName;
+      if (!cn) return;
+      try {
+        const c = await caches.open("ssw-ejs");
+        for (const v of ["-wasm.data", "-legacy-wasm.data"]) {
+          const u = `/emulatorjs/cores/${cn}${v}`;
+          if (!(await c.match(u))) { const r = await fetch(u); if (r.ok) c.put(u, r.clone()); }
+        }
+      } catch { /* */ }
+    }, 4000);
   };
   window.__emuFlush = flushPlaytime;
 
@@ -1750,9 +1763,11 @@ async function routeCache() {
 
     section("Play offline", el("div", {},
       el("p", { className: "hint", style: "margin:0 0 6px" },
-        "Each console's emulator is saved the first time you play a game on it. After that, a saved emulator + a cached ROM (use “Save all for offline” on a console page) = plays with no connection."),
+        IN_APP
+          ? "In the app, each console's emulator is saved the first time you play a game on it. A saved emulator + a cached ROM (use “Save all for offline” on a console page) = plays with no connection."
+          : "The site shell and your cached ROMs work offline, but a browser can't fully cache the emulator itself — the ShadowSwords app can. Install it for true offline play."),
       el("p", { className: "hint", style: "margin:0 0 10px" },
-        `${ejs.count} emulator file${ejs.count === 1 ? "" : "s"} saved · ${fmtBytes(ejs.bytes)}${ejs.count > 2 ? " · ✅ some consoles ready offline" : ""}`),
+        `${ejs.count} emulator file${ejs.count === 1 ? "" : "s"} saved · ${fmtBytes(ejs.bytes)}`),
       clearEjs)),
 
     section("Install", el("p", { className: "hint", style: "margin:0" },
