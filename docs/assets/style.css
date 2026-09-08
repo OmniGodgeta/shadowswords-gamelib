@@ -69,7 +69,7 @@ h1, h2, h3 { letter-spacing: -.01em; }
   border-bottom: 1px solid var(--line);
   box-shadow: 0 1px 0 rgba(34,224,255,.15), 0 10px 30px -18px rgba(255,51,198,.4);
 }
-.bar-nav { display: flex; gap: 2px; }
+.bar-nav { display: flex; gap: 2px; min-width: 0; overflow: hidden; }
 .bar-link {
   padding: 8px 14px; border-radius: 999px;
   font-size: 12.5px; font-weight: 800; letter-spacing: .08em; text-transform: uppercase;
