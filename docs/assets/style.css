@@ -103,9 +103,11 @@ h1, h2, h3 { letter-spacing: -.01em; }
 @media (max-width: 700px) { #acct-chip .ac-name { display: none; } #acct-chip { padding: 6px; } }
 @media (max-width: 560px) {
   #acct-chip { display: none; }          /* the ☰ drawer carries the account state here */
-  .brand .logo { height: 34px; }
+  .brand .logo { height: 30px; }
   .bar { gap: 4px; padding: 0 8px; }
+  .bar-btn { width: 34px; height: 34px; font-size: 17px; }
 }
+@media (max-width: 420px) { .brand .logo { height: 26px; } }
 .bar-search {
   position: absolute; inset: 0; z-index: 2; display: flex; align-items: center;
   padding: 0 clamp(10px, 3vw, 24px); background: var(--bg);
