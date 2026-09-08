@@ -32,7 +32,12 @@ const extTarget = { target: "_blank", rel: "noopener" };      // keep the signal
 const ROM_BASE = SELF_HOSTED ? "/roms/" : TS + "/roms/";       // needs Funnel when off-tailnet
 const MUSIC_BASE = SELF_HOSTED ? "/music/" : TS + "/music/";
 const MOVIES_URL = TS + ":8443/";                               // opens in a new tab
-const EMU_DATA = SELF_HOSTED ? "/emulatorjs/" : "https://cdn.emulatorjs.org/stable/data/";
+const EMU_DATA_DEFAULT = SELF_HOSTED ? "/emulatorjs/" : "https://cdn.emulatorjs.org/stable/data/";
+// the native wrapper may inject window.__ssEjsBase (a local http://127.0.0.1:<port>/emulatorjs/
+// server backed by an on-device cache) to make the emulator itself work offline —
+// EmulatorJS loads the core from a blob worker that a service worker can't reach.
+const emuData = () => (typeof window.__ssEjsBase === "string" && window.__ssEjsBase) || EMU_DATA_DEFAULT;
+const EMU_DATA = EMU_DATA_DEFAULT;   // back-compat for anything still referencing it directly
 const STATE_BASE = SELF_HOSTED ? "/states/" : TS + "/states/";   // cloud save-states
 const API = SELF_HOSTED ? "" : TS;                               // dynamic endpoints (search, stats, twitch…)
 const NETPLAY_URL = TS + ":8712/";                                // EmulatorJS netplay signalling (tailnet)
@@ -843,7 +848,8 @@ async function routePlayGame(sys, romParam, resume = false) {
   window.EJS_core = core;
   window.EJS_gameUrl = romUrl;
   window.EJS_gameName = romName;
-  window.EJS_pathtodata = EMU_DATA;
+  const ejsBase = emuData();
+  window.EJS_pathtodata = ejsBase;
   window.EJS_startOnLoaded = true;
   const bios = sys !== "upload" && meta(sys).bios;
   if (bios) window.EJS_biosUrl = ROM_BASE + "bios/" + encodeURIComponent(bios);
@@ -923,8 +929,9 @@ async function routePlayGame(sys, romParam, resume = false) {
       if (hasCloudSave) setTimeout(cloudLoad, 400);
     }
     // stash this core's binary in the ssw-ejs cache so the native wrapper can
-    // serve it offline (EmulatorJS loads it from a blob worker that bypasses the SW)
-    if (SELF_HOSTED && (IN_APP || LS.get("settings", {}).offlineCores)) setTimeout(async () => {
+    // serve it offline (EmulatorJS loads it from a blob worker that bypasses the SW).
+    // skipped when __ssEjsBase is set — the app's local server owns caching then.
+    if (SELF_HOSTED && !window.__ssEjsBase && (IN_APP || LS.get("settings", {}).offlineCores)) setTimeout(async () => {
       const cn = window.EJS_emulator && window.EJS_emulator.coreName;
       if (!cn) return;
       try {
@@ -938,7 +945,7 @@ async function routePlayGame(sys, romParam, resume = false) {
   };
   window.__emuFlush = flushPlaytime;
 
-  const s = el("script", { src: EMU_DATA + "loader.js" });
+  const s = el("script", { src: ejsBase + "loader.js" });
   s.onerror = () => { const l = $("#player-load"); if (l) l.textContent = "Emulator failed to load (CDN blocked?)."; };
   document.body.append(s);
 }
