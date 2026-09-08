@@ -293,7 +293,7 @@ function tileGrid(container, list, shown, opts = {}) {
 async function routeHome() {
   const token = ++state.render;
   spinner();
-  await getSystems();
+  await getSystems().catch(() => {});
   if (token !== state.render) return;
   const { systems, total } = state.sys;
   const playable = systems.filter((s) => s.playable).sort((a, b) => b.count - a.count);
@@ -408,7 +408,7 @@ async function routeHome() {
 
 async function routeBrowse() {
   ++state.render;
-  await getSystems();
+  await getSystems().catch(() => {});
   const q = el("input", { type: "search", placeholder: "Filter consoles…" });
   const grid = el("div", { className: "tile-grid" });
   const draw = () => {
@@ -430,7 +430,7 @@ async function routeBrowse() {
 async function routeSystem(id) {
   const token = ++state.render;
   spinner();
-  await getSystems();
+  await getSystems().catch(() => {});
   const games = await getSystem(id).catch(() => []);
   if (token !== state.render) return;
   const m = meta(id);
@@ -492,7 +492,7 @@ async function routeSystem(id) {
 async function routeGame(sysId, gid) {
   const token = ++state.render;
   spinner();
-  await getSystems();
+  await getSystems().catch(() => {});
   const games = await getSystem(sysId).catch(() => []);
   const g = games.find((x) => x.id === gid);
   if (token !== state.render) return;
@@ -533,7 +533,7 @@ function dropzone() {
 async function routePlay() {
   const token = ++state.render;
   spinner();
-  await getSystems();
+  await getSystems().catch(() => {});
   if (token !== state.render) return;
   const playable = state.sys.systems.filter((s) => s.playable).sort((a, b) => b.count - a.count);
   const total = playable.reduce((n, s) => n + s.count, 0);
@@ -558,7 +558,7 @@ async function routePlay() {
 async function routePlaySystem(id) {
   const token = ++state.render;
   spinner();
-  await getSystems();
+  await getSystems().catch(() => {});
   const m = meta(id);
   if (!m.playable) { location.hash = `#/s/${id}`; return; }
   const games = await getSystem(id).catch(() => []);
@@ -665,6 +665,17 @@ async function ejsCacheClear() {
   try { await caches.delete("ssw-ejs"); } catch { /* */ }
   navigator.serviceWorker?.controller?.postMessage("clear-ejs");
 }
+// pin a system's browse data so you can still navigate to it offline
+async function warmOfflineData(sys) {
+  if (!("caches" in window)) return;
+  try {
+    const c = await caches.open("ssw-data");
+    for (const u of ["data/systems.json", `data/${sys}.json`, "data/collections.json", "data/franchises.json"]) {
+      if (await c.match(u)) continue;
+      const r = await fetch(u); if (r.ok) await c.put(u, r.clone());
+    }
+  } catch { /* */ }
+}
 // exposed for the native wrapper's offline UX
 window.sswOfflineStats = async () => {
   const [rom, ejs] = await Promise.all([romCacheStats(), ejsCacheStats()]);
@@ -755,6 +766,7 @@ async function offlineDownload(sys, games) {
       el("button", { className: "btn btn-ghost", style: "margin-top:12px", textContent: "Stop",
         onclick: () => { cancel = true; o.remove(); toast(`Saved ${done} games offline`); } })));
   document.body.append(o);
+  await warmOfflineData(sys);
   const list = games.filter((g) => !/\.(chd|iso|cue|pbp|bin)$/i.test(g.file));
   for (const g of list) {
     if (cancel || bytes > CAP) break;
@@ -994,6 +1006,7 @@ async function routePlayGame(sys, romParam, resume = false) {
         }
       } catch { /* */ }
     }, 4000);
+    if (sys !== "upload") warmOfflineData(sys);   // so you can navigate to this console offline
   };
   window.__emuFlush = flushPlaytime;
 
@@ -2145,7 +2158,7 @@ async function routeSearch(qRaw) {
   const q = qRaw.trim();
   spinner();
   document.title = `“${qRaw}” — ShadowSwords`;
-  await getSystems();
+  await getSystems().catch(() => {});
   let hits = await searchRows(q);
   if (token !== state.render) return;
   const need = [...new Set(hits.slice(0, PAGE).map((r) => r[1]))];
