@@ -290,7 +290,6 @@ function heroShowcase(vids, { title, desc, actions }) {
     (m === "video" ? showVideo : showArt)();
   };
   toggle.append(
-    el("span", { className: "sc-tg-lbl", textContent: "Showcase" }),
     el("button", { className: "sc-tg", dataset: { m: "video" }, textContent: "▶ Preview", onclick: () => setMode("video") }),
     el("button", { className: "sc-tg", dataset: { m: "art" }, textContent: "▦ Box art", onclick: () => setMode("art") }));
 
@@ -300,12 +299,12 @@ function heroShowcase(vids, { title, desc, actions }) {
     el("p", { className: "hero-desc", textContent: desc }),
     el("div", { className: "hero-actions" }, ...actions.map((a) =>
       el("a", { className: "btn " + (a.primary ? "btn-primary" : "btn-ghost"),
-        href: a.href || "javascript:void 0", onclick: a.onClick || null, textContent: a.label }))),
-    toggle);
+        href: a.href || "javascript:void 0", onclick: a.onClick || null, textContent: a.label }))));
 
-  // body first: in video mode `stage` is an absolute backdrop (z-index 0); in
-  // art mode it flows *after* the body as a full-width filmstrip band.
-  const sec = el("section", { className: "hero hero-sc" }, body, stage, chip);
+  // order: title + actions, then the preview, then the (small) mode toggle
+  // directly under it. On desktop `stage` is an absolute backdrop and `toggle`
+  // is pinned bottom-left; on mobile they flow in this order.
+  const sec = el("section", { className: "hero hero-sc" }, body, stage, toggle, chip);
   setMode(mode);
   return sec;
 }
@@ -388,7 +387,6 @@ async function routeHome() {
     actions: [
       { label: "▶ Play now", href: "#/play", primary: true },
       { label: "🎲 Surprise me", href: "#/play/random" },
-      { label: "Browse all", href: "#/browse" },
     ],
   };
   const gv = await fetch("data/gamevideos.json").then((r) => r.json()).catch(() => null);
@@ -632,7 +630,10 @@ async function routePlay() {
     title: "Play in your browser",
     desc: `${total.toLocaleString()} games across ${playable.length} systems, emulated right here. Pick a console below, or drop in a ROM from your device.`,
     art: null,
-    actions: [{ label: "Pick a ROM file", primary: true, onClick: () => $("#rom-input")?.click() }],
+    actions: [
+      { label: "Pick a ROM file", primary: true, onClick: () => $("#rom-input")?.click() },
+      { label: "Browse all games", href: "#/browse" },
+    ],
   }));
   frag.append(el("div", { className: "wrap", style: "padding-bottom:6px" }, dropzone()));
   frag.append(el("div", { className: "shelf" },

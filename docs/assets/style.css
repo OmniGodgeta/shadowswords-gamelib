@@ -868,8 +868,8 @@ body.lite .pad-row.listening .pr-chip { animation: none; border-style: dashed; }
 }
 
 /* ---- home showcase: game preview video + box-art gallery ------------------ */
-.hero-sc { align-items: stretch; }
-.hero-sc .hero-body { align-self: flex-end; }
+.hero-sc { flex-direction: column; justify-content: flex-end; align-items: stretch; }
+.hero-sc .hero-body { align-self: auto; flex: 0 0 auto; }
 .sc-stage { inset: 0; background: #05050c; }
 .sc-v { width: 100%; height: 100%; object-fit: cover; background: #05050c; }
 .hero-sc::before {
@@ -894,27 +894,31 @@ body.lite .pad-row.listening .pr-chip { animation: none; border-style: dashed; }
 }
 .sc-next:hover { border-color: var(--cyan); box-shadow: var(--glow-cyan); }
 
+/* small mode toggle — sits just under the title/actions block, over the preview */
 .sc-toggle {
-  display: inline-flex; align-items: center; gap: 4px; margin-top: 18px;
-  padding: 4px; border-radius: 999px; border: 1px solid var(--line-2); background: var(--bg-1);
+  position: relative; z-index: 3; align-self: flex-start;
+  margin-top: 16px;
+  display: inline-flex; align-items: center; gap: 2px;
+  padding: 3px; border-radius: 999px; border: 1px solid var(--line-2);
+  background: rgba(9,9,20,.82); backdrop-filter: blur(4px);
 }
-.sc-tg-lbl { font-size: 10px; letter-spacing: .18em; text-transform: uppercase; color: var(--dim); padding: 0 8px 0 6px; }
 .sc-tg {
-  padding: 7px 16px; border-radius: 999px; font-size: 12px; font-weight: 800;
-  letter-spacing: .04em; color: var(--muted); transition: color .12s, background .12s, box-shadow .12s;
+  padding: 5px 12px; border-radius: 999px; font-size: 11px; font-weight: 800;
+  letter-spacing: .03em; color: var(--muted); transition: color .12s, background .12s, box-shadow .12s;
 }
 .sc-tg.on { color: #04121b; background: var(--cyan); box-shadow: var(--glow-cyan); }
 
 /* art-gallery mode: the hero collapses to just its text and an era-ordered
    filmstrip becomes a full-width band beneath it */
-.hero-sc[data-mode="art"] { min-height: 0; display: block; padding-bottom: 0; }
+.hero-sc[data-mode="art"] { min-height: 0; display: block; padding-bottom: 14px; }
 .hero-sc[data-mode="art"]::before { display: none; }
 .hero-sc[data-mode="art"] .hero-body { max-width: none; }
 .hero-sc[data-mode="art"] .sc-stage {
   position: relative; inset: auto; height: clamp(190px, 30vh, 300px);
-  margin: 20px calc(var(--pad) * -1) 0;
+  margin: 18px calc(var(--pad) * -1) 0;
   background: var(--bg-1); border-block: 1px solid var(--line);
 }
+.hero-sc[data-mode="art"] .sc-toggle { position: static; margin: 12px 0 0 var(--pad); }
 .sc-strip {
   position: absolute; inset: 0; display: flex; gap: 8px; overflow-x: auto; overflow-y: hidden;
   align-items: center; padding: 12px var(--pad); scroll-snap-type: x proximity;
@@ -938,12 +942,17 @@ body.lite .pad-row.listening .pr-chip { animation: none; border-style: dashed; }
 @media (max-width: 720px) {
   .hero-sc { display: block; }
   .sc-stage { position: relative; inset: auto; height: 56vw; min-height: 210px; }
-  .hero-sc .hero-body { padding: 14px var(--pad) 6px; }
-  .sc-chip { position: static; max-width: none; margin: 10px var(--pad) 0; }
+  .hero-sc .hero-body { padding: 14px var(--pad) 10px; }
+  /* flow order: title + Play/Surprise, then the preview, then the small
+     toggle right under it, then the now-playing card */
+  .hero-sc .sc-toggle {
+    position: static; margin: 10px auto 2px; padding: 3px;
+    display: flex; width: max-content;
+  }
+  .hero-sc[data-mode="art"] .sc-toggle { margin: 12px auto 2px; }
+  .sc-tg { padding: 6px 15px; font-size: 11px; }
+  .sc-chip { position: static; max-width: none; margin: 4px var(--pad) 0; }
   .sc-strip { padding-left: 12px; }
-  .sc-toggle { margin-top: 10px; padding: 3px; gap: 2px; }
-  .sc-tg-lbl { display: none; }
-  .sc-tg { padding: 6px 14px; font-size: 11px; }
   .hero-sc[data-mode="art"] .sc-stage { height: clamp(150px, 40vw, 240px); }
 }
 

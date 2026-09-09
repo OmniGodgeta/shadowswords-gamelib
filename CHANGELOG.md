@@ -2,6 +2,15 @@
 
 All notable changes to the ShadowSwords Arcade website.
 
+## [2.11.0] — 2026-09-09 — Home hero reorg
+
+### Changed
+- Home hero: **Play now** and **Surprise me** only, sitting right above the
+  preview; the mode toggle is smaller and moved **below** the title/actions,
+  and flows under the clip on phones.
+- **Browse all** moved off the home page — it's now on the **Play** page
+  ("Browse all games") next to "Pick a ROM file".
+
 ## [2.10.0] — 2026-09-09 — Mobile polish
 
 ### Changed
