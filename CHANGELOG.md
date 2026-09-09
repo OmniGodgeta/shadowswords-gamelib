@@ -2,6 +2,21 @@
 
 All notable changes to the ShadowSwords Arcade website.
 
+## [2.12.0] — 2026-09-09 — Update prompt + hero overlay fixes
+
+### Fixed
+- **"New version → Reload" now works.** The old prompt reloaded before the new
+  version took control, so nothing changed. Now: Reload shows "Updating…" +
+  a progress bar, waits for the new version to activate, then reloads (5s
+  safety fallback). Re-prompts if an update was left pending; checks on
+  tab focus + hourly.
+- **Shadow over the home preview.** A decorative gradient overlay sat on top
+  of the preview area with no `pointer-events: none` — it dimmed the clip and,
+  on phones, blocked taps on the Preview / Box-art toggle. It's now
+  click-through everywhere and removed entirely on phones; on desktop it's
+  just a faint left-edge fade for title legibility.
+- Header no longer casts a pink drop-shadow onto the top of the preview.
+
 ## [2.11.0] — 2026-09-09 — Home hero reorg
 
 ### Changed
