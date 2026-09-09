@@ -2,6 +2,21 @@
 
 All notable changes to the ShadowSwords Arcade website.
 
+## [2.8.0] — 2026-09-09 — Visual controller setup
+
+### Added
+- **Controller setup panel** — a new 🎮 button in the player bar opens a
+  redesigned control screen that replaces EmulatorJS's plain list:
+  - A **live controller diagram** that lights each button as you press it,
+    from the Gamepad API or a held keyboard key — so you can see exactly which
+    input you're about to map.
+  - **Click any button** (on the diagram or in the list) then press a key *or* a
+    gamepad button to rebind it; Esc cancels.
+  - Per-console layouts — a SNES pad shows A/B/X/Y + shoulders, an NES pad shows
+    just A/B, PlayStation shows ✕○□△, etc. P1–P4 tabs. "Reset to defaults".
+  - Bindings save per game (EmulatorJS's own storage) and apply immediately;
+    the game pauses while the panel is open.
+
 ## [2.7.0] — 2026-09-08 — Metadata, save slots, public profiles, admin
 
 ### Added

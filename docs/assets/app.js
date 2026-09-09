@@ -838,6 +838,7 @@ async function routePlayGame(sys, romParam, resume = false) {
   const saveBtn = el("button", { className: "pbtn", id: "cloud-save", textContent: "☁ Save", title: "Save state (right-click / long-press to name a slot)", hidden: true });
   const saveAsBtn = el("button", { className: "pbtn", id: "cloud-save-as", textContent: "＋", title: "Save to a named slot", hidden: true });
   const loadBtn = el("button", { className: "pbtn", id: "cloud-load", textContent: "☁ Load", title: "Load a save slot", hidden: true });
+  const ctrlBtn = el("button", { className: "pbtn", id: "ctrl-btn", textContent: "🎮", title: "Controller setup — see & remap buttons", hidden: true });
   const flagBtn = el("button", { className: "pbtn", id: "flag-btn", textContent: "⚑", title: "Report a problem with this game" });
   if (sys !== "upload") flagBtn.onclick = () => reportGame(sys, file, romName);
   else flagBtn.hidden = true;
@@ -845,7 +846,7 @@ async function routePlayGame(sys, romParam, resume = false) {
     el("div", { className: "player-bar" },
       el("button", { className: "exit", textContent: "‹ Exit", onclick: exitPlayer }),
       el("div", { className: "title", id: "player-title", textContent: "Loading…" }),
-      saveBtn, saveAsBtn, loadBtn, flagBtn),
+      saveBtn, saveAsBtn, loadBtn, ctrlBtn, flagBtn),
     el("div", { className: "player-stage" },
       el("div", { id: "game" }), loadEl));
   document.body.append(shell);
@@ -984,6 +985,8 @@ async function routePlayGame(sys, romParam, resume = false) {
     ping(true);
     window.__emuHeartbeat = setInterval(() => { ping(false); flushPlaytime(); }, 60000);
     window.__emuAutoSaveT = key ? setInterval(autoSave, 180000) : 0;
+    ctrlBtn.hidden = false;
+    ctrlBtn.onclick = () => controlsPanel(core);
     if (key) {
       saveBtn.hidden = false;
       saveBtn.onclick = cloudSave;
@@ -1024,6 +1027,196 @@ async function exitPlayer() {
   window.__emuUp = false; location.hash = "#/play"; location.reload();
 }
 window.addEventListener("beforeunload", () => { if (window.__emuUp) { emuCleanup(); navigator.sendBeacon?.(`${API}/play/ping`, JSON.stringify({ cid: CID, bye: true })); } });
+
+/* ---- controller setup panel -------------------------------------------------
+   A visual, restylable alternative to EmulatorJS's stock Controls submenu.
+   The pad diagram lights up live from the Gamepad API + held keyboard keys;
+   click any button to rebind it (next key OR gamepad button is captured).
+   Writes straight into EJS_emulator.controls and persists via its saveSettings. */
+// gamepad standard button index -> EmulatorJS binding string
+const EJS_STD_LABEL = { 0: "BUTTON_1", 1: "BUTTON_2", 2: "BUTTON_3", 3: "BUTTON_4",
+  4: "LEFT_TOP_SHOULDER", 5: "RIGHT_TOP_SHOULDER", 6: "LEFT_BOTTOM_SHOULDER", 7: "RIGHT_BOTTOM_SHOULDER",
+  8: "SELECT", 9: "START", 10: "LEFT_STICK", 11: "RIGHT_STICK",
+  12: "DPAD_UP", 13: "DPAD_DOWN", 14: "DPAD_LEFT", 15: "DPAD_RIGHT" };
+// gamepad standard button index -> diagram slot
+const STD_SLOT = { 0: "fd", 1: "fr", 2: "fl", 3: "fu", 4: "lb", 5: "rb", 6: "lt", 7: "rt",
+  8: "se", 9: "st", 10: "ls", 11: "rs", 12: "du", 13: "dd", 14: "dl", 15: "dr" };
+// diagram slot -> EmulatorJS RetroPad button id
+const SLOT_ID = { du: 4, dd: 5, dl: 6, dr: 7, fu: 9, fr: 8, fd: 0, fl: 1,
+  lb: 10, rb: 11, lt: 12, rt: 13, ls: 14, rs: 15, se: 2, st: 3 };
+// EJS_core -> face-button labels [bottom, right, left, top]
+const FACE_LBL = {
+  nes: ["B", "A"], fds: ["B", "A"], gb: ["B", "A"], gba: ["B", "A"], segaMS: ["1", "2"],
+  segaGG: ["1", "2"], pce: ["II", "I"], pcfx: ["II", "I"], ngp: ["B", "A"], ws: ["B", "A"],
+  vb: ["B", "A"], lynx: ["B", "A"], atari2600: ["Fire"], atari7800: ["1", "2"], coleco: ["L", "R"],
+  snes: ["B", "A", "Y", "X"], nds: ["B", "A", "Y", "X"], n64: ["B", "A"],
+  segaMD: ["A", "B", "X", "C"], segaCD: ["A", "B", "X", "C"], sega32x: ["A", "B", "X", "C"],
+  psx: ["✕", "○", "□", "△"], "3do": ["A", "B", "C"], jaguar: ["A", "B", "C"], amiga: ["Fire", "2nd"],
+};
+const CORE_SHOULDERS = new Set(["snes", "nds", "gba", "n64", "psx", "3do", "jaguar", "segaMD", "segaCD", "sega32x", "amiga", "c64", "coleco"]);
+const CORE_TRIGGERS = new Set(["nds", "psx", "3do", "n64"]);
+const CORE_STICKS = new Set(["nds", "psx", "3do", "n64"]);
+const padGlyph = (v) => ({ BUTTON_1: "A", BUTTON_2: "B", BUTTON_3: "X", BUTTON_4: "Y", SELECT: "Sel", START: "Start",
+  LEFT_TOP_SHOULDER: "LB", RIGHT_TOP_SHOULDER: "RB", LEFT_BOTTOM_SHOULDER: "LT", RIGHT_BOTTOM_SHOULDER: "RT",
+  LEFT_STICK: "L3", RIGHT_STICK: "R3", DPAD_UP: "▲", DPAD_DOWN: "▼", DPAD_LEFT: "◀", DPAD_RIGHT: "▶" }[v]
+  || (v || "").replace(/_/g, " "));
+
+function padSvg(lbl, showSet) {
+  const on = (s) => showSet.has(s);
+  const face = (slot, cx, cy) => on(slot)
+    ? `<circle class="pad-btn" data-slot="${slot}" cx="${cx}" cy="${cy}" r="14"/>` +
+      `<text class="pad-t" x="${cx}" y="${cy + 4}">${lbl[slot] || ""}</text>` : "";
+  return `<svg viewBox="0 0 360 210" class="pad-svg" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+  <path class="pad-shell" d="M44 62 Q72 32 132 36 L228 36 Q288 32 316 62 Q344 100 328 142 Q312 184 270 178 Q246 174 234 150 L126 150 Q114 174 90 178 Q48 184 32 142 Q16 100 44 62 Z"/>
+  ${on("lb") ? '<rect class="pad-btn" data-slot="lb" x="74" y="22" width="66" height="14" rx="7"/>' : ""}
+  ${on("rb") ? '<rect class="pad-btn" data-slot="rb" x="220" y="22" width="66" height="14" rx="7"/>' : ""}
+  ${on("lt") ? '<rect class="pad-btn" data-slot="lt" x="86" y="8" width="42" height="11" rx="5"/>' : ""}
+  ${on("rt") ? '<rect class="pad-btn" data-slot="rt" x="232" y="8" width="42" height="11" rx="5"/>' : ""}
+  <rect class="pad-btn" data-slot="du" x="86" y="70" width="20" height="22" rx="4"/>
+  <rect class="pad-btn" data-slot="dd" x="86" y="112" width="20" height="22" rx="4"/>
+  <rect class="pad-btn" data-slot="dl" x="64" y="92" width="22" height="20" rx="4"/>
+  <rect class="pad-btn" data-slot="dr" x="106" y="92" width="22" height="20" rx="4"/>
+  ${face("fu", 288, 74)}${face("fd", 288, 122)}${face("fl", 264, 98)}${face("fr", 312, 98)}
+  ${on("ls") ? '<circle class="pad-btn pad-stk" data-slot="ls" cx="150" cy="122" r="17"/>' : ""}
+  ${on("rs") ? '<circle class="pad-btn pad-stk" data-slot="rs" cx="210" cy="122" r="17"/>' : ""}
+  <rect class="pad-btn" data-slot="se" x="140" y="66" width="24" height="10" rx="5"/>
+  <rect class="pad-btn" data-slot="st" x="196" y="66" width="24" height="10" rx="5"/>
+</svg>`;
+}
+
+function controlsPanel(core) {
+  const emu = window.EJS_emulator;
+  if (!emu || !emu.controls) { toast("Emulator still loading…"); return; }
+  if ($("#ctrl-panel")) return;
+  const wasPlaying = !emu.paused;
+  try { emu.pause(true); } catch { /* */ }
+
+  let player = 0, listening = null;
+  let prevBtns = [], padIndex = null, rafId = 0;
+  const active = {};                         // slot -> Set<source>
+  const face = FACE_LBL[core] || ["B", "A", "Y", "X"];
+  const lbl = { du: "Up", dd: "Down", dl: "Left", dr: "Right",
+    fd: face[0] || "", fr: face[1] || "", fl: face[2] || "", fu: face[3] || "",
+    lb: "L", rb: "R", lt: "L2", rt: "R2", ls: "L3", rs: "R3", se: "Select", st: "Start" };
+
+  const rows = [{ g: "D-Pad", s: ["du", "dd", "dl", "dr"] },
+    { g: "Buttons", s: ["fd", "fr", "fl", "fu"].filter((x) => lbl[x]) }];
+  if (CORE_SHOULDERS.has(core)) {
+    rows.push({ g: "Shoulders", s: CORE_TRIGGERS.has(core) ? ["lb", "rb", "lt", "rt"] : ["lb", "rb"] });
+  }
+  if (CORE_STICKS.has(core)) rows.push({ g: "Stick press", s: ["ls", "rs"] });
+  rows.push({ g: "System", s: ["st", "se"] });
+  const showSet = new Set(rows.flatMap((r) => r.s));
+
+  const node = (slot) => svgWrap.querySelector(`[data-slot="${slot}"]`);
+  const setSlot = (slot, isOn, src) => {
+    const set = active[slot] || (active[slot] = new Set());
+    isOn ? set.add(src) : set.delete(src);
+    node(slot)?.classList.toggle("on", set.size > 0);
+  };
+  const tilt = (slot, x, y) => { const n = node(slot); if (n) n.style.transform = `translate(${(x * 7).toFixed(1)}px,${(y * 7).toFixed(1)}px)`; };
+  const ctrls = () => emu.controls;
+  const apply = () => { try { emu.setupKeys(); emu.checkGamepadInputs(); emu.saveSettings(); } catch { /* */ } render(); };
+  const bind = (id, k, v) => { const c = ctrls()[player]; c[id] = Object.assign({}, c[id]); c[id][k] = v; listening = null; apply(); };
+  const begin = (id, slot) => { listening = { id, label: lbl[slot] || slot }; render(); };
+  const cancel = () => { listening = null; render(); };
+  // EmulatorJS stores .value as a numeric keyCode — pretty-print it
+  const KEY_SHORT = { "up arrow": "↑", "down arrow": "↓", "left arrow": "←", "right arrow": "→",
+    space: "Space", enter: "Enter", backspace: "⌫", shift: "Shift", ctrl: "Ctrl", alt: "Alt", tab: "Tab", escape: "Esc" };
+  const keyName = (v) => (emu.keyMap && emu.keyMap[v]) || (typeof v === "string" ? v : "");
+  const kc = (v) => { const n = keyName(v); return KEY_SHORT[n] || (n ? n.toUpperCase() : "—"); };
+  // physical gamepad button index -> diagram slot, via the RetroPad binding it drives
+  const padSlot = (stdIndex) => {
+    const label = EJS_STD_LABEL[stdIndex];
+    if (!label) return null;
+    const c = ctrls()[player] || {};
+    for (const [slot, id] of Object.entries(SLOT_ID)) if (c[id] && c[id].value2 === label) return slot;
+    return STD_SLOT[stdIndex] || null;
+  };
+
+  const onKey = (e, down) => {
+    if (listening && down) {
+      if (e.key === "Escape") return;
+      e.preventDefault(); e.stopPropagation();
+      bind(listening.id, "value", e.keyCode);
+      return;
+    }
+    const c = ctrls()[player];
+    if (!c) return;
+    for (const [slot, id] of Object.entries(SLOT_ID)) if (c[id] && c[id].value === e.keyCode) setSlot(slot, down, "key");
+  };
+  const kd = (e) => onKey(e, true), ku = (e) => onKey(e, false);
+  const esc = (e) => { if (e.key === "Escape" && listening) { e.preventDefault(); e.stopPropagation(); cancel(); } };
+
+  const poll = () => {
+    const pads = navigator.getGamepads ? [...navigator.getGamepads()] : [];
+    const gp = (padIndex != null && pads[padIndex]) || pads.find(Boolean);
+    if (gp) {
+      padIndex = gp.index;
+      gp.buttons.forEach((b, i) => { const s = padSlot(i); if (s) setSlot(s, b.pressed || b.value > 0.35, "pad"); });
+      const ax = gp.axes || [];
+      tilt("ls", ax[0] || 0, ax[1] || 0); tilt("rs", ax[2] || 0, ax[3] || 0);
+      if (listening) {
+        const i = gp.buttons.findIndex((b, j) => (b.pressed || b.value > 0.5) && !prevBtns[j]);
+        if (i >= 0 && EJS_STD_LABEL[i]) bind(listening.id, "value2", EJS_STD_LABEL[i]);
+      }
+      prevBtns = gp.buttons.map((b) => b.pressed || b.value > 0.5);
+    }
+    rafId = requestAnimationFrame(poll);
+  };
+
+  const close = () => {
+    cancelAnimationFrame(rafId);
+    removeEventListener("keydown", kd, true); removeEventListener("keyup", ku, true); removeEventListener("keydown", esc, true);
+    panel.remove();
+    if (wasPlaying) { try { emu.play(true); } catch { /* */ } }
+  };
+
+  const svgWrap = el("div", { className: "pad-svg-wrap" });
+  const mapWrap = el("div", { className: "pad-map" });
+  const hint = el("div", { className: "pad-hint" });
+  const panel = el("div", { id: "ctrl-panel", onclick: (e) => { if (e.target.id === "ctrl-panel") close(); } });
+
+  function render() {
+    svgWrap.innerHTML = padSvg(lbl, showSet);
+    svgWrap.querySelectorAll("[data-slot]").forEach((n) => {
+      n.classList.add("clickable");
+      n.onclick = () => begin(SLOT_ID[n.dataset.slot], n.dataset.slot);
+    });
+    mapWrap.replaceChildren(
+      el("div", { className: "pad-players" }, ...[0, 1, 2, 3].map((p) =>
+        el("button", { className: "pp" + (p === player ? " on" : ""), textContent: "P" + (p + 1),
+          onclick: () => { player = p; render(); } }))),
+      ...rows.map((r) => el("div", { className: "pad-grp" }, el("h4", { textContent: r.g }),
+        ...r.s.map((slot) => {
+          const id = SLOT_ID[slot], c = (ctrls()[player] && ctrls()[player][id]) || {};
+          const isL = listening && listening.id === id;
+          return el("div", { className: "pad-row" + (isL ? " listening" : "") },
+            el("span", { className: "pr-name", textContent: lbl[slot] || slot }),
+            el("button", { className: "pr-chip kbd" + (c.value ? "" : " empty"), title: "Keyboard — click, then press a key",
+              textContent: isL ? "press…" : kc(c.value), onclick: () => begin(id, slot) }),
+            el("button", { className: "pr-chip pad" + (c.value2 ? "" : " empty"), title: "Gamepad — click, then press a button",
+              textContent: c.value2 ? padGlyph(c.value2) : "—", onclick: () => begin(id, slot) }));
+        }))),
+      el("div", { className: "pad-acts" },
+        el("button", { className: "btn btn-ghost sm", textContent: "Reset to defaults",
+          onclick: () => { try { emu.controls = JSON.parse(JSON.stringify(emu.defaultControllers)); } catch { /* */ } apply(); toast("Controls reset to defaults"); } }),
+        el("button", { className: "btn btn-primary sm", textContent: "Done", onclick: close })));
+    hint.textContent = listening
+      ? `Press a key or controller button for “${listening.label}” — Esc to cancel`
+      : "Press buttons on your controller to see them light up. Click any button to rebind it.";
+    hint.classList.toggle("live", !!listening);
+  }
+
+  panel.append(el("div", { className: "ctrl-card" },
+    el("div", { className: "cc-head" }, el("h3", { textContent: "Controller setup" }),
+      el("button", { className: "cc-x", ariaLabel: "Close", textContent: "✕", onclick: close })),
+    el("div", { className: "cc-body" }, svgWrap, mapWrap), hint));
+  document.body.append(panel);
+  addEventListener("keydown", kd, true); addEventListener("keyup", ku, true); addEventListener("keydown", esc, true);
+  render();
+  poll();
+}
 
 /* ---- routes: movies ----------------------------------------- */
 const JF = (SELF_HOSTED ? "" : TS) + "/jellyfin/";
