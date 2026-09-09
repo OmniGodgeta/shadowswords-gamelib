@@ -2746,20 +2746,44 @@ if (navigator.getGamepads && [...navigator.getGamepads()].some(Boolean)) pollPad
 /* ---- PWA service worker + update prompt ---------------------- */
 if ("serviceWorker" in navigator) {
   addEventListener("load", async () => {
-    try {
-      const reg = await navigator.serviceWorker.register("sw.js");
-      reg.addEventListener("updatefound", () => {
-        const nw = reg.installing;
-        nw && nw.addEventListener("statechange", () => {
-          if (nw.state === "installed" && navigator.serviceWorker.controller) {
-            const t = el("div", { id: "sw-toast" },
-              "New version available. ",
-              el("button", { textContent: "Reload", onclick: () => { nw.postMessage("skip"); location.reload(); } }));
-            document.body.append(t);
-          }
-        });
+    let reg;
+    try { reg = await navigator.serviceWorker.register("sw.js"); } catch { return; }
+
+    let reloading = false, updateClicked = false;
+    const doReload = () => { if (!reloading) { reloading = true; location.reload(); } };
+    // the freshly-activated worker taking control is our cue to reload —
+    // but only when the user actually asked for the update (not on first visit)
+    navigator.serviceWorker.addEventListener("controllerchange", () => { if (updateClicked) doReload(); });
+
+    const promptUpdate = (worker) => {
+      if (!worker || document.getElementById("sw-toast")) return;
+      const btn = el("button", { textContent: "Reload" });
+      const bar = el("i", { className: "sw-bar", hidden: true });
+      const t = el("div", { id: "sw-toast" }, el("span", { textContent: "New version ready. " }), btn, bar);
+      btn.onclick = () => {
+        updateClicked = true;
+        btn.disabled = true;
+        btn.textContent = "Updating…";
+        bar.hidden = false;
+        worker.postMessage("skip");
+        // if the new worker doesn't claim control quickly, reload anyway
+        setTimeout(doReload, 4000);
+      };
+      document.body.append(t);
+    };
+
+    // a worker was already waiting from a previous visit
+    if (reg.waiting && navigator.serviceWorker.controller) promptUpdate(reg.waiting);
+
+    reg.addEventListener("updatefound", () => {
+      const nw = reg.installing;
+      nw && nw.addEventListener("statechange", () => {
+        if (nw.state === "installed" && navigator.serviceWorker.controller) promptUpdate(nw);
       });
-    } catch { /* */ }
+    });
+
+    // check for a new build hourly while the tab stays open
+    setInterval(() => reg.update().catch(() => {}), 3600000);
   });
 }
 
