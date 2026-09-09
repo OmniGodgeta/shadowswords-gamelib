@@ -179,7 +179,7 @@ main { min-height: calc(100dvh - var(--bar-h) - 90px); }
 }
 .hero-art .collage img { width: 100%; height: 100%; object-fit: cover; opacity: .85; }
 .hero::before {
-  content: ""; position: absolute; inset: 0; z-index: 1;
+  content: ""; position: absolute; inset: 0; z-index: 1; pointer-events: none;
   background:
     linear-gradient(90deg, var(--bg) 16%, color-mix(in srgb, var(--bg) 55%, transparent) 46%, transparent 78%),
     linear-gradient(0deg, var(--bg) 4%, transparent 42%);
@@ -885,10 +885,11 @@ body.lite .pad-row.listening .pr-chip { animation: none; border-style: dashed; }
 .hero-sc .hero-body { align-self: auto; flex: 0 0 auto; }
 .sc-stage { inset: 0; background: #05050c; }
 .sc-v { width: 100%; height: 100%; object-fit: cover; background: #05050c; }
+/* just enough left-side fade to keep the title legible over the clip —
+   nothing over the buttons / toggle area below it */
 .hero-sc::before {
   background:
-    linear-gradient(90deg, var(--bg) 14%, color-mix(in srgb, var(--bg) 50%, transparent) 44%, transparent 72%),
-    linear-gradient(0deg, var(--bg) 3%, transparent 40%);
+    linear-gradient(90deg, var(--bg) 12%, color-mix(in srgb, var(--bg) 45%, transparent) 40%, transparent 66%);
 }
 .sc-chip {
   position: absolute; right: var(--pad); bottom: var(--pad); z-index: 3;
@@ -954,17 +955,21 @@ body.lite .pad-row.listening .pr-chip { animation: none; border-style: dashed; }
 
 @media (max-width: 720px) {
   .hero-sc { display: block; }
+  /* the title sits above the clip on mobile, not over it — so no overlay at
+     all (it was dimming the video top and, being static, sitting over the
+     toggle and eating its taps) */
+  .hero-sc::before { display: none; }
   .sc-stage { position: relative; inset: auto; height: 56vw; min-height: 210px; }
   .hero-sc .hero-body { padding: 14px var(--pad) 10px; }
   /* flow order: title + Play/Surprise, then the preview, then the small
      toggle right under it, then the now-playing card */
   .hero-sc .sc-toggle {
-    position: static; margin: 10px auto 2px; padding: 3px;
+    position: relative; margin: 10px auto 2px; padding: 3px;
     display: flex; width: max-content;
   }
   .hero-sc[data-mode="art"] .sc-toggle { margin: 12px auto 2px; }
   .sc-tg { padding: 6px 15px; font-size: 11px; }
-  .sc-chip { position: static; max-width: none; margin: 4px var(--pad) 0; }
+  .sc-chip { position: relative; max-width: none; margin: 4px var(--pad) 0; }
   .sc-strip { padding-left: 12px; }
   .hero-sc[data-mode="art"] .sc-stage { height: clamp(150px, 40vw, 240px); }
 }
