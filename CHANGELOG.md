@@ -2,6 +2,19 @@
 
 All notable changes to the ShadowSwords Arcade website.
 
+## [2.10.0] — 2026-09-09 — Mobile polish
+
+### Changed
+- **Mobile menu** — "Offline & cache" moved out of the drawer into
+  Settings (where it belongs); a divider now separates the nav links from
+  the account link.
+- **Profile card on phones** — the name / handle / buttons were colliding;
+  the card now stacks cleanly (avatar + name on top, full-width buttons
+  below) and the name field no longer clips.
+- **Home hero on phones** — smaller title, 2-line blurb, and much smaller
+  Play / Surprise me / Browse all buttons + SHOWCASE toggle, so the game
+  preview clip is visible without scrolling.
+
 ## [2.9.0] — 2026-09-09 — Home showcase, neon pass, layout fixes
 
 ### Added
