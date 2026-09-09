@@ -2765,25 +2765,30 @@ if ("serviceWorker" in navigator) {
         btn.disabled = true;
         btn.textContent = "Updating…";
         bar.hidden = false;
-        worker.postMessage("skip");
-        // if the new worker doesn't claim control quickly, reload anyway
-        setTimeout(doReload, 4000);
+        // message the *current* waiting worker (the captured one may be redundant
+        // if another build landed since the prompt appeared)
+        (reg.waiting || worker).postMessage("skip");
+        // controllerchange normally reloads us; reload anyway if it doesn't
+        setTimeout(doReload, 5000);
       };
       document.body.append(t);
     };
 
-    // a worker was already waiting from a previous visit
-    if (reg.waiting && navigator.serviceWorker.controller) promptUpdate(reg.waiting);
-
+    // idempotent — prompts whenever a new worker is installed and waiting
+    const checkWaiting = () => {
+      if (reg.waiting && navigator.serviceWorker.controller) promptUpdate(reg.waiting);
+    };
+    checkWaiting();                                   // waiting from a previous visit
     reg.addEventListener("updatefound", () => {
-      const nw = reg.installing;
-      nw && nw.addEventListener("statechange", () => {
-        if (nw.state === "installed" && navigator.serviceWorker.controller) promptUpdate(nw);
-      });
+      reg.installing?.addEventListener("statechange", checkWaiting);
+      checkWaiting();
     });
+    navigator.serviceWorker.addEventListener("message", checkWaiting);
 
-    // check for a new build hourly while the tab stays open
-    setInterval(() => reg.update().catch(() => {}), 3600000);
+    // check for a new build on focus + hourly while the tab stays open
+    const poll = () => reg.update().then(checkWaiting).catch(() => {});
+    addEventListener("focus", poll);
+    setInterval(poll, 3600000);
   });
 }
 
