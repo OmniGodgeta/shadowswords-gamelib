@@ -40,6 +40,7 @@ const emuData = () => (typeof window.__ssEjsBase === "string" && window.__ssEjsB
 const EMU_DATA = EMU_DATA_DEFAULT;   // back-compat for anything still referencing it directly
 const STATE_BASE = SELF_HOSTED ? "/states/" : TS + "/states/";   // cloud save-states
 const API = SELF_HOSTED ? "" : TS;                               // dynamic endpoints (search, stats, twitch…)
+const VIDEO_BASE = SELF_HOSTED ? "/gamevideo/" : TS + "/gamevideo/"; // ES-DE game preview clips
 const NETPLAY_URL = TS + ":8712/";                                // EmulatorJS netplay signalling (tailnet)
 const CID = (() => {
   try {
@@ -155,13 +156,14 @@ async function hydrateAuth() {
   try { const { user } = await apiAuth("me"); setSession(null, user); }
   catch (e) { if (e.status === 401) signOut(); applyPrefs(); }
 }
-const ACCENTS = { cyan: "#22e0ff", pink: "#ff33c6", green: "#38f5a8", orange: "#ff9d3d", purple: "#b57cff", gold: "#ffcf3d" };
+const ACCENTS = { cyan: "#1fe6ff", pink: "#ff2bd0", green: "#38f5a8", orange: "#ff9d3d", purple: "#b568ff", gold: "#ffd23d" };
 function applyPrefs() {
   const p = prefs();
   document.body.classList.toggle("lite", p.lite === true);
   const a = ACCENTS[p.accent];
   const r = document.documentElement.style;
-  if (a) { r.setProperty("--cyan", a); r.setProperty("--accent-2", a); }
+  // "cyan" is the stylesheet default — let the CSS token own it, only override for the rest
+  if (a && p.accent && p.accent !== "cyan") { r.setProperty("--cyan", a); r.setProperty("--accent-2", a); }
   else { r.removeProperty("--cyan"); r.removeProperty("--accent-2"); }
 }
 
@@ -225,6 +227,87 @@ function hero({ kicker, title, desc, meta: metaLine, art, actions = [] }) {
           onclick: a.onClick || null, textContent: a.label,
         }))),
       metaLine && el("p", { className: "hero-meta", textContent: metaLine })));
+}
+
+// Home showcase: rotating game preview video (muted, from the ES-DE snaps) with
+// a slider to flip to an era-ordered box-art gallery. Falls back to art-only
+// when there is no video server (the public GitHub Pages mirror).
+function heroShowcase(vids, { title, desc, actions }) {
+  const stage = el("div", { className: "hero-art sc-stage" });
+  const chip = el("div", { className: "sc-chip", hidden: true });
+  const toggle = el("div", { className: "sc-toggle" });
+  let mode = LS.get("scMode", "video");
+  let i = (Math.random() * vids.length) | 0;
+  let timer = 0;
+  const link = (v) => v.play
+    ? `#/play/${v.sys}/${v.file.split("/").map(encodeURIComponent).join("/")}`
+    : (v.gid ? `#/g/${v.sys}/${v.gid}` : `#/s/${v.sys}`);
+
+  const showVideo = () => {
+    clearTimeout(timer);
+    const v = vids[i % vids.length];
+    const src = VIDEO_BASE + encodeURIComponent(v.sys) + "/" + encodeURIComponent(v.vid);
+    const vd = el("video", { className: "sc-v", src, autoplay: true, loop: false,
+      playsInline: true, preload: "metadata", poster: v.img ? artUrl(v.img) : null });
+    vd.muted = true; vd.defaultMuted = true;
+    vd.onended = next;
+    vd.onerror = () => setMode("art");
+    timer = setTimeout(next, 34000);
+    stage.replaceChildren(vd);
+    vd.play?.().catch(() => {});
+    chip.replaceChildren(
+      el("div", { className: "sc-chip-name", textContent: v.name }),
+      el("div", { className: "sc-chip-sub", textContent: [sysName(v.sys), v.year].filter(Boolean).join(" · ") }),
+      el("div", { className: "sc-chip-row" },
+        el("a", { className: "btn btn-primary sm", href: link(v), textContent: v.play ? "▶ Play this" : "View game" }),
+        el("button", { className: "sc-next", ariaLabel: "Next game", textContent: "⏭", onclick: next })));
+    chip.hidden = false;
+  };
+  const next = () => { if (!sec.isConnected) { clearTimeout(timer); return; } i++; if (mode === "video") showVideo(); };
+  let gallery = null;
+  const showArt = async () => {
+    clearTimeout(timer);
+    chip.hidden = true;
+    if (!gallery) {
+      stage.replaceChildren(el("div", { className: "sc-strip-load", textContent: "Loading box art…" }));
+      gallery = await fetch("data/artgallery.json").then((r) => r.json()).catch(() => vids);
+    }
+    if (mode !== "art") return;
+    const strip = el("div", { className: "sc-strip" });
+    for (const g of gallery) {
+      if (!g.img) continue;
+      strip.append(el("a", { className: "sc-cover", href: link(g), title: `${g.name} · ${sysName(g.sys)}` },
+        el("img", { src: artUrl(g.img), loading: "lazy", alt: g.name }),
+        el("span", { textContent: g.year || sysName(g.sys) })));
+    }
+    stage.replaceChildren(strip);
+  };
+  const setMode = (m) => {
+    mode = m; LS.set("scMode", m);
+    sec.dataset.mode = m;
+    stage.querySelector("video")?.pause();
+    toggle.querySelectorAll("button").forEach((b) => b.classList.toggle("on", b.dataset.m === m));
+    (m === "video" ? showVideo : showArt)();
+  };
+  toggle.append(
+    el("span", { className: "sc-tg-lbl", textContent: "Showcase" }),
+    el("button", { className: "sc-tg", dataset: { m: "video" }, textContent: "▶ Preview", onclick: () => setMode("video") }),
+    el("button", { className: "sc-tg", dataset: { m: "art" }, textContent: "▦ Box art", onclick: () => setMode("art") }));
+
+  const body = el("div", { className: "hero-body" },
+    el("p", { className: "hero-kicker", textContent: "shadowswords arcade" }),
+    el("h1", { className: "hero-title", textContent: title }),
+    el("p", { className: "hero-desc", textContent: desc }),
+    el("div", { className: "hero-actions" }, ...actions.map((a) =>
+      el("a", { className: "btn " + (a.primary ? "btn-primary" : "btn-ghost"),
+        href: a.href || "javascript:void 0", onclick: a.onClick || null, textContent: a.label }))),
+    toggle);
+
+  // body first: in video mode `stage` is an absolute backdrop (z-index 0); in
+  // art mode it flows *after* the body as a full-width filmstrip band.
+  const sec = el("section", { className: "hero hero-sc" }, body, stage, chip);
+  setMode(mode);
+  return sec;
 }
 
 function shelf({ title, count, moreHref, tiles }) {
@@ -299,18 +382,23 @@ async function routeHome() {
   const playable = systems.filter((s) => s.playable).sort((a, b) => b.count - a.count);
 
   const frag = document.createDocumentFragment();
-  frag.append(hero({
-    kicker: "shadowswords arcade",
+  const heroCopy = {
     title: "Every console. Every game.",
     desc: `${total.toLocaleString()} games across ${systems.length} systems — browse the lot, play ${playable.length} of them right in your browser, and stream the movie library.`,
-    art: await collageArt(22),
     actions: [
       { label: "▶ Play now", href: "#/play", primary: true },
       { label: "🎲 Surprise me", href: "#/play/random" },
       { label: "Browse all", href: "#/browse" },
     ],
-  }));
+  };
+  const gv = await fetch("data/gamevideos.json").then((r) => r.json()).catch(() => null);
   if (token !== state.render) return;
+  if (gv && gv.length) {
+    frag.append(heroShowcase(gv, heroCopy));
+  } else {
+    frag.append(hero({ kicker: "shadowswords arcade", ...heroCopy, art: await collageArt(22) }));
+    if (token !== state.render) return;
+  }
 
   const recent = recentList();
   if (recent.length) frag.append(shelf({

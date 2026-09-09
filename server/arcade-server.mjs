@@ -3,6 +3,7 @@
 //   /                     -> static site  (docs/)
 //   /roms/rom/<sys>/<rel> -> a ROM file, streamed with Range + CORS
 //   /roms/health          -> "ok"
+//   /gamevideo/<sys>/<f>  -> ES-DE preview clip, faststart-remuxed + cached
 // Bound to localhost; published to the tailnet (and optionally the internet)
 // by `tailscale serve` — see ~/setup-arcade-serving.sh.
 //
@@ -11,6 +12,7 @@ import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
 import crypto from "node:crypto";
+import { execFile } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
 const PORT = 8710;
@@ -18,14 +20,16 @@ const HOST = "127.0.0.1";
 const SITE = path.join(os.homedir(), "Work", "shadowswords-gamelib", "docs");
 const ROMS = path.join(os.homedir(), "Games", "roms");
 const BIOS = path.join(os.homedir(), "Games", "bios");
+const ESDE_MEDIA = path.join(os.homedir(), "ES-DE", "downloaded_media");
 const MUSIC = "/run/media/shadowswords/Game SSD/Music";
 const DATA = path.join(os.homedir(), ".local", "share", "ssw-arcade");
 const STATES = path.join(DATA, "states");
 const EJS_CACHE = path.join(DATA, "ejs-cache");
+const GAMEVID_CACHE = path.join(DATA, "gamevid-cache");   // faststart-remuxed previews
 const STATS_FILE = path.join(DATA, "stats.json");
 const ACCOUNTS_FILE = path.join(DATA, "accounts.json");
 const STATE_MAX = 96 * 1024 * 1024;   // reject absurd save-state uploads
-for (const d of [STATES, EJS_CACHE]) {
+for (const d of [STATES, EJS_CACHE, GAMEVID_CACHE]) {
   try { fs.mkdirSync(d, { recursive: true }); }
   catch (e) { console.warn("dir unavailable:", d, e.message); }
 }
@@ -179,6 +183,70 @@ function serveRom(req, res, sys, rel) {
     }
     res.writeHead(206, { ...base, "content-range": `bytes ${start}-${end}/${st.size}`,
       "content-length": end - start + 1 });
+    if (req.method === "HEAD") return res.end();
+    fs.createReadStream(full, { start, end }).pipe(res);
+  } else {
+    res.writeHead(200, { ...base, "content-length": st.size });
+    if (req.method === "HEAD") return res.end();
+    fs.createReadStream(full).pipe(res);
+  }
+}
+
+// ---- game preview videos (ES-DE video snaps) -----------------------------
+// The ES-DE .mp4s put their moov atom at the end, which stalls progressive
+// <video> playback. On first request we remux (-c copy, ~50ms) to a faststart
+// copy in the cache and serve that from then on.
+const gvInflight = new Map();
+function faststart(src, dst) {
+  if (gvInflight.has(dst)) return gvInflight.get(dst);
+  const p = new Promise((resolve) => {
+    fs.mkdirSync(path.dirname(dst), { recursive: true });
+    execFile("ffmpeg", ["-y", "-v", "error", "-i", src, "-c", "copy",
+      "-movflags", "+faststart", "-f", "mp4", dst + ".tmp"], { timeout: 20000 }, (err) => {
+      if (err) { try { fs.unlinkSync(dst + ".tmp"); } catch { /* */ } resolve(src); return; }
+      try { fs.renameSync(dst + ".tmp", dst); resolve(dst); }
+      catch { resolve(src); }
+    });
+  }).finally(() => gvInflight.delete(dst));
+  gvInflight.set(dst, p);
+  return p;
+}
+async function serveGameVideo(req, res, sys, name) {
+  if (/[/\\]/.test(sys) || name.includes("..") || name.includes("/")) {
+    res.writeHead(400, CORS).end("bad path"); return;
+  }
+  const src = path.join(ESDE_MEDIA, sys, "videos", name);
+  if (!src.startsWith(path.join(ESDE_MEDIA, sys, "videos") + path.sep)) {
+    res.writeHead(400, CORS).end("escape"); return;
+  }
+  let srcSt;
+  try { srcSt = fs.statSync(src); } catch { res.writeHead(404, CORS).end("not found"); return; }
+  if (!srcSt.isFile()) { res.writeHead(404, CORS).end("not found"); return; }
+
+  const cached = path.join(GAMEVID_CACHE, sys, name);
+  let full = src;
+  try {
+    const cSt = fs.statSync(cached);
+    if (cSt.mtimeMs >= srcSt.mtimeMs) full = cached;
+  } catch {
+    full = await faststart(src, cached);
+  }
+  let st;
+  try { st = fs.statSync(full); } catch { res.writeHead(404, CORS).end("not found"); return; }
+  const ext = path.extname(full).toLowerCase();
+  const ct = ext === ".webm" ? "video/webm" : "video/mp4";
+  const base = { ...CORS, "content-type": ct, "accept-ranges": "bytes",
+    "cache-control": "public, max-age=86400",
+    "access-control-expose-headers": "content-length, content-range, accept-ranges" };
+  const range = req.headers.range;
+  if (range) {
+    const m = /bytes=(\d*)-(\d*)/.exec(range) || [];
+    const start = m[1] ? +m[1] : 0;
+    const end = m[2] ? +m[2] : st.size - 1;
+    if (start >= st.size || end >= st.size || start > end) {
+      res.writeHead(416, { ...CORS, "content-range": `bytes */${st.size}` }).end(); return;
+    }
+    res.writeHead(206, { ...base, "content-range": `bytes ${start}-${end}/${st.size}`, "content-length": end - start + 1 });
     if (req.method === "HEAD") return res.end();
     fs.createReadStream(full, { start, end }).pipe(res);
   } else {
@@ -534,6 +602,7 @@ setInterval(() => {
   pruneCache(EJS_CACHE, 300 * 1048576);      // 300 MB of emulator files
   pruneCache(path.join(DATA, "thumb-cache"), 800 * 1048576);
   pruneCache(path.join(DATA, "music-art"), 200 * 1048576);
+  pruneCache(GAMEVID_CACHE, 600 * 1048576);  // faststart preview clips
 }, 3600_000).unref?.();
 
 // ---- read a (small) request body ----------------------------------------
@@ -953,6 +1022,9 @@ http.createServer((req, res) => {
   if (p === "/music/index.json") { musicIndex(req, res); return; }
   const mf = p.match(/^\/music\/file\/(.+)$/);
   if (mf) { serveMusic(req, res, decodeURIComponent(mf[1])); return; }
+
+  const gv = p.match(/^\/gamevideo\/([^/]+)\/(.+)$/);
+  if (gv) { serveGameVideo(req, res, decodeURIComponent(gv[1]), decodeURIComponent(gv[2])); return; }
 
   serveStatic(req, res, p + u.search);
 }).listen(PORT, HOST, () => console.log(`arcade-server  http://${HOST}:${PORT}  site=${SITE}`));

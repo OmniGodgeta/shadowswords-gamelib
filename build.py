@@ -218,6 +218,23 @@ SYSTEM_NAMES = {
     "wonderswancolor": "WonderSwan Color", "x68000": "Sharp X68000", "xbox": "Microsoft Xbox",
     "xbox360": "Microsoft Xbox 360", "zxspectrum": "Sinclair ZX Spectrum",
 }
+# approx platform launch year — orders the home box-art gallery oldest -> newest
+SYS_ERA = {
+    "atari2600": 1977, "odyssey2": 1978, "videopac": 1978, "intellivision": 1979,
+    "atari800": 1979, "vic20": 1980, "bbcmicro": 1981, "zxspectrum": 1982, "c64": 1982,
+    "atari5200": 1982, "colecovision": 1982, "vectrex": 1982, "sg-1000": 1983, "nes": 1983,
+    "fds": 1983, "msx": 1983, "msx1": 1983, "amstradcpc": 1984, "atarist": 1985, "amiga": 1985,
+    "amiga500": 1985, "cdtv": 1985, "mastersystem": 1985, "megadrive": 1988, "genesis": 1988,
+    "dos": 1985, "msx2": 1985, "atari7800": 1986, "pcengine": 1987, "archimedes": 1987,
+    "x68000": 1987, "cps1": 1988, "pcecd": 1988, "segacd": 1991, "gb": 1989, "atarilynx": 1989,
+    "gamegear": 1990, "neogeo": 1990, "neogeocd": 1990, "snes": 1990, "supervision": 1992,
+    "sega32x": 1994, "3do": 1993, "atarijaguar": 1993, "cps2": 1993, "model2": 1993,
+    "pcfx": 1994, "psx": 1994, "saturn": 1994, "tg-cd": 1988, "virtualboy": 1995,
+    "n64": 1996, "model3": 1996, "ngp": 1998, "gbc": 1998, "dreamcast": 1998, "naomi": 1998,
+    "wonderswan": 1999, "wonderswancolor": 2000, "ps2": 2000, "gba": 2001, "gc": 2001,
+    "xbox": 2001, "nds": 2004, "psp": 2004, "xbox360": 2005, "ps3": 2006, "wii": 2006,
+    "n3ds": 2011, "wiiu": 2012, "ps4": 2013, "switch": 2017, "tic80": 2017,
+}
 LOGO_ALIAS = {
     "aleck64": "n64", "amiga500": "amiga", "naomi_extra": "naomi", "naomi-files": "naomi",
     "pcecd": "pcengine", "pico": "genesis", "ps5": "ps4", "megadrivejp": "megadrive",
@@ -853,6 +870,8 @@ def main():
     systems_index, search_rows, jobs = [], [], []
     all_games = []          # {name,sys,gid,img,year,genre,players} for collections
     newest = []             # (mtime, name, sys, gid, img)
+    game_videos = []        # {sys,file,name,vid,img,year} — ES-DE video snaps for the home showcase
+    art_gallery = []        # {sys,file,name,img,year,play} — era-spanning box art for the showcase
 
     for sid in system_ids:
         root = ROMS / sid
@@ -942,6 +961,40 @@ def main():
         games.sort(key=lambda r: r["name"].lower())
         (DATA_OUT / f"{sid}.json").write_text(json.dumps(games, ensure_ascii=False, separators=(",", ":")))
 
+        # ES-DE video snaps -> home showcase index (matched to a game by ROM stem)
+        vdir = MEDIA_SRC / sid / "videos"
+        if vdir.is_dir():
+            by_stem = {
+                os.path.splitext(os.path.basename(g["file"].rstrip("/")))[0]: g
+                for g in games
+            }
+            found = []
+            for vf in sorted(vdir.iterdir()):
+                if vf.suffix.lower() not in (".mp4", ".webm"):
+                    continue
+                g = by_stem.get(vf.stem)
+                if not g:
+                    continue
+                found.append({
+                    "sys": sid, "file": g["file"], "name": g["name"], "gid": g["id"],
+                    "vid": vf.name, "img": g.get("img"), "year": g.get("year", 0),
+                    "play": bool(core),
+                })
+            found.sort(key=lambda v: -(v["year"] or 0))
+            game_videos.extend(found[:14])
+            if found:
+                print(f"{sid:16} {'':6}  videos={len(found)}")
+
+        # era-spanning box-art gallery: a spread of covers from every system
+        arted = [g for g in games if g.get("img")]
+        if arted:
+            step = max(1, len(arted) // 9)
+            for g in arted[::step][:9]:
+                art_gallery.append({
+                    "sys": sid, "file": g["file"], "name": g["name"], "gid": g["id"],
+                    "img": g["img"], "year": g.get("year", 0), "play": bool(core),
+                })
+
         # logo (wordmark) + photo (actual hardware)
         logo_src = LOGOS_SRC / f"{LOGO_ALIAS.get(sid, sid)}.webp"
         logo = None
@@ -977,6 +1030,12 @@ def main():
     (DATA_OUT / "systems.json").write_text(json.dumps(
         {"systems": systems_index, "total": total}, ensure_ascii=False, separators=(",", ":")))
     (DATA_OUT / "search.json").write_text(json.dumps(search_rows, ensure_ascii=False, separators=(",", ":")))
+    game_videos.sort(key=lambda v: -(v["year"] or 0))
+    (DATA_OUT / "gamevideos.json").write_text(json.dumps(game_videos, ensure_ascii=False, separators=(",", ":")))
+    art_gallery.sort(key=lambda g: (SYS_ERA.get(g["sys"], 1995), g["year"] or 0, g["name"].lower()))
+    (DATA_OUT / "artgallery.json").write_text(json.dumps(art_gallery, ensure_ascii=False, separators=(",", ":")))
+    print(f"game videos: {len(game_videos)} across {len({v['sys'] for v in game_videos})} systems"
+          f" · art gallery: {len(art_gallery)}")
 
     write_discovery(all_games, newest)
 

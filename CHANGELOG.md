@@ -2,6 +2,27 @@
 
 All notable changes to the ShadowSwords Arcade website.
 
+## [2.9.0] — 2026-09-09 — Home showcase, neon pass, layout fixes
+
+### Added
+- **Home showcase** — the hero now rotates through **gameplay preview clips**
+  (from the ES-DE video snaps, streamed and remuxed faststart on the fly by the
+  self-hosted server) with the game name + a Play/View button. A **SHOWCASE
+  slider** flips it to a **box-art gallery** — an era-ordered filmstrip of
+  covers from Atari 2600 through the modern systems, each linking straight to
+  the game. Falls back to art-only on the public mirror (no video server).
+
+### Changed
+- **Neon-retro colour pass** — deeper blacks, more saturated cyan/magenta,
+  stronger glow on interactive elements, a subtle CRT vignette + phosphor tint.
+- Opaque panel background token — fixes panels bleeding through on scroll.
+
+### Fixed
+- **Music page overlap on phones** — the album column was a sticky overlay that
+  the track list scrolled *underneath*; it now scrolls with the page.
+- **Contact page** — long social URLs overflowed their cards and collided with
+  neighbours; they truncate now, and the grid reflows 3→2→1 columns.
+
 ## [2.8.0] — 2026-09-09 — Visual controller setup
 
 ### Added
