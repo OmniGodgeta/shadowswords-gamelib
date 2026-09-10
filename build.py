@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build the shadowswords arcade browse data from the ES-DE library.
+"""Build the RetroVerse browse data from the ES-DE library.
 
 Enumerates every system under ~/Games/roms (the ES-DE symlink farm — ~105
 consoles), lists the ROM files in each, and merges in whatever metadata /

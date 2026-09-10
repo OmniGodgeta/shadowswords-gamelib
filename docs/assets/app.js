@@ -1,7 +1,7 @@
 "use strict";
 
 /* ========================================================================
-   shadowswords arcade
+   retroverse
    ======================================================================== */
 const $ = (s, r = document) => r.querySelector(s);
 const $$ = (s, r = document) => [...r.querySelectorAll(s)];
@@ -27,7 +27,7 @@ function toast(msg) {
 /* ---- config --------------------------------------------------------- */
 const TS = "https://shadow-1.tail51f9d6.ts.net";
 const SELF_HOSTED = location.hostname.endsWith(".ts.net");
-const IN_APP = /ShadowSwordsApp/.test(navigator.userAgent);   // native wrapper intercepts _blank → phone browser
+const IN_APP = /ShadowSwordsApp|RetroVerseApp/.test(navigator.userAgent);   // native wrapper intercepts _blank → phone browser
 const extTarget = { target: "_blank", rel: "noopener" };      // keep the signal the app hooks on
 const ROM_BASE = SELF_HOSTED ? "/roms/" : TS + "/roms/";       // needs Funnel when off-tailnet
 const MUSIC_BASE = SELF_HOSTED ? "/music/" : TS + "/music/";
@@ -294,7 +294,7 @@ function heroShowcase(vids, { title, desc, actions }) {
     el("button", { className: "sc-tg", dataset: { m: "art" }, textContent: "▦ Box art", onclick: () => setMode("art") }));
 
   const body = el("div", { className: "hero-body" },
-    el("p", { className: "hero-kicker", textContent: "shadowswords arcade" }),
+    el("p", { className: "hero-kicker", textContent: "retroverse" }),
     el("h1", { className: "hero-title", textContent: title }),
     el("p", { className: "hero-desc", textContent: desc }),
     el("div", { className: "hero-actions" }, ...actions.map((a) =>
@@ -394,7 +394,7 @@ async function routeHome() {
   if (gv && gv.length) {
     frag.append(heroShowcase(gv, heroCopy));
   } else {
-    frag.append(hero({ kicker: "shadowswords arcade", ...heroCopy, art: await collageArt(22) }));
+    frag.append(hero({ kicker: "retroverse", ...heroCopy, art: await collageArt(22) }));
     if (token !== state.render) return;
   }
 
@@ -520,7 +520,7 @@ async function routeSystem(id) {
   const games = await getSystem(id).catch(() => []);
   if (token !== state.render) return;
   const m = meta(id);
-  document.title = `${m.name} — ShadowSwords`;
+  document.title = `${m.name} — RetroVerse`;
   const genres = [...new Set(games.map((g) => g.genre).filter(Boolean))].sort();
   const years = games.map((g) => g.year).filter(Boolean);
   const decades = [...new Set(years.map((y) => Math.floor(y / 10) * 10))].sort();
@@ -1368,7 +1368,7 @@ async function movieDetail(it) {
 async function routeMovies() {
   const token = ++state.render;
   spinner();
-  document.title = "Movies — ShadowSwords";
+  document.title = "Movies — RetroVerse";
   const probe = await fetch(`${JF}Items?IncludeItemTypes=Movie&Recursive=true&Limit=0&EnableTotalRecordCount=true`)
     .then((r) => r.ok ? r.json() : null).catch(() => null);
   if (token !== state.render) return;
@@ -1578,7 +1578,7 @@ function mpSync() {
     const alb = MP.data.albums[MP.alb], tr = alb.tracks[MP.tr], meta = parseAlbum(alb.name);
     const art = alb.art ? [{ src: new URL(musicArtUrl(alb.name), location.href).href, sizes: "512x512", type: "image/jpeg" }] : [];
     MS.metadata = new MediaMetadata({
-      title: tr.title, album: meta.album, artist: meta.artist || "ShadowSwords", artwork: art });
+      title: tr.title, album: meta.album, artist: meta.artist || "RetroVerse", artwork: art });
     MS.playbackState = playing ? "playing" : "paused";
   }
   const q = $("#mp-queue-list");
@@ -1600,7 +1600,7 @@ function mpLoad(pos) {
   $("#mp-sub").textContent = [m.artist, m.album].filter(Boolean).join(" — ");
   const art = $("#mp-art");
   if (alb.art) { art.src = musicArtUrl(alb.name); art.hidden = false; } else art.hidden = true;
-  document.title = `▶ ${tk.title} — ShadowSwords`;
+  document.title = `▶ ${tk.title} — RetroVerse`;
   mpViz();
   mpSync();
 }
@@ -1702,7 +1702,7 @@ window.SSMusic = {
       active: true,
       playing: !ai.paused && !ai.ended,
       title: alb.tracks[cur.tr].title,
-      artist: m.artist || "ShadowSwords",
+      artist: m.artist || "RetroVerse",
       album: m.album,
       artworkUrl: alb.art ? new URL(musicArtUrl(alb.name), location.href).href : null,
       position: ai.currentTime || 0,
@@ -1747,7 +1747,7 @@ async function routeMusic(albumIdx) {
       el("div", { className: "hint" }, "Served from ", el("code", { textContent: new URL(MUSIC_BASE, location.href).host }))));
     return;
   }
-  document.title = "Music — ShadowSwords";
+  document.title = "Music — RetroVerse";
   const idx = Math.min(Math.max(0, albumIdx | 0), data.albums.length - 1);
   const album = data.albums[idx];
   const am = parseAlbum(album.name);
@@ -1841,7 +1841,7 @@ function requestForm() {
 }
 function routeContact() {
   ++state.render;
-  document.title = "Contact — ShadowSwords";
+  document.title = "Contact — RetroVerse";
   const dc = el("div", { className: "discord-cta" },
     el("div", {}, el("strong", { style: "font-size:16px", textContent: "💬  Discord server" }),
       el("div", { className: "dc-sub", style: "color:var(--muted);font-size:13px", textContent: "The best place to reach me." })),
@@ -1853,7 +1853,7 @@ function routeContact() {
   view.replaceChildren(el("section", { className: "pane" },
     el("div", { className: "big-emoji", textContent: "📡" }),
     el("h1", { textContent: "Contact & Socials" }),
-    el("p", { textContent: "Follow ShadowSwords everywhere, or jump into the Discord to chat, request games, or report anything broken." }),
+    el("p", { textContent: "Follow RetroVerse everywhere, or jump into the Discord to chat, request games, or report anything broken." }),
     el("div", { className: "socials" },
       ...SOCIALS.map(([name, url, ic, col]) => el("a", { className: "social", href: url, ...extTarget },
         el("span", { className: "ic", style: `color:${col}`, textContent: ic }),
@@ -1921,7 +1921,7 @@ function refGrid(box, items, shown = PAGE) {
 async function routeStats() {
   ++state.render; spinner();
   await getSystems().catch(() => {});
-  document.title = "Stats — ShadowSwords";
+  document.title = "Stats — RetroVerse";
   const s = await fetch(`${API}/play/stats`).then((r) => r.json()).catch(() => null);
   if (!s) { view.replaceChildren(el("section", { className: "pane center" },
     el("div", { className: "big-emoji", textContent: "📊" }), el("h1", { textContent: "Stats" }),
@@ -1966,7 +1966,7 @@ async function routeCollections() {
   ++state.render; spinner();
   await getSystems().catch(() => {});
   const cols = await getJSON("collections") || [];
-  document.title = "Collections — ShadowSwords";
+  document.title = "Collections — RetroVerse";
   const frag = document.createDocumentFragment();
   frag.append(el("section", { className: "shelf", style: "padding:22px var(--pad) 0" },
     el("div", { className: "shelf-head" }, el("h2", { textContent: "Collections" }),
@@ -1989,7 +1989,7 @@ async function routeCollection(id) {
   const c = (await getJSON("collections") || []).find((x) => x.id === id)
     || (await getJSON("franchises") || []).find((x) => x.id === id);
   if (!c) { location.hash = "#/collections"; return; }
-  document.title = `${c.title} — ShadowSwords`;
+  document.title = `${c.title} — RetroVerse`;
   const box = el("div", {});
   view.replaceChildren(el("div", { className: "wrap" },
     el("section", { className: "shelf", style: "padding:22px 0 0" },
@@ -2004,7 +2004,7 @@ async function routeFranchises() {
   ++state.render; spinner();
   await getSystems().catch(() => {});
   const fr = await getJSON("franchises") || [];
-  document.title = "Franchises — ShadowSwords";
+  document.title = "Franchises — RetroVerse";
   const grid = el("div", { className: "tile-grid", style: "padding:0 var(--pad) 30px;max-width:1600px;margin:0 auto" });
   for (const f of fr) {
     const cover = el("div", { className: "tile-art console coll-cover" });
@@ -2099,7 +2099,7 @@ async function routeSaves() {
 
 async function routeCache() {
   ++state.render;
-  document.title = "Offline & cache — ShadowSwords";
+  document.title = "Offline & cache — RetroVerse";
   const [st, ejs] = await Promise.all([romCacheStats(), ejsCacheStats()]);
   const pct = Math.min(100, st.bytes / ROM_CACHE_CAP * 100);
   const bar = el("div", { className: "dl-bar" }, el("i", { style: `width:${pct.toFixed(1)}%` }));
@@ -2124,7 +2124,7 @@ async function routeCache() {
       el("p", { className: "hint", style: "margin:0 0 6px" },
         IN_APP
           ? "In the app, each console's emulator is saved the first time you play a game on it. A saved emulator + a cached ROM (use “Save all for offline” on a console page) = plays with no connection."
-          : "The site shell and your cached ROMs work offline, but a browser can't fully cache the emulator itself — the ShadowSwords app can. Install it for true offline play."),
+          : "The site shell and your cached ROMs work offline, but a browser can't fully cache the emulator itself — the RetroVerse app can. Install it for true offline play."),
       el("p", { className: "hint", style: "margin:0 0 10px" },
         `${ejs.count} emulator file${ejs.count === 1 ? "" : "s"} saved · ${fmtBytes(ejs.bytes)}`),
       clearEjs)),
@@ -2238,7 +2238,7 @@ async function routePublicProfile(name) {
   if (!d) { view.replaceChildren(el("section", { className: "pane center" },
     el("div", { className: "big-emoji", textContent: "🕶️" }), el("h1", { textContent: "No public profile" }),
     el("p", { textContent: `@${name} either doesn't exist or keeps their profile private.` }))); return; }
-  document.title = `${d.display} — ShadowSwords`;
+  document.title = `${d.display} — RetroVerse`;
   const frag = document.createDocumentFragment();
   frag.append(el("section", { className: "shelf", style: "padding:22px var(--pad) 0" },
     el("div", { className: "shelf-head" }, el("h2", { textContent: d.display }))),
@@ -2257,7 +2257,7 @@ async function routePublicProfile(name) {
 
 async function routeAdmin() {
   ++state.render; spinner();
-  document.title = "Admin — ShadowSwords";
+  document.title = "Admin — RetroVerse";
   const d = await fetch(`${API}/admin/summary`, { headers: authHdr() }).then((r) => r.ok ? r.json() : null).catch(() => null);
   if (!d) { view.replaceChildren(el("section", { className: "pane center" },
     el("div", { className: "big-emoji", textContent: "🔒" }), el("h1", { textContent: "Admin" }),
@@ -2314,7 +2314,7 @@ async function routeAdmin() {
 
 async function routeLogin() {
   ++state.render;
-  document.title = "Sign in — ShadowSwords";
+  document.title = "Sign in — RetroVerse";
   if (signedIn()) { location.hash = "#/profile"; return; }
   let mode = "in";  // "in" | "up"
   const uName = el("input", { type: "text", placeholder: "Username", autocomplete: "username", maxLength: 24 });
@@ -2326,7 +2326,7 @@ async function routeLogin() {
     submit.textContent = mode === "in" ? "Sign in" : "Create account";
     toggle.textContent = mode === "in" ? "New here? Create an account" : "Already have an account? Sign in";
     uPw.autocomplete = mode === "in" ? "current-password" : "new-password";
-    document.title = (mode === "in" ? "Sign in" : "Create account") + " — ShadowSwords";
+    document.title = (mode === "in" ? "Sign in" : "Create account") + " — RetroVerse";
   };
   toggle.onclick = () => { mode = mode === "in" ? "up" : "in"; status.textContent = ""; render(); };
   const go = async () => {
@@ -2354,7 +2354,7 @@ async function routeLogin() {
 async function routeProfile() {
   ++state.render; spinner();
   await getSystems().catch(() => {});
-  document.title = "Your profile — ShadowSwords";
+  document.title = "Your profile — RetroVerse";
   const favs = favList(), recent = recentList();
   const played = LS.get("playtime", {});          // sys/file -> seconds
   const totalSec = Object.values(played).reduce((n, s) => n + s, 0);
@@ -2400,7 +2400,7 @@ async function routeProfile() {
     el("button", { className: "btn btn-ghost", textContent: "Export favorites & data", onclick: () => {
       const blob = new Blob([JSON.stringify({ favs: favList(), recent: recentList(),
         playtime: LS.get("playtime", {}), exported: new Date().toISOString() }, null, 2)], { type: "application/json" });
-      const a = el("a", { href: URL.createObjectURL(blob), download: "shadowswords-profile.json" });
+      const a = el("a", { href: URL.createObjectURL(blob), download: "retroverse-profile.json" });
       document.body.append(a); a.click(); a.remove();
     } }),
     el("button", { className: "btn btn-ghost", textContent: "Import", onclick: () => impInput.click() }), impInput));
@@ -2445,7 +2445,7 @@ async function routeSearch(qRaw) {
   const token = ++state.render;
   const q = qRaw.trim();
   spinner();
-  document.title = `“${qRaw}” — ShadowSwords`;
+  document.title = `“${qRaw}” — RetroVerse`;
   await getSystems().catch(() => {});
   let hits = await searchRows(q);
   if (token !== state.render) return;
@@ -2499,7 +2499,7 @@ async function router() {
   }
   if (a !== "q") $("#bar-search").hidden = true;
   window.scrollTo(0, 0);
-  document.title = "ShadowSwords Arcade";
+  document.title = "RetroVerse";
   if (a === "s" && b) { setNav(null); return routeSystem(b); }
   if (a === "g" && b && parts[2]) { setNav(null); return routeGame(b, parts[2]); }
   if (a === "resume" && b && parts.length > 2) { setNav("play"); return routePlayGame(b, parts.slice(2).join("/"), true); }
@@ -2530,7 +2530,7 @@ async function router() {
 }
 function route404() {
   ++state.render;
-  document.title = "Not found — ShadowSwords";
+  document.title = "Not found — RetroVerse";
   view.replaceChildren(el("section", { className: "pane center" },
     el("div", { className: "big-emoji", textContent: "🕹️" }),
     el("h1", { textContent: "Nothing here" }),

@@ -1,14 +1,14 @@
-/* ShadowSwords Arcade — service worker.
+/* RetroVerse — service worker.
    ssw-shell  : app shell + assets, stale-while-revalidate, wiped on version bump
    ssw-data   : data/*.json, network-first, PERSISTS across version bumps (offline browse)
    ssw-ejs    : /emulatorjs/* core files, cache-first, PERSISTS (offline play)
    Never touched: /roms, /music, /states, search.json, cross-origin CDN, dynamic APIs */
-const VERSION = "ssw-v2.25";
+const VERSION = "ssw-v2.26";
 const SHELL = VERSION, DATA = "ssw-data", EJS_CACHE = "ssw-ejs";
 const KEEP = [SHELL, DATA, EJS_CACHE];
 const SHELL_FILES = [
   "./", "./index.html", "./assets/app.js", "./assets/style.css",
-  "./assets/img/logo.webp", "./manifest.json",
+  "./assets/img/logo.webp", "./assets/img/favicon.png", "./manifest.json",
 ];
 const R504 = () => new Response(null, { status: 504, statusText: "offline" });
 

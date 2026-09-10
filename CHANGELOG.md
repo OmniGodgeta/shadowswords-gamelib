@@ -1,6 +1,22 @@
 # Changelog
 
-All notable changes to the ShadowSwords Arcade website.
+All notable changes to the RetroVerse website.
+
+## [2.13.0] — 2026-09-09 — Rebrand: ShadowSwords Arcade → RetroVerse
+
+### Changed
+- **The site is now "RetroVerse".** New neon joystick logo in the header
+  (`logo.webp`), new favicon + PWA/`apple-touch` icons (`icon-192/512/maskable`,
+  `favicon.png`) cropped from the RetroVerse mark. `<title>`, meta/OG/Twitter
+  tags, the hero kicker, every per-route `document.title`, the manifest
+  `name`/`short_name`/`description`, and the SW banner comment all updated.
+- PWA manifest `id` is **unchanged** (`shadowswords-arcade`) so existing
+  installs keep their identity and just pick up the new name/icons.
+- `IN_APP` UA check now also accepts `RetroVerseApp` (the renamed Android
+  wrapper), still accepts `ShadowSwordsApp` for already-installed apps.
+- Repo name, package/PWA id, cloud-save namespaces, Discord/socials and the
+  tailnet URL are untouched.
+- SW `ssw-v2.26`, assets `?v=2.26`.
 
 ## [2.12.0] — 2026-09-09 — Update prompt + hero overlay fixes
 

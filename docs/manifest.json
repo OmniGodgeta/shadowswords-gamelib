@@ -1,7 +1,7 @@
 {
-  "name": "ShadowSwords Arcade",
-  "short_name": "Arcade",
-  "description": "Browse, play and stream the ShadowSwords game, movie & music collection.",
+  "name": "RetroVerse",
+  "short_name": "RetroVerse",
+  "description": "Browse, play and stream the RetroVerse game, movie & music collection.",
   "start_url": "./",
   "scope": "./",
   "id": "shadowswords-arcade",

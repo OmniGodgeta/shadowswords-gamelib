@@ -1,4 +1,6 @@
-# shadowswords arcade
+# RetroVerse
+
+*(repo stays `shadowswords-gamelib`; the site is branded **RetroVerse**.)*
 
 A **webRcade-style** browser for the whole ES-DE library on `shadow` —
 ~108 consoles, ~77k games, box art where it's scraped, console logos for every
