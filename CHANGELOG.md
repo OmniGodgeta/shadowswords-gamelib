@@ -2,6 +2,42 @@
 
 All notable changes to the RetroVerse website.
 
+## [2.14.0] — 2026-09-10 — Home & Play shelves: real covers, generated sleeves, assemble animation
+
+### Changed
+- **Every game tile now shows a cover.** Where we have box art it's used;
+  where we don't, the tile draws a generated "sleeve" — console-tinted, with
+  the system wordmark ghosted behind the title — instead of an identical dark
+  box with just text. Kills the "same empty cases" look on Trending /
+  Recently added / Continue playing / Play.
+- **Covers are hydrated after render.** The home shelves reference games whose
+  per-system data isn't loaded, so Trending / Continue playing / Recently
+  added / Cloud saves / Stats used to fall back to placeholders even for games
+  that *do* have art. `hydrateCovers()` now loads the referenced systems
+  (capped, skips the giant home-computer sets) and swaps the real box art in;
+  resolved art for "Continue playing" is written back to local storage.
+- **Library "assemble" animation.** Tiles slide onto the shelf in sequence
+  (staggered, capped; off in lite mode / reduced-motion).
+- **"Show more" appends** instead of rebuilding the grid, so already-shown
+  tiles don't re-animate.
+
+### Fixed
+- **BIOS / machine-variant dumps no longer swamp "Recently added".** ES-DE
+  lists e.g. `[BIOS] Commodore 1541` as a c64 "game"; a fresh sync stamped
+  them all recent and they filled the shelf. `build.py` now skips them there
+  and caps any one system to 30 entries so the shelf stays varied.
+- **Rebuilt browse data lands promptly.** `/data/*.json` was cached for an
+  hour (`max-age=3600`); a `build.py` rebuild wasn't visible until it expired.
+  Now `max-age=300, must-revalidate`, and the service worker revalidates
+  `/data/` on every fetch (cheap 304 when unchanged). Box art (`/media/`)
+  still caches hard.
+
+### Internal
+- SW `ssw-v2.27`, assets `?v=2.27`.
+- New `coverArt()` / `hue()` / `hydrateCovers()` / `backfillRecent()` in
+  `app.js`; `gameTile` / `favTile` / `refTile` / the inline shelf builders all
+  route through `coverArt()`.
+
 ## [2.13.0] — 2026-09-09 — Rebrand: ShadowSwords Arcade → RetroVerse
 
 ### Changed

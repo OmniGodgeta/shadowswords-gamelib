@@ -830,14 +830,19 @@ def write_discovery(all_games, newest):
     (DATA_OUT / "franchises.json").write_text(
         json.dumps(franchises, ensure_ascii=False, separators=(",", ":")))
 
-    # recently added (by ROM file mtime)
+    # recently added (by ROM file mtime) — skip BIOS / machine-variant dumps
+    # (ES-DE lists e.g. "[BIOS] Commodore 1541" as a c64 "game"; a fresh rsync
+    # stamps them all with the same recent mtime and they swamp the shelf)
     newest.sort(reverse=True)
-    seen, added = set(), []
+    seen, per_sys, added = set(), {}, []
     span = (newest[0][0] - newest[-1][0]) if len(newest) > 50 else 0
     for mt, name, sysid, gid, img in newest:
-        if name.lower() in seen:
+        if re.match(r"\d+-bios-", gid) or name.lower().startswith("[bios]"):
+            continue
+        if name.lower() in seen or per_sys.get(sysid, 0) >= 30:
             continue
         seen.add(name.lower())
+        per_sys[sysid] = per_sys.get(sysid, 0) + 1
         added.append([name, sysid, gid, img, int(mt)])
         if len(added) >= 120:
             break

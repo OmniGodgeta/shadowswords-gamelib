@@ -3,7 +3,7 @@
    ssw-data   : data/*.json, network-first, PERSISTS across version bumps (offline browse)
    ssw-ejs    : /emulatorjs/* core files, cache-first, PERSISTS (offline play)
    Never touched: /roms, /music, /states, search.json, cross-origin CDN, dynamic APIs */
-const VERSION = "ssw-v2.26";
+const VERSION = "ssw-v2.27";
 const SHELL = VERSION, DATA = "ssw-data", EJS_CACHE = "ssw-ejs";
 const KEEP = [SHELL, DATA, EJS_CACHE];
 const SHELL_FILES = [
@@ -48,10 +48,13 @@ self.addEventListener("fetch", (e) => {
   if (/^\/(roms|music|gamevideo|states|netplay|thumb|jellyfin|play|twitch|discord|search|request|auth|admin|banner|u)(\/|$|\?)/.test(u.pathname)) return;
   if (u.pathname.endsWith("search.json")) return;                  // 6 MB, not worth caching
 
-  // data/*.json — network-first, persist in ssw-data so offline browse survives updates
+  // data/*.json — network-first, persist in ssw-data so offline browse survives updates.
+  // {cache:"no-cache"} forces a revalidation with the server (cheap 304 when
+  // unchanged) so a build.py rebuild lands now, not up to an hour later when the
+  // /data/ HTTP cache (max-age=3600) would otherwise still be warm.
   if (u.pathname.includes("/data/")) {
     e.respondWith(
-      fetch(req).then((r) => {
+      fetch(req, { cache: "no-cache" }).then((r) => {
         if (r.ok) { const cp = r.clone(); caches.open(DATA).then((c) => c.put(req, cp)); }
         return r;
       }).catch(() => caches.open(DATA).then((c) => c.match(req)).then((m) => m || R504()))

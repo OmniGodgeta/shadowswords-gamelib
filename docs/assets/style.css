@@ -254,6 +254,45 @@ main { min-height: calc(100dvh - var(--bar-h) - 90px); }
   text-shadow: 0 0 12px rgba(34,224,255,.5);
   display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical; overflow: hidden;
 }
+/* generated "sleeve" for games we have no box art for — console-tinted, with the
+   system wordmark ghosted behind the title, so it reads as a case not a gap */
+.tile-art.noart {
+  flex-direction: column; gap: 5px; padding: 14px 11px;
+  background:
+    linear-gradient(150deg, hsl(var(--h, 220) 58% 24%), hsl(calc(var(--h, 220) + 42) 50% 9%));
+}
+.tile-art.noart::before {
+  content: ""; position: absolute; inset: 0; pointer-events: none;
+  background:
+    radial-gradient(120% 80% at 15% 0%, rgba(255,255,255,.10), transparent 55%),
+    repeating-linear-gradient(0deg, transparent 0 3px, rgba(0,0,0,.11) 3px 4px);
+}
+.tile-art.noart .noart-logo {
+  position: absolute; right: -16%; bottom: -14%; width: 82%; max-height: 66%;
+  object-fit: contain; opacity: .12; transform: rotate(-8deg);
+  filter: brightness(0) invert(1);
+}
+.tile-art.noart .noart-t {
+  position: relative; z-index: 1; text-align: center; color: #fff;
+  font-weight: 800; font-size: 13px; line-height: 1.22;
+  text-shadow: 0 1px 10px rgba(0,0,0,.55);
+  display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical; overflow: hidden;
+}
+.tile-art.noart .noart-s {
+  position: relative; z-index: 1; font-size: 9px; font-weight: 800; letter-spacing: .12em;
+  text-transform: uppercase; color: rgba(255,255,255,.5);
+}
+.tile:hover .tile-art.noart .noart-logo, .tile:focus-visible .tile-art.noart .noart-logo { opacity: .2; }
+
+/* library "assemble" — tiles slide onto the shelf in sequence (--i set in JS) */
+@keyframes tile-in { from { opacity: 0; transform: translateY(14px) scale(.97); } }
+@media (prefers-reduced-motion: no-preference) {
+  .shelf-track > .tile, .tile-grid > .tile {
+    animation: tile-in .42s cubic-bezier(.2, .7, .3, 1) both;
+    animation-delay: calc(var(--i, 0) * 32ms);
+  }
+}
+body.lite .shelf-track > .tile, body.lite .tile-grid > .tile { animation: none; }
 .tile-art.console { background: radial-gradient(90% 70% at 50% 20%, rgba(168,85,247,.16), transparent 70%), linear-gradient(160deg, var(--bg-3), #0a0a18); }
 .tile-art .console-logo {
   width: 82%; max-height: 60%; object-fit: contain;

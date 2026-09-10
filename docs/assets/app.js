@@ -311,6 +311,7 @@ function heroShowcase(vids, { title, desc, actions }) {
 
 function shelf({ title, count, moreHref, tiles }) {
   const track = el("div", { className: "shelf-track" }, ...tiles);
+  [...track.children].forEach((t, i) => t.style && t.style.setProperty("--i", Math.min(i, 16)));
   const scroll = (d) => track.scrollBy({ left: d * track.clientWidth * 0.85, behavior: "smooth" });
   return el("section", { className: "shelf" },
     el("div", { className: "shelf-head" },
@@ -341,14 +342,83 @@ function heartBtn(g) {
   b.onclick = (e) => { e.preventDefault(); e.stopPropagation(); b.classList.toggle("on", toggleFav(g)); };
   return b;
 }
-function gameTile(g, { play = false } = {}) {
+// deterministic hue from a string — tints the generated sleeves consistently
+const hue = (s) => {
+  let h = 5381; s = String(s || "");
+  for (let i = 0; i < s.length; i++) h = ((h << 5) + h + s.charCodeAt(i)) | 0;
+  return Math.abs(h) % 360;
+};
+
+// One game cover. Real box art when we have it; otherwise a generated "sleeve"
+// (console-tinted, the system wordmark ghosted behind the title) so an art-less
+// tile still reads as a shelved game case, not an empty slot. Pass `resolve` (an
+// array) to register the art-less tile for a later hydrateCovers() pass.
+function coverArt({ img, name, sys, badge, fav, resolve, file, gid }) {
   const art = el("div", { className: "tile-art" });
-  if (g.img) art.append(el("img", { src: artUrl(g.img), loading: "lazy", alt: g.name }));
-  else art.append(el("div", { className: "ph", textContent: g.name }));
-  if (play) art.append(el("span", { className: "badge", textContent: "Play" }));
-  if (g.id) art.append(heartBtn(g));
+  if (img) {
+    art.append(el("img", { src: artUrl(img), loading: "lazy", alt: name }));
+  } else {
+    art.classList.add("noart");
+    art.style.setProperty("--h", hue(sys || name));
+    const m = sys ? meta(sys) : null;
+    if (m && m.logo) art.append(el("img", { className: "noart-logo", src: m.logo, loading: "lazy", alt: "" }));
+    art.append(el("div", { className: "noart-t", textContent: name }));
+    if (m && m.name) art.append(el("div", { className: "noart-s", textContent: m.name }));
+    if (resolve && sys && (file || gid)) resolve.push({ sys, file, gid, name, art });
+  }
+  if (badge) art.append(el("span", { className: "badge", textContent: badge }));
+  if (fav) art.append(heartBtn(fav));
+  return art;
+}
+
+// Load the systems referenced by art-less tiles and swap real box art in where
+// it exists (most cartridge games have libretro art; the per-system JSON just
+// isn't loaded on the home page). Capped; skips the giant home-computer sets.
+const HYDRATE_SKIP = new Set(["zxspectrum", "amstradcpc", "atari800", "bbcmicro", "x68000"]);
+async function hydrateCovers(items, { save } = {}) {
+  const bySys = {};
+  for (const it of items) if (it.art.classList.contains("noart")) (bySys[it.sys] ||= []).push(it);
+  const found = [];
+  for (const sid of Object.keys(bySys).slice(0, 10)) {
+    if (HYDRATE_SKIP.has(sid)) continue;
+    let list;
+    try { list = await getSystem(sid); } catch { continue; }
+    const bf = new Map(), bi = new Map();
+    for (const g of list) { if (g.file) bf.set(g.file, g); bi.set(g.id, g); }
+    for (const it of bySys[sid]) {
+      const g = (it.file && bf.get(it.file)) || (it.gid && bi.get(it.gid));
+      if (!g || !g.img) continue;
+      found.push({ sys: sid, file: it.file || (g.file || null), img: g.img });
+      if (!it.art.isConnected || !it.art.classList.contains("noart")) continue;
+      const im = el("img", { src: artUrl(g.img), loading: "lazy", alt: it.name });
+      im.style.animation = "tile-in .3s ease";
+      for (const c of [...it.art.children])
+        if (!c.classList.contains("badge") && !c.classList.contains("heart")) c.remove();
+      it.art.classList.remove("noart");
+      it.art.style.removeProperty("--h");
+      it.art.prepend(im);
+    }
+  }
+  if (save && found.length) save(found);
+}
+// backfill resolved art into the "recently played" store so it sticks next time
+function backfillRecent(found) {
+  const l = recentList(); let changed = false;
+  for (const r of l) {
+    if (r.img) continue;
+    const hit = found.find((f) => f.sys === r.sys && f.file === r.file);
+    if (hit && hit.img) { r.img = hit.img; changed = true; }
+  }
+  if (changed) LS.set("recent", l);
+}
+
+function gameTile(g, { play = false } = {}) {
   const href = play ? `#/play/${g._sys}/${g.file.split("/").map(encodeURIComponent).join("/")}`
     : `#/g/${g._sys}/${g.id}`;
+  const art = coverArt({
+    img: g.img, name: g.name, sys: g._sys,
+    badge: play ? "Play" : null, fav: g.id ? g : null,
+  });
   return el("a", { className: "tile wide", href },
     art,
     el("div", { className: "tile-cap" },
@@ -360,14 +430,27 @@ const spinner = () => view.replaceChildren(el("div", { className: "spinner", tex
 
 function tileGrid(container, list, shown, opts = {}) {
   const grid = el("div", { className: "tile-grid" });
-  list.slice(0, shown).forEach((g) => grid.append(gameTile(g, opts)));
+  // append (never rebuild) on "show more" so already-shown tiles don't re-animate
+  const fill = (from, to) => {
+    for (let i = from; i < to && i < list.length; i++) {
+      const t = gameTile(list[i], opts);
+      t.style.setProperty("--i", Math.min(i - from, 20));
+      grid.append(t);
+    }
+  };
+  fill(0, shown);
   const parts = [grid];
-  if (list.length > shown) parts.push(el("button", {
-    className: "more",
-    textContent: `Show more · ${(list.length - shown).toLocaleString()} left`,
-    onclick: () => tileGrid(container, list, shown + PAGE, opts),
-  }));
-  else if (!list.length) { parts.length = 0; parts.push(el("div", { className: "empty-state", textContent: "Nothing here." })); }
+  if (list.length > shown) {
+    const btn = el("button", { className: "more", onclick: () => {
+      const was = grid.children.length;
+      fill(was, was + PAGE);
+      const left = list.length - grid.children.length;
+      if (left <= 0) btn.remove();
+      else btn.textContent = `Show more · ${left.toLocaleString()} left`;
+    } });
+    btn.textContent = `Show more · ${(list.length - shown).toLocaleString()} left`;
+    parts.push(btn);
+  } else if (!list.length) { parts.length = 0; parts.push(el("div", { className: "empty-state", textContent: "Nothing here." })); }
   container.replaceChildren(...parts);
 }
 
@@ -398,14 +481,12 @@ async function routeHome() {
     if (token !== state.render) return;
   }
 
+  const resolve = [];   // art-less tiles → hydrateCovers() once the shelves are in
   const recent = recentList();
   if (recent.length) frag.append(shelf({
     title: "Continue playing", count: recent.length,
     tiles: recent.map((r) => {
-      const art = el("div", { className: "tile-art" });
-      if (r.img) art.append(el("img", { src: artUrl(r.img), loading: "lazy", alt: r.name }));
-      else art.append(el("div", { className: "ph", textContent: r.name }));
-      art.append(el("span", { className: "badge", textContent: "Resume" }));
+      const art = coverArt({ img: r.img, name: r.name, sys: r.sys, badge: "Resume", file: r.file, resolve });
       return el("a", { className: "tile wide",
         href: `#/resume/${r.sys}/${r.file.split("/").map(encodeURIComponent).join("/")}` }, art,
         el("div", { className: "tile-cap" },
@@ -436,10 +517,7 @@ async function routeHome() {
     if (trend.length >= 4) bits.append(shelf({ title: "Trending", count: trend.length,
       tiles: trend.map((p) => {
         const gm = (state.cache[p.sys] || []).find((x) => x.file === p.file);
-        const art = el("div", { className: "tile-art" });
-        if (gm && gm.img) art.append(el("img", { src: artUrl(gm.img), loading: "lazy", alt: p.name }));
-        else art.append(el("div", { className: "ph", textContent: p.name }));
-        art.append(el("span", { className: "badge", textContent: "Play" }));
+        const art = coverArt({ img: gm && gm.img, name: p.name, sys: p.sys, badge: "Play", file: p.file, resolve });
         return el("a", { className: "tile wide",
           href: `#/play/${p.sys}/${p.file.split("/").map(encodeURIComponent).join("/")}` }, art,
           el("div", { className: "tile-cap" },
@@ -447,11 +525,11 @@ async function routeHome() {
             el("div", { className: "s", textContent: `${sysName(p.sys)} · ${p.count} play${p.count === 1 ? "" : "s"}` })));
       }) }));
     if (added && added.length) bits.append(shelf({ title: "Recently added", count: added.length,
-      tiles: added.slice(0, 24).map((r) => refTile(r)) }));
+      tiles: added.slice(0, 24).map((r) => refTile(r, resolve)) }));
     if (cols && cols.length) {
       const pick = [...cols].sort(() => Math.random() - 0.5).slice(0, 3);
       for (const c of pick) bits.append(shelf({ title: c.title, count: c.items.length,
-        moreHref: `#/collection/${c.id}`, tiles: c.items.slice(0, 20).map((r) => refTile(r)) }));
+        moreHref: `#/collection/${c.id}`, tiles: c.items.slice(0, 20).map((r) => refTile(r, resolve)) }));
     }
     if (fr && fr.length) bits.append(shelf({ title: "Franchises", count: fr.length, moreHref: "#/franchises",
       tiles: fr.slice(0, 24).map((f) => {
@@ -463,6 +541,7 @@ async function routeHome() {
             el("div", { className: "s", textContent: f.note })));
       }) }));
     anchor.replaceWith(bits);
+    hydrateCovers(resolve, { save: backfillRecent });
   });
 
   const withLogo = systems.filter((s) => s.logo);
@@ -1896,14 +1975,13 @@ const _json = {};
 const getJSON = (name) => _json[name] ||= fetch(`data/${name}.json`).then((r) => r.json()).catch(() => null);
 
 // [name, sys, gid, img] -> tile
-function refTile(r) {
+function refTile(r, resolve) {
   const [name, sys, gid, img] = r;
-  const playable = meta(sys).playable;
-  const art = el("div", { className: "tile-art" });
-  if (img) art.append(el("img", { src: artUrl(img), loading: "lazy", alt: name }));
-  else art.append(el("div", { className: "ph", textContent: name }));
-  if (playable) art.append(el("span", { className: "badge", textContent: "Play" }));
-  art.append(heartBtn({ _sys: sys, id: gid, name, img: img || null }));
+  const art = coverArt({
+    img, name, sys, gid, resolve,
+    badge: meta(sys).playable ? "Play" : null,
+    fav: { _sys: sys, id: gid, name, img: img || null },
+  });
   return el("a", { className: "tile wide", href: `#/g/${sys}/${gid}` }, art,
     el("div", { className: "tile-cap" },
       el("div", { className: "t", textContent: name }),
@@ -1911,11 +1989,30 @@ function refTile(r) {
 }
 function refGrid(box, items, shown = PAGE) {
   const grid = el("div", { className: "tile-grid" });
-  items.slice(0, shown).forEach((r) => grid.append(refTile(r)));
+  const resolve = [];
+  const fill = (from, to) => {
+    for (let i = from; i < to && i < items.length; i++) {
+      const t = refTile(items[i], resolve);
+      t.style.setProperty("--i", Math.min(i - from, 20));
+      grid.append(t);
+    }
+  };
+  fill(0, shown);
   const parts = [grid];
-  if (items.length > shown) parts.push(el("button", { className: "more",
-    textContent: `Show more · ${items.length - shown} left`, onclick: () => refGrid(box, items, shown + PAGE) }));
+  if (items.length > shown) {
+    const btn = el("button", { className: "more", onclick: () => {
+      const was = grid.children.length;
+      fill(was, was + PAGE);
+      const left = items.length - grid.children.length;
+      if (left <= 0) btn.remove();
+      else btn.textContent = `Show more · ${left.toLocaleString()} left`;
+      hydrateCovers(resolve);
+    } });
+    btn.textContent = `Show more · ${(items.length - shown).toLocaleString()} left`;
+    parts.push(btn);
+  }
   box.replaceChildren(...parts);
+  hydrateCovers(resolve);
 }
 
 async function routeStats() {
@@ -1930,12 +2027,11 @@ async function routeStats() {
   frag.append(el("section", { className: "shelf", style: "padding:22px var(--pad) 0" },
     el("div", { className: "shelf-head" }, el("h2", { textContent: "Library stats" }),
       s.playingNow ? el("span", { className: "count", textContent: `${s.playingNow} playing now` }) : null)));
+  const statResolve = [];
   const gtile = (p, extra) => {
     const gm = (state.cache[p.sys] || []).find((x) => x.file === p.file);
-    const art = el("div", { className: "tile-art" });
-    if (gm && gm.img) art.append(el("img", { src: artUrl(gm.img), loading: "lazy", alt: p.name }));
-    else art.append(el("div", { className: "ph", textContent: p.name }));
-    if (meta(p.sys).playable) art.append(el("span", { className: "badge", textContent: "Play" }));
+    const art = coverArt({ img: gm && gm.img, name: p.name, sys: p.sys, file: p.file, resolve: statResolve,
+      badge: meta(p.sys).playable ? "Play" : null });
     return el("a", { className: "tile wide",
       href: `#/play/${p.sys}/${p.file.split("/").map(encodeURIComponent).join("/")}` }, art,
       el("div", { className: "tile-cap" }, el("div", { className: "t", textContent: p.name }),
@@ -1960,6 +2056,7 @@ async function routeStats() {
       el("div", { className: "wrap" }, box));
   }
   view.replaceChildren(frag);
+  hydrateCovers(statResolve);
 }
 
 async function routeCollections() {
@@ -2023,11 +2120,10 @@ async function routeFranchises() {
 /* ---- routes: favorites / recent / cloud saves / cache ------- */
 function favTile(f) {
   const play = !!f.file;
-  const art = el("div", { className: "tile-art" });
-  if (f.img) art.append(el("img", { src: artUrl(f.img), loading: "lazy", alt: f.name }));
-  else art.append(el("div", { className: "ph", textContent: f.name }));
-  if (play) art.append(el("span", { className: "badge", textContent: "Play" }));
-  art.append(heartBtn({ _sys: f.sys, id: f.id, name: f.name, img: f.img, file: f.file, year: f.year, genre: f.genre }));
+  const art = coverArt({
+    img: f.img, name: f.name, sys: f.sys, badge: play ? "Play" : null,
+    fav: { _sys: f.sys, id: f.id, name: f.name, img: f.img, file: f.file, year: f.year, genre: f.genre },
+  });
   const href = play
     ? `#/play/${f.sys}/${f.file.split("/").map(encodeURIComponent).join("/")}`
     : `#/g/${f.sys}/${f.id}`;
@@ -2080,12 +2176,11 @@ async function routeSaves() {
   } else if (!saves.length) {
     grid.append(el("div", { className: "empty-state", textContent: "No cloud saves yet. Save a state from the emulator menu and it syncs here automatically." }));
   } else {
+    var saveResolve = [];
     saves.sort((a, b) => b.mtime - a.mtime).forEach((s) => {
       const gm = (state.cache[s.sys] || []).find((x) => x.file === s.file);
-      const art = el("div", { className: "tile-art" });
-      if (gm && gm.img) art.append(el("img", { src: artUrl(gm.img), loading: "lazy", alt: s.name }));
-      else art.append(el("div", { className: "ph", textContent: s.name }));
-      art.append(el("span", { className: "badge", textContent: s.shared ? "Shared" : "Resume" }));
+      const art = coverArt({ img: gm && gm.img, name: s.name, sys: s.sys, file: s.file, resolve: saveResolve,
+        badge: s.shared ? "Shared" : "Resume" });
       grid.append(el("a", { className: "tile wide",
         href: `#/resume/${s.sys}/${s.file.split("/").map(encodeURIComponent).join("/")}` }, art,
         el("div", { className: "tile-cap" },
@@ -2095,6 +2190,7 @@ async function routeSaves() {
   }
   frag.append(el("div", { className: "wrap" }, grid));
   view.replaceChildren(frag);
+  if (typeof saveResolve !== "undefined") hydrateCovers(saveResolve);
 }
 
 async function routeCache() {
