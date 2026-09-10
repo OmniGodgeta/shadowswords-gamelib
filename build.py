@@ -830,22 +830,32 @@ def write_discovery(all_games, newest):
     (DATA_OUT / "franchises.json").write_text(
         json.dumps(franchises, ensure_ascii=False, separators=(",", ":")))
 
-    # recently added (by ROM file mtime) — skip BIOS / machine-variant dumps
-    # (ES-DE lists e.g. "[BIOS] Commodore 1541" as a c64 "game"; a fresh rsync
-    # stamps them all with the same recent mtime and they swamp the shelf)
+    # recently added (by ROM file mtime). A bulk import stamps a whole system
+    # with near-identical mtimes, so a plain sort is a 120-long wall of one
+    # console. Bucket per system (newest first), order systems by how recent
+    # their newest file is, then round-robin so the shelf stays varied.
     newest.sort(reverse=True)
-    seen, per_sys, added = set(), {}, []
     span = (newest[0][0] - newest[-1][0]) if len(newest) > 50 else 0
+    seen, buckets = set(), {}
     for mt, name, sysid, gid, img in newest:
-        if re.match(r"\d+-bios-", gid) or name.lower().startswith("[bios]"):
-            continue
-        if name.lower() in seen or per_sys.get(sysid, 0) >= 30:
+        if name.lower().startswith("[bios]") or name.lower() in seen:
             continue
         seen.add(name.lower())
-        per_sys[sysid] = per_sys.get(sysid, 0) + 1
-        added.append([name, sysid, gid, img, int(mt)])
-        if len(added) >= 120:
-            break
+        buckets.setdefault(sysid, []).append([name, sysid, gid, img, int(mt)])
+    # within a system: cover art first, then newest. A real bulk sync leaves
+    # near-uniform mtimes everywhere, so pick the ~10 systems with the most
+    # art among their recent additions and round-robin ~6 deep — varied shelf,
+    # mostly real covers, instead of one game sprayed from all 100 systems.
+    for s in buckets:
+        buckets[s].sort(key=lambda r: (r[3] is None, -r[4]))
+    order = sorted(buckets, key=lambda s: -sum(1 for r in buckets[s][:8] if r[3]))[:10]
+    added = []
+    while len(added) < 60 and any(buckets[s] for s in order):
+        for s in order:
+            if buckets[s]:
+                added.append(buckets[s].pop(0))
+                if len(added) >= 60:
+                    break
     # only meaningful if mtimes actually vary (a real "recently added" signal)
     if span < 3600:
         added = []
@@ -853,6 +863,31 @@ def write_discovery(all_games, newest):
         json.dumps(added, ensure_ascii=False, separators=(",", ":")))
     print(f"discovery: {len(collections)} collections, {len(franchises)} franchises, "
           f"{len(added)} recently-added")
+
+
+def write_trending(game_index):
+    """data/trending.json — a snapshot of the live /play/stats "trending"/"top"
+    list so the public mirror (which has no stats server) still shows the shelf.
+    Each entry is [name, sys, gid, img, count]. Best-effort: skipped silently
+    if the local arcade-server isn't reachable."""
+    import urllib.request
+    import urllib.error
+    try:
+        with urllib.request.urlopen("http://127.0.0.1:8710/play/stats", timeout=5) as r:
+            stats = json.loads(r.read().decode())
+    except (urllib.error.URLError, TimeoutError, ValueError, OSError):
+        return
+    rows = stats.get("trending") or stats.get("top") or []
+    out = []
+    for p in rows[:24]:
+        gid, img, name = game_index.get((p.get("sys"), p.get("file")), (None, None, None))
+        if not gid:
+            continue
+        out.append([name or p.get("name"), p["sys"], gid, img, p.get("count", 0)])
+    if out:
+        (DATA_OUT / "trending.json").write_text(
+            json.dumps(out, ensure_ascii=False, separators=(",", ":")))
+        print(f"trending snapshot: {len(out)} games")
 
 
 def main():
@@ -875,6 +910,7 @@ def main():
     systems_index, search_rows, jobs = [], [], []
     all_games = []          # {name,sys,gid,img,year,genre,players} for collections
     newest = []             # (mtime, name, sys, gid, img)
+    game_index = {}         # (sys, rel) -> (gid, img, name) — resolves /play/stats rows
     game_videos = []        # {sys,file,name,vid,img,year} — ES-DE video snaps for the home showcase
     art_gallery = []        # {sys,file,name,img,year,play} — era-spanning box art for the showcase
 
@@ -885,6 +921,10 @@ def main():
         except OSError as e:
             sys.stderr.write(f"skip {sid}: {e}\n")
             continue
+        # drop BIOS / disk-drive / machine-variant dumps — ES-DE lists e.g.
+        # "[BIOS] Commodore 1541" as a "game" (No-Intro "[BIOS]" filename prefix)
+        rels = [r for r in rels
+                if not os.path.basename(r.rstrip("/")).lower().startswith("[bios]")]
         if not rels:
             continue
 
@@ -951,6 +991,7 @@ def main():
             if rec.get("genre"):
                 genres[rec["genre"]] = genres.get(rec["genre"], 0) + 1
             games.append(rec)
+            game_index[(sid, rel)] = (gid, rec.get("img"), name)
             search_rows.append([name, sid, gid, rec.get("year", 0), 1 if "img" in rec else 0])
             all_games.append((name, sid, gid, rec.get("img"), rec.get("year", 0),
                               rec.get("genre", ""), rec.get("players", "")))
@@ -1043,6 +1084,7 @@ def main():
           f" · art gallery: {len(art_gallery)}")
 
     write_discovery(all_games, newest)
+    write_trending(game_index)
 
     print(f"\n{len(jobs)} images -> webp ...")
     ok = 0

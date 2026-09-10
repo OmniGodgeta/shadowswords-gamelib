@@ -2,6 +2,43 @@
 
 All notable changes to the RetroVerse website.
 
+## [2.15.0] — 2026-09-10 — Hover previews, hardware-photo sleeves, varied "Recently added", trending snapshot
+
+### Added
+- **Gameplay-clip preview on hover** in the Play lists (`#/play/<system>`) —
+  hover a tile and, where an ES-DE snap exists (`gamevideos.json`), a muted
+  looping clip fades in over the cover. Self-hosted only (the mirror has no
+  clip server); pointer devices only; off in lite mode.
+- **Trending on the public mirror.** `build.py` writes `data/trending.json`
+  (a snapshot of the live `/play/stats` list, with resolved cover art); the
+  home page falls back to it when there's no stats server.
+- Proper **social share image** — `assets/img/og.jpg` (1200×630, the neon
+  wordmark on the dark ground), wired into `og:image` / `twitter:image`
+  (were pointing at the square 512 icon, wrong for `summary_large_image`).
+  Generated from the previously-unused `logo-lg.webp`.
+
+### Changed
+- **Art-less sleeves now use the console's hardware photo** as a faint
+  luminosity-blended background where we have one (`noart-bg.photo`), falling
+  back to the ghosted wordmark — more visual variety across systems.
+- **"Recently added" is no longer a wall of one console.** A bulk ROM sync
+  leaves near-uniform mtimes, so `build.py` now buckets per system, sorts
+  cover-art-first within each, picks the ~10 systems with the most art among
+  their recent additions, and round-robins ~6 deep. Result: a varied,
+  mostly-covered shelf instead of 120 c64 rows (or one game from all 100
+  systems).
+- **BIOS / machine-variant dumps dropped library-wide**, not just from the
+  shelf — `[BIOS] …` filenames (No-Intro convention) are skipped in the main
+  scan (≈42 entries across c64/plus4/vic20/…).
+- Reduced-motion users now get the staged reveal as an **opacity-only fade**
+  (was: no animation at all).
+
+### Internal
+- SW `ssw-v2.28`, assets `?v=2.28`.
+- `coverArt()` takes `photo`; new `hoverPreview()` / `gameVideoMap()` /
+  `HOVER_OK`; `gameTile` takes `{previews}`; `tileGrid` threads it through.
+- `build.py`: `game_index` `(sys,rel)->(gid,img,name)` + `write_trending()`.
+
 ## [2.14.0] — 2026-09-10 — Home & Play shelves: real covers, generated sleeves, assemble animation
 
 ### Changed

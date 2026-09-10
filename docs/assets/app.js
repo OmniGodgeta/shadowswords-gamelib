@@ -350,9 +350,9 @@ const hue = (s) => {
 };
 
 // One game cover. Real box art when we have it; otherwise a generated "sleeve"
-// (console-tinted, the system wordmark ghosted behind the title) so an art-less
-// tile still reads as a shelved game case, not an empty slot. Pass `resolve` (an
-// array) to register the art-less tile for a later hydrateCovers() pass.
+// (console-tinted, the hardware photo or system wordmark ghosted behind the
+// title) so an art-less tile still reads as a shelved game case, not an empty
+// slot. Pass `resolve` (an array) to register it for a later hydrateCovers() pass.
 function coverArt({ img, name, sys, badge, fav, resolve, file, gid }) {
   const art = el("div", { className: "tile-art" });
   if (img) {
@@ -361,7 +361,8 @@ function coverArt({ img, name, sys, badge, fav, resolve, file, gid }) {
     art.classList.add("noart");
     art.style.setProperty("--h", hue(sys || name));
     const m = sys ? meta(sys) : null;
-    if (m && m.logo) art.append(el("img", { className: "noart-logo", src: m.logo, loading: "lazy", alt: "" }));
+    if (m && m.photo) art.append(el("img", { className: "noart-bg photo", src: m.photo, loading: "lazy", alt: "" }));
+    else if (m && m.logo) art.append(el("img", { className: "noart-bg logo", src: m.logo, loading: "lazy", alt: "" }));
     art.append(el("div", { className: "noart-t", textContent: name }));
     if (m && m.name) art.append(el("div", { className: "noart-s", textContent: m.name }));
     if (resolve && sys && (file || gid)) resolve.push({ sys, file, gid, name, art });
@@ -412,18 +413,47 @@ function backfillRecent(found) {
   if (changed) LS.set("recent", l);
 }
 
-function gameTile(g, { play = false } = {}) {
+function gameTile(g, { play = false, previews = null } = {}) {
   const href = play ? `#/play/${g._sys}/${g.file.split("/").map(encodeURIComponent).join("/")}`
     : `#/g/${g._sys}/${g.id}`;
   const art = coverArt({
     img: g.img, name: g.name, sys: g._sys,
     badge: play ? "Play" : null, fav: g.id ? g : null,
   });
-  return el("a", { className: "tile wide", href },
+  const tile = el("a", { className: "tile wide", href },
     art,
     el("div", { className: "tile-cap" },
       el("div", { className: "t", textContent: g.name }),
       el("div", { className: "s", textContent: [g.year, g.genre].filter(Boolean).join(" · ") || (play ? sysName(g._sys) : "") })));
+  const vid = previews && g.file && previews[g._sys + "|" + g.file];
+  if (vid) hoverPreview(tile, art, g._sys, vid);
+  return tile;
+}
+
+// gameplay-clip preview on hover (self-hosted only — the mirror has no clip
+// server). One <video> per tile, created on first hover, muted + looping.
+const HOVER_OK = typeof matchMedia === "function" && matchMedia("(hover: hover)").matches;
+let _gvMap;
+const gameVideoMap = () => (_gvMap ||= fetch("data/gamevideos.json").then((r) => r.json())
+  .then((l) => Object.fromEntries(l.map((v) => [v.sys + "|" + v.file, v.vid]))).catch(() => ({})));
+function hoverPreview(tile, art, sys, vid) {
+  if (!HOVER_OK || !SELF_HOSTED) return;
+  let v, leaveT;
+  tile.addEventListener("mouseenter", () => {
+    if (prefs().lite) return;
+    clearTimeout(leaveT);
+    if (v) { v.play?.().catch(() => {}); v.classList.add("on"); return; }
+    v = el("video", { className: "tile-prev", loop: true, playsInline: true, preload: "none",
+      src: VIDEO_BASE + encodeURIComponent(sys) + "/" + encodeURIComponent(vid) });
+    v.muted = true; v.defaultMuted = true;
+    v.addEventListener("playing", () => v.classList.add("on"), { once: true });
+    v.onerror = () => { v.remove(); v = null; };
+    art.append(v);
+    v.play?.().catch(() => {});
+  });
+  tile.addEventListener("mouseleave", () => {
+    leaveT = setTimeout(() => { if (v) { v.classList.remove("on"); v.pause?.(); } }, 140);
+  });
 }
 
 const spinner = () => view.replaceChildren(el("div", { className: "spinner", textContent: "Loading…" }));
@@ -510,16 +540,23 @@ async function routeHome() {
   Promise.all([
     getJSON("added"), getJSON("collections"), getJSON("franchises"),
     fetch(`${API}/play/stats`).then((r) => r.json()).catch(() => null),
-  ]).then(([added, cols, fr, ps]) => {
+    getJSON("trending"),   // committed snapshot — the mirror has no stats server
+  ]).then(([added, cols, fr, ps, trendSnap]) => {
     if (location.hash !== "#/" && location.hash !== "" && location.hash !== "#") return;
     const bits = document.createDocumentFragment();
-    const trend = ps && (ps.trending && ps.trending.length ? ps.trending : ps.top) || [];
+    // live rows: {sys,file,name,count} → play link.  snapshot rows: [name,sys,gid,img,count] → game link.
+    let trend = ps && (ps.trending && ps.trending.length ? ps.trending : ps.top) || [];
+    if (trend.length < 4 && trendSnap && trendSnap.length) {
+      trend = trendSnap.map(([name, sys, gid, img, count]) => ({ name, sys, gid, img, count, snap: true }));
+    }
     if (trend.length >= 4) bits.append(shelf({ title: "Trending", count: trend.length,
       tiles: trend.map((p) => {
-        const gm = (state.cache[p.sys] || []).find((x) => x.file === p.file);
-        const art = coverArt({ img: gm && gm.img, name: p.name, sys: p.sys, badge: "Play", file: p.file, resolve });
-        return el("a", { className: "tile wide",
-          href: `#/play/${p.sys}/${p.file.split("/").map(encodeURIComponent).join("/")}` }, art,
+        const gm = !p.snap && (state.cache[p.sys] || []).find((x) => x.file === p.file);
+        const art = coverArt({ img: p.img || (gm && gm.img), name: p.name, sys: p.sys, badge: "Play",
+          file: p.file, gid: p.gid, resolve });
+        const href = p.snap ? `#/g/${p.sys}/${p.gid}`
+          : `#/play/${p.sys}/${p.file.split("/").map(encodeURIComponent).join("/")}`;
+        return el("a", { className: "tile wide", href }, art,
           el("div", { className: "tile-cap" },
             el("div", { className: "t", textContent: p.name }),
             el("div", { className: "s", textContent: `${sysName(p.sys)} · ${p.count} play${p.count === 1 ? "" : "s"}` })));
@@ -768,12 +805,16 @@ async function routePlaySystem(id) {
   frag.append(box);
   view.replaceChildren(frag);
 
+  let previews = null;
   const apply = () => {
     const q = fText.value.trim().toLowerCase();
-    tileGrid(box, games.filter((g) => !q || g.name.toLowerCase().includes(q)), PAGE, { play: true });
+    tileGrid(box, games.filter((g) => !q || g.name.toLowerCase().includes(q)), PAGE, { play: true, previews });
   };
   fText.oninput = debounce(apply, 150);
   apply();
+  if (HOVER_OK && SELF_HOSTED) gameVideoMap().then((m) => {
+    if (Object.keys(m).some((k) => k.startsWith(id + "|"))) { previews = m; apply(); }
+  });
 }
 
 // --- IndexedDB: "rom" = uploaded-ROM stash (survives player reload);
