@@ -1,5 +1,7 @@
 /* ==========================================================================
    RetroVerse — neon-retro 10-foot UI
+   ⚠  Editing this file or app.js? Version-bump ritual: bump VERSION in sw.js +
+      both ?v= in index.html + CHANGELOG, then deploy.  See ../../AGENTS.md
    ========================================================================== */
 :root {
   --bg: #030308;

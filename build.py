@@ -1,6 +1,9 @@
 #!/usr/bin/env python3
 """Build the RetroVerse browse data from the ES-DE library.
 
+Operational notes for anyone working on this site: see ./AGENTS.md
+(deploy targets, the version-bump ritual, frozen app contracts, data shapes).
+
 Enumerates every system under ~/Games/roms (the ES-DE symlink farm — ~105
 consoles), lists the ROM files in each, and merges in whatever metadata /
 box-art the ES-DE gamelists have scraped for the systems that were scraped.

@@ -1,9 +1,11 @@
-/* RetroVerse — service worker.
+/* RetroVerse — service worker.   (operational notes: ../AGENTS.md)
+   ⚠  On any app.js / style.css change: bump VERSION below AND both ?v= in
+      index.html (keep them equal), add a CHANGELOG entry, commit, ./deploy.sh.
    ssw-shell  : app shell + assets, stale-while-revalidate, wiped on version bump
    ssw-data   : data/*.json, network-first, PERSISTS across version bumps (offline browse)
    ssw-ejs    : /emulatorjs/* core files, cache-first, PERSISTS (offline play)
    Never touched: /roms, /music, /states, search.json, cross-origin CDN, dynamic APIs */
-const VERSION = "ssw-v2.28";
+const VERSION = "ssw-v2.29";
 const SHELL = VERSION, DATA = "ssw-data", EJS_CACHE = "ssw-ejs";
 const KEEP = [SHELL, DATA, EJS_CACHE];
 const SHELL_FILES = [
@@ -50,8 +52,8 @@ self.addEventListener("fetch", (e) => {
 
   // data/*.json — network-first, persist in ssw-data so offline browse survives updates.
   // {cache:"no-cache"} forces a revalidation with the server (cheap 304 when
-  // unchanged) so a build.py rebuild lands now, not up to an hour later when the
-  // /data/ HTTP cache (max-age=3600) would otherwise still be warm.
+  // unchanged) so a build.py rebuild lands immediately instead of waiting out the
+  // /data/ HTTP cache (arcade-server sends max-age=300, must-revalidate).
   if (u.pathname.includes("/data/")) {
     e.respondWith(
       fetch(req, { cache: "no-cache" }).then((r) => {

@@ -2,6 +2,10 @@
 
 *(repo stays `shadowswords-gamelib`; the site is branded **RetroVerse**.)*
 
+> **Working on this?** Read [`AGENTS.md`](AGENTS.md) first — the version-bump
+> ritual, the two deploy targets, `arcade-server.mjs` (not in git), frozen
+> contracts with the Android app, and testing gotchas.
+
 A **webRcade-style** browser for the whole ES-DE library on `shadow` —
 ~108 consoles, ~77k games, box art where it's scraped, console logos for every
 system. Three sections:

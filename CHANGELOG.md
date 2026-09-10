@@ -2,6 +2,17 @@
 
 All notable changes to the RetroVerse website.
 
+## [2.15.1] — 2026-09-10 — AGENTS.md
+
+### Added
+- **`AGENTS.md`** — operational guide for anyone working on the site: the
+  version-bump ritual, the two deploy targets, `arcade-server.mjs` (not in git),
+  frozen contracts with the Android app, browser-automation testing gotchas,
+  data-file shapes, the cover pipeline. `CLAUDE.md` + `README.md` + top-of-file
+  comments in `app.js` / `style.css` / `sw.js` / `build.py` point at it.
+- No behaviour change (SW `ssw-v2.29` / `?v=2.29` only because the header
+  comments in `app.js` / `style.css` moved).
+
 ## [2.15.0] — 2026-09-10 — Hover previews, hardware-photo sleeves, varied "Recently added", trending snapshot
 
 ### Added

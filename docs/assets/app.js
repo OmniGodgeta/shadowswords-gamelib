@@ -1,7 +1,10 @@
 "use strict";
 
 /* ========================================================================
-   retroverse
+   retroverse — hash-routed vanilla JS, no build step.
+   ⚠  Editing THIS file or style.css? Do the version-bump ritual:
+      bump VERSION in sw.js + both ?v= in index.html + CHANGELOG, then deploy.
+      Full operational notes: ../../AGENTS.md
    ======================================================================== */
 const $ = (s, r = document) => r.querySelector(s);
 const $$ = (s, r = document) => [...r.querySelectorAll(s)];
