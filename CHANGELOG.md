@@ -2,6 +2,31 @@
 
 All notable changes to the RetroVerse website.
 
+## [2.19.0] — 2026-09-11 — Real-time netplay, invites that land, landscape
+
+### Fixed
+- **Netplay delay.** Inputs were going over Socket.IO *polling* on `:8712`
+  (WebSocket upgrade often failed across that extra port), so the other
+  player saw your move seconds later. Signalling is now same-origin on
+  `:443` (`/socket.io` + `/list` proxied to arcade-netplay). ICE is host-
+  candidates only (Tailscale 100.x) — public STUN was picking a CGNAT path.
+  Watch-party JPEG upload pauses while you're in a room.
+- **Invites on mobile.** Poll every 3s (and on tab-focus) via
+  `GET /play/invites`, match by account as well as device id, and **Join
+  room** actually opens Netplay and sits in the host's room.
+- **Fullscreen stays portrait on phones.** Game start / the Landscape
+  button / the Fullscreen API now `orientation.lock('landscape')` and tell
+  the Android wrapper to lock the activity.
+
+### Added
+- Cleaner frosted on-screen pad; **Hide pad** (bar + corner button in the app).
+- Rejoin: if you kill the app or refresh mid-game, we put you back in the
+  same title and try the netplay room for 15 minutes. Explicit ‹ Exit clears
+  that. The Android app restores the last game hash the same way.
+
+### Internal
+- SW `ssw-v2.33`. `/socket.io` and `/list` are never cached.
+
 ## [2.18.0] — 2026-09-11 — Exit for real, invites, phone chrome
 
 ### Fixed

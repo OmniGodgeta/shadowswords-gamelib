@@ -1138,10 +1138,39 @@ body.lite .pad-row.listening .pr-chip { animation: none; border-style: dashed; }
     min-height: 44px; padding: 10px 16px; font-size: 14px;
   }
   .player-bar .pbtn { min-height: 40px; padding: 0 12px; }
-  .ejs_virtualGamepad_parent {
-    transform: scale(1.18); transform-origin: bottom center;
-  }
 }
+
+/* Clean, low-chrome virtual pad — frosted discs, no 3D bevel or giant labels */
+.ejs_virtualGamepad_parent {
+  transform: none !important;
+  opacity: .9;
+  filter: none !important;
+}
+.ejs_virtualGamepad_button,
+.ejs_virtualGamepad_parent button {
+  background: rgba(255,255,255,.14) !important;
+  border: 1px solid rgba(255,255,255,.22) !important;
+  box-shadow: none !important;
+  color: rgba(255,255,255,.5) !important;
+  font-size: 9px !important;
+  font-weight: 600 !important;
+  letter-spacing: .04em;
+  text-transform: uppercase;
+  border-radius: 999px !important;
+  backdrop-filter: blur(10px);
+}
+.ejs_virtualGamepad_button_down {
+  background: rgba(31,230,255,.35) !important;
+  border-color: rgba(31,230,255,.7) !important;
+}
+.ejs_dpad_main, .ejs_dpad_bar, .ejs_dpad_vertical, .ejs_dpad_horizontal {
+  background: rgba(255,255,255,.12) !important;
+  box-shadow: none !important;
+  border: 1px solid rgba(255,255,255,.18) !important;
+  border-radius: 10px !important;
+}
+html.hide-touch .ejs_virtualGamepad_parent { display: none !important; }
+html.ejs-fs #pad-btn, html.in-app #pad-btn { display: inline-flex; }
 .player-bar { padding-left: max(14px, env(safe-area-inset-left)); padding-right: max(14px, env(safe-area-inset-right)); }
 
 /* Android app: hide the player chrome so the game fills the landscape screen.
@@ -1164,6 +1193,15 @@ html.in-app .bar, html.in-app .foot, html.in-app .scanlines { display: none; }
   z-index: 7; width: 56px; height: 16px; border-radius: 0 0 10px 10px;
   background: rgba(255,255,255,.18); border: 0;
 }
+.player.in-app-player .fab-pad {
+  position: absolute; top: max(8px, env(safe-area-inset-top)); right: max(8px, env(safe-area-inset-right));
+  z-index: 7; height: 36px; padding: 0 12px; border-radius: 10px;
+  background: rgba(6,6,12,.72); border: 1px solid rgba(255,255,255,.25); color: #fff;
+  font-size: 12px; font-weight: 700;
+}
+.player.in-app-player .fab-pad::after { content: "Hide pad"; }
+html.hide-touch .player.in-app-player .fab-pad::after { content: "Show pad"; }
 .player.in-app-player.show-chrome .fab-exit,
-.player.in-app-player.show-chrome .chrome-peek { opacity: 0; pointer-events: none; }
+.player.in-app-player.show-chrome .chrome-peek,
+.player.in-app-player.show-chrome .fab-pad { opacity: 0; pointer-events: none; }
 #invite-overlay { position: fixed; inset: 0; z-index: 400; display: grid; place-items: center; background: rgba(7,7,13,.8); backdrop-filter: blur(4px); }

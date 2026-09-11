@@ -46,10 +46,9 @@ const STATE_BASE = SELF_HOSTED ? "/states/" : TS + "/states/";   // cloud save-s
 const API = SELF_HOSTED ? "" : TS;                               // dynamic endpoints (search, stats, twitch…)
 const VIDEO_BASE = SELF_HOSTED ? "/gamevideo/" : TS + "/gamevideo/"; // ES-DE game preview clips
 const NETPLAY_URL = TS + ":8712/";                                // EmulatorJS netplay signalling (tailnet)
-const NETPLAY_ICE = [
-  { urls: "stun:stun.l.google.com:19302" },
-  { urls: "stun:stun1.l.google.com:19302" },
-];
+// Empty ICE = host candidates only (Tailscale 100.x / LAN). Public STUN made
+// ICE pick a CGNAT path and netplay felt like 200–400 ms of lag on the tailnet.
+const NETPLAY_ICE = [];
 // stable numeric id per game — EmulatorJS netplay requires a number, and 4.2.3
 // hides the globe unless this is set. FNV-1a → 31-bit so it stays a real JS int.
 function gameIdNum(sys, file) {
@@ -68,6 +67,91 @@ function netplayUrl() {
   if (v === "off" || v === false) return null;
   if (typeof v === "string" && v.trim()) return v.trim();
   return NETPLAY_URL;
+}
+function toggleTouchPad() {
+  document.documentElement.classList.toggle("hide-touch");
+  const on = document.documentElement.classList.contains("hide-touch");
+  const b = document.getElementById("pad-btn");
+  if (b) b.textContent = on ? "Show pad" : "Hide pad";
+}
+function goLandscape() {
+  try { window.SSPlay && window.SSPlay.postMessage("1"); } catch { /* */ }
+  const node = document.querySelector(".player") || document.documentElement;
+  try { (node.requestFullscreen || node.webkitRequestFullscreen)?.call(node); } catch { /* */ }
+  try { screen.orientation.lock("landscape").catch(() => {}); } catch { /* */ }
+}
+document.addEventListener("fullscreenchange", () => {
+  document.documentElement.classList.toggle("ejs-fs", !!document.fullscreenElement);
+  if (document.fullscreenElement) {
+    try { screen.orientation.lock("landscape").catch(() => {}); } catch { /* */ }
+    try { window.SSPlay && window.SSPlay.postMessage("1"); } catch { /* */ }
+  }
+});
+function rememberSession(extra) {
+  if (!extra || !extra.sys || extra.sys === "upload") return;
+  const prev = LS.get("lastSession", {}) || {};
+  LS.set("lastSession", Object.assign({}, prev, extra, { t: Date.now() }));
+}
+function forgetSession() {
+  try { localStorage.removeItem("ssw:lastSession"); } catch { /* */ }
+  try { localStorage.removeItem("ssw:joinNp"); } catch { /* */ }
+}
+function snapshotNetplay(sys, file, name) {
+  const np = window.EJS_emulator?.netplay;
+  const room = (np && (np.extra?.room_name || np.roomName)) || window.__npRoom || null;
+  if (room) window.__npRoom = room;
+  if (np && (np.owner || np.extra)) {
+    window.__inNetplay = true;
+    if (window.__watchT) { clearInterval(window.__watchT); window.__watchT = 0; }
+  }
+  rememberSession({ sys, file, name, room, np: !!window.__inNetplay });
+}
+async function autoJoinNetplay(wantRoom) {
+  const emu = window.EJS_emulator;
+  if (!emu?.openNetplayMenu) return;
+  const pname = (prefs().netplayName || AUTH.user?.display || "Player").toString().trim().slice(0, 20) || "Player";
+  emu.openNetplayMenu();
+  if (emu.netplay && !emu.netplay.name) emu.netplay.name = pname;
+  const input = emu.netplayMenu?.querySelector("input[type=text]");
+  if (input && !input.value) input.value = pname;
+  for (let i = 0; i < 25; i++) {
+    if (emu.netplay?.getOpenRooms && emu.netplay?.joinRoom) break;
+    await new Promise((r) => setTimeout(r, 200));
+  }
+  if (!emu.netplay?.getOpenRooms) return;
+  const tryJoin = async () => {
+    let rooms = {};
+    try { rooms = await emu.netplay.getOpenRooms(); } catch { return false; }
+    const ids = Object.keys(rooms || {});
+    if (!ids.length) return false;
+    let id = ids[0];
+    if (wantRoom) {
+      const hit = ids.find((k) => rooms[k].room_name === wantRoom);
+      if (hit) id = hit;
+    }
+    emu.netplay.joinRoom(id, rooms[id].room_name);
+    window.__inNetplay = true;
+    window.__npRoom = rooms[id].room_name;
+    return true;
+  };
+  if (await tryJoin()) return;
+  toast("Waiting for the host's room…");
+  for (let i = 0; i < 15; i++) {
+    await new Promise((r) => setTimeout(r, 2000));
+    if (!window.__emuUp) return;
+    if (await tryJoin()) { toast("Joined netplay"); return; }
+  }
+  toast("No open room yet — ask the host to hit Netplay and Create a Room");
+}
+function maybeResumeSession() {
+  const s = LS.get("lastSession", null);
+  if (!s || !s.sys || !s.file || s.sys === "upload") return false;
+  if (Date.now() - (s.t || 0) > 15 * 60 * 1000) return false;
+  const h = (location.hash || "").replace(/^#\/?/, "");
+  if (h && h !== "play") return false;
+  LS.set("joinNp", { sys: s.sys, file: s.file, room: s.room || null, t: Date.now() });
+  location.replace("#/play/" + encodeURIComponent(s.sys) + "/" + String(s.file).split("/").map(encodeURIComponent).join("/"));
+  return true;
 }
 const CID = (() => {
   try {
@@ -1274,7 +1358,11 @@ async function routePlayGame(sys, romParam, resume = false) {
     el("div", { className: "player-bar" },
       el("button", { type: "button", className: "exit", textContent: "‹ Exit", onclick: (e) => { e.preventDefault(); exitPlayer(); } }),
       el("div", { className: "title", id: "player-title", textContent: "Loading…" }),
-      saveBtn, saveAsBtn, loadBtn, rwBtn, ffBtn, ctrlBtn, npBtn, invBtn, watchBtn, noteBtn, flagBtn),
+      saveBtn, saveAsBtn, loadBtn, rwBtn, ffBtn, ctrlBtn, npBtn, invBtn, watchBtn, noteBtn, flagBtn,
+      el("button", { type: "button", className: "pbtn", id: "pad-btn", textContent: "Hide pad",
+        title: "Hide on-screen touch controls", onclick: () => toggleTouchPad() }),
+      el("button", { type: "button", className: "pbtn", id: "land-btn", textContent: "Landscape",
+        title: "Rotate to landscape / fullscreen", onclick: () => goLandscape() })),
     el("div", { className: "player-stage" },
       el("div", { id: "game" }), loadEl));
   if (IN_APP) {
@@ -1289,7 +1377,9 @@ async function routePlayGame(sys, romParam, resume = false) {
       el("button", { type: "button", className: "fab-exit", textContent: "‹", title: "Exit game",
         onclick: (e) => { e.preventDefault(); e.stopPropagation(); exitPlayer(); } }),
       el("button", { type: "button", className: "chrome-peek", title: "Show controls",
-        onclick: (e) => { e.preventDefault(); e.stopPropagation(); showChrome(); } }));
+        onclick: (e) => { e.preventDefault(); e.stopPropagation(); showChrome(); } }),
+      el("button", { type: "button", className: "fab-pad", title: "Hide or show touch controls",
+        onclick: (e) => { e.preventDefault(); e.stopPropagation(); toggleTouchPad(); } }));
   }
   document.body.append(shell);
   view.replaceChildren();
@@ -1349,7 +1439,9 @@ async function routePlayGame(sys, romParam, resume = false) {
   // Netplay signalling — tailnet :8712; disable in Settings or localStorage ssw:netplay="off".
   const np = netplayUrl();
   if (np) {
-    window.EJS_netplayServer = np;
+    // Same origin on the self-host so socket.io can use WebSockets on :443.
+    // :8712 often degrades to HTTP long-poll (~seconds of input delay).
+    window.EJS_netplayServer = (SELF_HOSTED && np === NETPLAY_URL) ? (location.origin + "/") : np;
     window.EJS_netplayICEServers = NETPLAY_ICE;
     window.EJS_Buttons.netplay = true;
   } else {
@@ -1437,6 +1529,7 @@ async function routePlayGame(sys, romParam, resume = false) {
       who: AUTH.user?.display || prefs().netplayName || null,
       watch: window.__watchId || null,
       netplay: !!window.__inNetplay,
+      room: window.__npRoom || null,
     }),
   }).then((r) => r.json()).then(handlePingReply).catch(() => {});
   const flushPlaytime = () => {
@@ -1459,7 +1552,16 @@ async function routePlayGame(sys, romParam, resume = false) {
     $("#player-load")?.remove();
     ptStart = Date.now();
     ping(true);
-    window.__emuHeartbeat = setInterval(() => { ping(false); flushPlaytime(); }, 60000);
+    goLandscape();
+    rememberSession({ sys, file, name: romName });
+    window.__npSnapT = setInterval(() => snapshotNetplay(sys, file, romName), 4000);
+    try { window.SSPlay && window.SSPlay.postMessage("1"); } catch { /* */ }
+    const joinHint = LS.get("joinNp", null);
+    if (joinHint && joinHint.sys === sys && (!joinHint.file || joinHint.file === file)) {
+      LS.set("joinNp", null);
+      setTimeout(() => autoJoinNetplay(joinHint.room), 1400);
+    }
+    window.__emuHeartbeat = setInterval(() => { ping(false); flushPlaytime(); }, 15000);
     window.__emuAutoSaveT = key ? setInterval(autoSave, 180000) : 0;
     ctrlBtn.hidden = false;
     ctrlBtn.onclick = () => controlsPanel(core);
@@ -1538,6 +1640,7 @@ async function routePlayGame(sys, romParam, resume = false) {
           if (!ejs?.openNetplayMenu) { toast("Netplay isn't ready yet — wait for the game to finish booting"); return; }
           ejs.openNetplayMenu();
           window.__inNetplay = true;
+          if (window.__watchT) { clearInterval(window.__watchT); window.__watchT = 0; }
           ping(false);
           const pname = (prefs().netplayName || AUTH.user?.display || "").toString().trim().slice(0, 20);
           if (pname) {
@@ -1583,9 +1686,11 @@ async function routePlayGame(sys, romParam, resume = false) {
 }
 function emuCleanup() {
   clearInterval(window.__emuHeartbeat); clearInterval(window.__emuAutoSaveT);
-  clearInterval(window.__watchT);
+  clearInterval(window.__watchT); clearInterval(window.__npSnapT);
   if (window.__watchId) fetch(`${API}/watch/${window.__watchId}`, { method: "DELETE", keepalive: true }).catch(() => {});
-  window.__watchId = null; window.__inNetplay = false;
+  window.__watchId = null; window.__inNetplay = false; window.__npRoom = null;
+  try { window.SSPlay && window.SSPlay.postMessage("0"); } catch { /* */ }
+  try { screen.orientation.unlock(); } catch { /* */ }
   try { window.__emuFlush?.(); } catch { /* */ }
 }
 let _exiting = false;
@@ -1596,6 +1701,7 @@ function _exitDest(hash) {
 // the JS thread (N64/PSX especially), which is why "Exiting…" used to stick.
 function exitPlayer() {
   window.__emuUp = false;
+  forgetSession();
   const btn = document.querySelector(".player-bar .exit");
   if (btn) { btn.textContent = "Exiting…"; btn.disabled = true; }
   try { emuCleanup(); } catch { /* */ }
@@ -1624,13 +1730,17 @@ function ackInvite(id) {
 function showInvite(inv) {
   if (document.getElementById("invite-overlay")) return;
   const playHref = `#/play/${inv.sys}/${String(inv.file || "").split("/").map(encodeURIComponent).join("/")}`;
+  const go = () => {
+    LS.set("joinNp", { sys: inv.sys, file: inv.file, room: inv.room || null, t: Date.now() });
+    ackInvite(inv.id);
+  };
   const o = el("div", { id: "invite-overlay", className: "help-overlay", onclick: (e) => { if (e.target.id === "invite-overlay") { o.remove(); ackInvite(inv.id); } } },
     el("div", { className: "help-card" },
       el("h3", { textContent: "You're invited" }),
       el("p", { textContent: `${inv.fromName || "Someone"} wants you to play ${inv.name || "a game"}.` }),
       el("div", { style: "display:flex;gap:8px;flex-wrap:wrap;margin-top:12px" },
-        el("a", { className: "btn btn-primary", href: playHref, textContent: "Play",
-          onclick: () => { ackInvite(inv.id); o.remove(); } }),
+        el("a", { className: "btn btn-primary", href: playHref, textContent: inv.np === false ? "Play" : "Join room",
+          onclick: go }),
         inv.watch && el("a", { className: "btn btn-ghost", href: `#/watch/${inv.watch}`, textContent: "Watch",
           onclick: () => { ackInvite(inv.id); o.remove(); } }),
         el("button", { className: "btn btn-ghost", textContent: "Not now",
@@ -1650,8 +1760,9 @@ async function invitePicker({ sys, file, name, watch }) {
         try {
           await fetch(`${API}/play/invite`, { method: "POST",
             headers: { "content-type": "application/json", ...authHdr() },
-            body: JSON.stringify({ to: p.cid, from: CID, fromName: AUTH.user?.display || prefs().netplayName || "Someone",
-              sys, file, name, watch: watch || null }) });
+            body: JSON.stringify({ to: p.cid, toUser: p.uid || null, from: CID,
+              fromName: AUTH.user?.display || prefs().netplayName || "Someone",
+              sys, file, name, watch: watch || null, room: window.__npRoom || null, np: true }) });
           toast(`Invited ${p.who}`);
         } catch { toast("Couldn't send the invite"); }
       } }))
@@ -1671,8 +1782,15 @@ function presenceTick() {
     body: JSON.stringify({ cid: CID, who: AUTH.user?.display || prefs().netplayName || null, idle: true }),
   }).then((r) => r.json()).then(handlePingReply).catch(() => {});
 }
+function invitePoll() {
+  if (!SELF_HOSTED) return;
+  fetch(`${API}/play/invites?cid=${encodeURIComponent(CID)}`, { headers: authHdr(), cache: "no-store" })
+    .then((r) => r.json()).then((d) => handlePingReply({ invites: d.invites || [] })).catch(() => {});
+}
 setInterval(presenceTick, 20000);
-addEventListener("load", () => setTimeout(presenceTick, 800));
+setInterval(invitePoll, 3000);
+document.addEventListener("visibilitychange", () => { if (!document.hidden) { presenceTick(); invitePoll(); } });
+addEventListener("load", () => { setTimeout(presenceTick, 400); setTimeout(invitePoll, 600); });
 
 /* ---- controller setup panel -------------------------------------------------
    A visual, restylable alternative to EmulatorJS's stock Controls submenu.
@@ -3086,6 +3204,7 @@ async function router() {
     location.replace(_exitDest(location.hash || "#/play"));
     return;
   }
+  if (!window.__emuUp && (!a || a === "play") && !b && maybeResumeSession()) return;
   if (a !== "q") $("#bar-search").hidden = true;
   window.scrollTo(0, 0);
   document.title = "RetroVerse";

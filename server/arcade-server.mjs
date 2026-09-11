@@ -8,6 +8,7 @@
 // by `tailscale serve` — see ~/setup-arcade-serving.sh.
 //
 import http from "node:http";
+import net from "node:net";
 import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
@@ -777,18 +778,25 @@ async function playPing(req, res) {
     const idle = !!body.idle;
     s.sessions[body.cid] = {
       cid: body.cid,
+      uid: u ? u.id : null,
       game: idle ? null : (body.name || null), at: now(),
       who: u ? u.display : (body.who || null),
       sys: idle ? null : (body.sys || null),
       file: idle ? null : (body.file || null),
       watch: idle ? null : (body.watch || null),
       netplay: idle ? false : !!body.netplay,
+      room: idle ? null : (body.room || null),
       idle,
     };
   }
   statsDirty = true;
-  const invites = (s.invites || []).filter((i) => i.to === body.cid && i.at > now() - 120000);
-  jsonRes(res, 200, { ok: true, invites });
+  jsonRes(res, 200, { ok: true, invites: invitesFor(body.cid, u) });
+}
+function invitesFor(cid, u) {
+  const cut = now() - 180000;
+  return (stats().invites || []).filter((i) => i.at > cut && (
+    (cid && i.to === cid) || (u && i.toUser && i.toUser === u.id)
+  ));
 }
 function playStats(req, res) {
   const s = stats();
@@ -806,11 +814,11 @@ function playStats(req, res) {
   const live = Object.values(s.sessions).filter((x) => x.at > cutoff);
   const playing = live.filter((x) => x.game);
   const pack = (x) => ({
-    cid: x.cid || null,
+    cid: x.cid || null, uid: x.uid || null,
     who: x.who || "Someone",
     game: x.game || null,
     sys: x.sys || null, file: x.file || null,
-    watch: x.watch || null, netplay: !!x.netplay, idle: !x.game,
+    watch: x.watch || null, netplay: !!x.netplay, room: x.room || null, idle: !x.game,
   });
   jsonRes(res, 200, { top, trending, reported, playingNow: playing.length,
     nowPlaying: playing.map(pack).slice(0, 16),
@@ -826,10 +834,11 @@ async function playInvite(req, res) {
   s.invites = (s.invites || []).filter((i) => i.at > now() - 120000);
   const inv = {
     id: crypto.randomBytes(4).toString("hex"),
-    to: String(b.to), from: String(b.from || ""),
+    to: String(b.to), toUser: b.toUser || null, from: String(b.from || ""),
     fromName: u ? u.display : (b.fromName || "Someone"),
     sys: b.sys, file: b.file, name: b.name || b.file,
-    watch: b.watch || null, at: now(),
+    watch: b.watch || null, room: b.room || null, np: b.np !== false,
+    at: now(),
   };
   s.invites.push(inv);
   statsDirty = true;
@@ -1024,12 +1033,27 @@ function tokenOK(req) {
   return got === want;
 }
 
-http.createServer(async (req, res) => {
+function proxyToNetplay(req, res) {
+  const p = http.request({
+    hostname: "127.0.0.1", port: 8712, path: req.url, method: req.method,
+    headers: { ...req.headers, host: "127.0.0.1:8712" },
+  }, (pr) => { res.writeHead(pr.statusCode, pr.headers); pr.pipe(res); });
+  p.on("error", () => { if (!res.headersSent) res.writeHead(502, CORS).end("netplay down"); });
+  req.pipe(p);
+}
+
+const server = http.createServer(async (req, res) => {
   if (req.method === "OPTIONS") { res.writeHead(204, { ...CORS, "access-control-max-age": "86400", "access-control-allow-headers": "range, content-type, x-ssw-token, x-ssw-auth" }).end(); return; }
 
   {
     const u0 = new URL(req.url, "http://x");
     const P = u0.pathname;
+
+    // same-origin netplay (websocket on :443). Cross-port :8712 often falls
+    // back to HTTP polling and inputs arrive seconds late.
+    if (P.startsWith("/socket.io") || (P === "/list" && u0.searchParams.has("game_id"))) {
+      proxyToNetplay(req, res); return;
+    }
 
     // ---- auth ----
     if (P === "/auth/register" && req.method === "POST") { if (rateLimited(req, res, 10, 60000)) return; authRegister(req, res); return; }
@@ -1113,6 +1137,10 @@ http.createServer(async (req, res) => {
     if (P === "/play/stats" && req.method === "GET") { playStats(req, res); return; }
     if (P === "/play/invite" && req.method === "POST") { if (rateLimited(req, res, 40, 60000)) return; playInvite(req, res); return; }
     if (P === "/play/invite/ack" && req.method === "POST") { playInviteAck(req, res); return; }
+    if (P === "/play/invites" && req.method === "GET") {
+      const cid = u0.searchParams.get("cid") || "";
+      jsonRes(res, 200, { invites: invitesFor(cid, userByToken(req)) }); return;
+    }
     if (P === "/report" && req.method === "POST") { gameReport(req, res); return; }
     if (P === "/twitch/status" && req.method === "GET") { twitchStatus(req, res); return; }
     if (P === "/discord/info" && req.method === "GET") { discordInfo(req, res); return; }
@@ -1162,4 +1190,19 @@ http.createServer(async (req, res) => {
   if (gv) { serveGameVideo(req, res, decodeURIComponent(gv[1]), decodeURIComponent(gv[2])); return; }
 
   serveStatic(req, res, p + u.search);
-}).listen(PORT, HOST, () => console.log(`arcade-server  http://${HOST}:${PORT}  site=${SITE}`));
+});
+server.on("upgrade", (req, socket, head) => {
+  const pth = (req.url || "").split("?")[0];
+  if (!pth.startsWith("/socket.io")) { socket.destroy(); return; }
+  const headers = { ...req.headers, host: "127.0.0.1:8712" };
+  const p = net.connect(8712, "127.0.0.1", () => {
+    p.write(`${req.method} ${req.url} HTTP/1.1\r\n` +
+      Object.entries(headers).map(([k, v]) => `${k}: ${v}`).join("\r\n") +
+      "\r\n\r\n");
+    if (head && head.length) p.write(head);
+    p.pipe(socket); socket.pipe(p);
+  });
+  p.on("error", () => socket.destroy());
+  socket.on("error", () => p.destroy());
+});
+server.listen(PORT, HOST, () => console.log(`arcade-server  http://${HOST}:${PORT}  site=${SITE}`));
