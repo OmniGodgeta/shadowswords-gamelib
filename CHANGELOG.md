@@ -1,6 +1,14 @@
 # Changelog
 
 All notable changes to the RetroVerse website.
+## [2.22.2] — 2026-09-11 — Netplay controls on browser builds
+
+### Fixed
+
+- Show Netplay, Create room, and Invite controls on browser builds as well as the self-hosted site; API requests still use the tailnet server.
+- Added a lightweight `/np/health` check instead of probing the legacy EmulatorJS signaling endpoint.
+- Bumped the service-worker and asset versions to `2.39`.
+
 
 ## [2.22.1] — 2026-09-11 — Netplay signaling and in-game controls
 

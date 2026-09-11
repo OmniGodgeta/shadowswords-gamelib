@@ -1075,6 +1075,7 @@ const server = http.createServer(async (req, res) => {
     if (am) { if (rateLimited(req, res, 60, 60000)) return; admin(req, res, am[1], u0); return; }
 
     // ---- WebRTC netplay signalling ----
+    if (P === "/np/health" && req.method === "GET") { jsonRes(res, 200, { ok: true }); return; }
     if (P === "/np/room" && req.method === "POST") {
       if (rateLimited(req, res, 30, 60000)) return;
       let b = {};

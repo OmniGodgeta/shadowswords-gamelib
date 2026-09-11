@@ -759,7 +759,7 @@ let _gvMap;
 const gameVideoMap = () => (_gvMap ||= fetch("data/gamevideos.json").then((r) => r.json())
   .then((l) => Object.fromEntries(l.map((v) => [v.sys + "|" + v.file, v.vid]))).catch(() => ({})));
 function hoverPreview(tile, art, sys, vid) {
-  if (!SELF_HOSTED) return;
+  if (!SELF_HOSTED && !API) return;
   if (!HOVER_OK && !IN_APP) return;
   let v, leaveT;
   const start = () => {
@@ -1788,13 +1788,13 @@ async function routePlayGame(sys, romParam, resume = false) {
       };
     }
     window.__playSys = sys; window.__playFile = file;
-    if (np && SELF_HOSTED && sys !== "upload") {
+    if (np && sys !== "upload") {
       npBtn.hidden = false;
       npBtn.onclick = () => openNetplaySheet(sys, file, romName);
       invBtn.hidden = false;
       invBtn.onclick = () => invitePicker({ sys, file, name: romName, watch: window.__watchId });
     }
-    if (SELF_HOSTED && sys !== "upload") {
+    if (sys !== "upload") {
       invBtn.hidden = false;
       invBtn.onclick = () => invitePicker({ sys, file, name: romName, watch: window.__watchId });
     }
@@ -1926,7 +1926,7 @@ async function invitePicker({ sys, file, name, watch }) {
   document.body.append(o);
 }
 function presenceTick() {
-  if (!SELF_HOSTED) return;
+  if (!SELF_HOSTED && !API) return;
   if (window.__emuUp) return;
   fetch(`${API}/play/ping`, {
     method: "POST", headers: { "content-type": "application/json", ...authHdr() },
@@ -1934,7 +1934,7 @@ function presenceTick() {
   }).then((r) => r.json()).then(handlePingReply).catch(() => {});
 }
 function invitePoll() {
-  if (!SELF_HOSTED) return;
+  if (!SELF_HOSTED && !API) return;
   fetch(`${API}/play/invites?cid=${encodeURIComponent(CID)}`, { headers: authHdr(), cache: "no-store" })
     .then((r) => r.json()).then((d) => handlePingReply({ invites: d.invites || [] })).catch(() => {});
 }
