@@ -2,6 +2,21 @@
 
 All notable changes to the RetroVerse website.
 
+## [2.20.0] — 2026-09-11 — Real WebRTC netplay (P1/P2), pad spacing, in-app controls
+
+### Changed
+- **Netplay is ours now**, not EmulatorJS 4.2.3's broken lockstep. Host and
+  guest get a WebRTC datachannel on the tailnet. Host is Player 1, guest is
+  Player 2. Inputs go out as they happen — no savestate freeze on every
+  menu. Optional **Sync** still ships a one-shot state if you drift.
+- Face buttons are 48px in a diamond (X / Y / A / B no longer stacked).
+- Home previews autoplay in the app. ROM drop line is just "Load a ROM file".
+- In the Android app, **🎮** (bottom-right) opens the same visual controller
+  editor as the desktop site — not EmulatorJS's old list.
+
+### Internal
+- `POST/GET /np/room` + `/np/sig` signalling. SW `ssw-v2.35`.
+
 ## [2.19.1] — 2026-09-11 — Bigger pad, press glow, netplay Start resyncs
 
 ### Changed

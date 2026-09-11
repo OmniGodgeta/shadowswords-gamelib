@@ -106,66 +106,123 @@ function snapshotNetplay(sys, file, name) {
   }
   rememberSession({ sys, file, name, room, np: !!window.__inNetplay });
 }
-async function autoJoinNetplay(wantRoom) {
-  const emu = window.EJS_emulator;
-  if (!emu?.openNetplayMenu) return;
-  const pname = (prefs().netplayName || AUTH.user?.display || "Player").toString().trim().slice(0, 20) || "Player";
-  emu.openNetplayMenu();
-  if (emu.netplay && !emu.netplay.name) emu.netplay.name = pname;
-  const input = emu.netplayMenu?.querySelector("input[type=text]");
-  if (input && !input.value) input.value = pname;
-  for (let i = 0; i < 25; i++) {
-    if (emu.netplay?.getOpenRooms && emu.netplay?.joinRoom) break;
-    await new Promise((r) => setTimeout(r, 200));
-  }
-  if (!emu.netplay?.getOpenRooms) return;
-  const tryJoin = async () => {
-    let rooms = {};
-    try { rooms = await emu.netplay.getOpenRooms(); } catch { return false; }
-    const ids = Object.keys(rooms || {});
-    if (!ids.length) return false;
-    let id = ids[0];
-    if (wantRoom) {
-      const hit = ids.find((k) => rooms[k].room_name === wantRoom);
-      if (hit) id = hit;
-    }
-    emu.netplay.joinRoom(id, rooms[id].room_name);
-    window.__inNetplay = true;
-    window.__npRoom = rooms[id].room_name;
-    return true;
-  };
-  if (await tryJoin()) return;
-  toast("Waiting for the host's room…");
-  for (let i = 0; i < 15; i++) {
-    await new Promise((r) => setTimeout(r, 2000));
-    if (!window.__emuUp) return;
-    if (await tryJoin()) { toast("Joined netplay"); return; }
-  }
-  toast("No open room yet — ask the host to hit Netplay and Create a Room");
+/* WebRTC netplay — replaces EmulatorJS's broken savestate lockstep.
+   Host = player 1, guest = player 2. Inputs ride a datachannel on the tailnet. */
+const NP = { role: null, room: null, pc: null, dc: null, myP: 0, after: 0, pollT: 0, alive: false };
+
+function npCore(p, i, v) {
+  const fn = window.EJS_emulator?.gameManager?.functions?.simulateInput;
+  if (typeof fn === "function") fn(p, i, v);
 }
-function armNetplayLockstep() {
-  const emu = window.EJS_emulator;
-  const gm = emu?.gameManager;
-  if (!gm || gm.__sswNp) return;
+function npHookInput() {
+  const gm = window.EJS_emulator?.gameManager;
+  if (!gm || gm.__sswRtc) return;
+  gm.__sswRtc = true;
   const orig = gm.simulateInput.bind(gm);
-  gm.__sswNp = true;
-  let t = 0;
-  gm.simulateInput = (player, index, value) => {
-    orig(player, index, value);
-    if (!window.__inNetplay || !emu.netplay?.owner || !value) return;
-    if (index !== 3) return; // Start — pushing this as a savestate keeps both on the same screen
-    clearTimeout(t);
-    t = setTimeout(() => {
-      try { emu.netplay.sync(); } catch { /* */ }
-    }, 280);
+  gm.simulateInput = (p, i, v) => {
+    if (!NP.dc || NP.dc.readyState !== "open") return orig(p, i, v);
+    if ([24, 25, 26, 27, 28, 29].includes(i)) return orig(p, i, v);
+    const me = NP.myP;
+    npCore(me, i, v);
+    try { NP.dc.send(JSON.stringify({ t: "i", p: me, i, v })); } catch { /* */ }
   };
+}
+function npBindDc(dc) {
+  NP.dc = dc;
+  dc.onopen = () => {
+    window.__inNetplay = true;
+    npHookInput();
+    toast(NP.role === "host" ? "P2 can join — you are Player 1" : "Linked — you are Player 2");
+  };
+  dc.onclose = () => { window.__inNetplay = false; toast("Netplay disconnected"); };
+  dc.onmessage = (e) => {
+    if (typeof e.data !== "string") {
+      const gm = window.EJS_emulator?.gameManager;
+      if (gm?.loadState) try { gm.loadState(new Uint8Array(e.data)); } catch { /* */ }
+      return;
+    }
+    let m; try { m = JSON.parse(e.data); } catch { return; }
+    if (m.t === "i") npCore(m.p, m.i, m.v);
+  };
+}
+async function npSendSig(payload) {
+  if (!NP.room) return;
+  await fetch(`${API}/np/sig`, { method: "POST", headers: { "content-type": "application/json", ...authHdr() },
+    body: JSON.stringify({ room: NP.room, from: CID, payload }) }).catch(() => {});
+}
+function npStartPc(isHost) {
+  NP.pc = new RTCPeerConnection({ iceServers: [] });
+  NP.pc.onicecandidate = (e) => { if (e.candidate) npSendSig({ ice: e.candidate.toJSON?.() || e.candidate }); };
+  if (isHost) {
+    const dc = NP.pc.createDataChannel("np", { ordered: true });
+    npBindDc(dc);
+    NP.pc.createOffer().then((o) => NP.pc.setLocalDescription(o)).then(() => {
+      const d = NP.pc.localDescription; npSendSig({ sdp: { type: d.type, sdp: d.sdp } });
+    });
+  } else {
+    NP.pc.ondatachannel = (e) => npBindDc(e.channel);
+  }
+}
+async function npHandleSig(m) {
+  if (!m || m.from === CID || !NP.pc || !m.payload) return;
+  const pl = m.payload;
+  if (pl.sdp) {
+    const desc = pl.sdp;
+    if (NP.pc.signalingState === "stable" && desc.type === "answer") return;
+    await NP.pc.setRemoteDescription(desc);
+    if (desc.type === "offer") {
+      const ans = await NP.pc.createAnswer();
+      await NP.pc.setLocalDescription(ans);
+      const d = NP.pc.localDescription; npSendSig({ sdp: { type: d.type, sdp: d.sdp } });
+    }
+  }
+  if (pl.ice) { try { await NP.pc.addIceCandidate(pl.ice); } catch { /* */ } }
+}
+function npPoll() {
+  if (!NP.alive || !NP.room) return;
+  fetch(`${API}/np/sig?room=${encodeURIComponent(NP.room)}&after=${NP.after}`, { cache: "no-store" })
+    .then((r) => r.json()).then(async (d) => {
+      if (!d || d.error) return;
+      NP.after = d.after || NP.after;
+      for (const m of (d.msgs || [])) await npHandleSig(m);
+    }).catch(() => {}).finally(() => { if (NP.alive) NP.pollT = setTimeout(npPoll, 300); });
+}
+async function npHost({ sys, file, name }) {
+  const d = await fetch(`${API}/np/room`, { method: "POST", headers: { "content-type": "application/json", ...authHdr() },
+    body: JSON.stringify({ sys, file, name, cid: CID }) }).then((r) => r.json());
+  NP.room = d.id; NP.role = "host"; NP.myP = 0; NP.after = 0; NP.alive = true;
+  window.__npRoom = d.id;
+  npStartPc(true);
+  npPoll();
+  return d.id;
+}
+async function npJoin(room) {
+  NP.room = room; NP.role = "guest"; NP.myP = 1; NP.after = 0; NP.alive = true;
+  window.__npRoom = room;
+  npStartPc(false);
+  npPoll();
+}
+function npStop() {
+  NP.alive = false; clearTimeout(NP.pollT);
+  try { NP.dc && NP.dc.close(); } catch { /* */ }
+  try { NP.pc && NP.pc.close(); } catch { /* */ }
+  NP.dc = NP.pc = NP.room = NP.role = null; NP.myP = 0;
+  window.__inNetplay = false; window.__npRoom = null;
+}
+async function autoJoinNetplay(wantRoom) {
+  if (!wantRoom) { toast("Waiting for the host to open netplay…"); return; }
+  toast("Joining as Player 2…");
+  try { await npJoin(wantRoom); } catch { toast("Couldn't join netplay"); }
 }
 function resyncNetplay() {
-  const np = window.EJS_emulator?.netplay;
-  if (!np?.sync) { toast("Start a netplay room first"); return; }
-  if (!np.owner) { toast("Only the host can resync"); return; }
-  toast("Syncing both players…");
-  try { np.sync(); } catch { toast("Sync failed"); }
+  if (NP.role !== "host") { toast("Only the host can sync"); return; }
+  const gm = window.EJS_emulator?.gameManager;
+  if (!gm?.getState || !NP.dc || NP.dc.readyState !== "open") { toast("Netplay isn't linked yet"); return; }
+  try {
+    const st = gm.getState();
+    NP.dc.send(st.buffer ? st.buffer : st);
+    toast("Sent your screen to P2");
+  } catch { toast("Sync failed"); }
 }
 function maybeResumeSession() {
   const s = LS.get("lastSession", null);
@@ -423,7 +480,7 @@ function heroShowcase(vids, { title, desc, actions }) {
   const stage = el("div", { className: "hero-art sc-stage" });
   const chip = el("div", { className: "sc-chip", hidden: true });
   const toggle = el("div", { className: "sc-toggle" });
-  let mode = LS.get("scMode", "video");
+  let mode = IN_APP ? "video" : LS.get("scMode", "video");
   let i = (Math.random() * vids.length) | 0;
   let timer = 0;
   const link = (v) => v.play
@@ -624,23 +681,32 @@ let _gvMap;
 const gameVideoMap = () => (_gvMap ||= fetch("data/gamevideos.json").then((r) => r.json())
   .then((l) => Object.fromEntries(l.map((v) => [v.sys + "|" + v.file, v.vid]))).catch(() => ({})));
 function hoverPreview(tile, art, sys, vid) {
-  if (!HOVER_OK || !SELF_HOSTED) return;
+  if (!SELF_HOSTED) return;
+  if (!HOVER_OK && !IN_APP) return;
   let v, leaveT;
-  tile.addEventListener("mouseenter", () => {
+  const start = () => {
     if (prefs().lite) return;
     clearTimeout(leaveT);
     if (v) { v.play?.().catch(() => {}); v.classList.add("on"); return; }
-    v = el("video", { className: "tile-prev", loop: true, playsInline: true, preload: "none",
+    v = el("video", { className: "tile-prev", loop: true, playsInline: true, muted: true, preload: "metadata",
       src: VIDEO_BASE + encodeURIComponent(sys) + "/" + encodeURIComponent(vid) });
     v.muted = true; v.defaultMuted = true;
     v.addEventListener("playing", () => v.classList.add("on"), { once: true });
     v.onerror = () => { v.remove(); v = null; };
     art.append(v);
     v.play?.().catch(() => {});
-  });
-  tile.addEventListener("mouseleave", () => {
-    leaveT = setTimeout(() => { if (v) { v.classList.remove("on"); v.pause?.(); } }, 140);
-  });
+  };
+  const stop = () => { leaveT = setTimeout(() => { if (v) { v.classList.remove("on"); v.pause?.(); } }, 140); };
+  if (IN_APP && "IntersectionObserver" in window) {
+    const io = new IntersectionObserver((ents) => {
+      ents.forEach((e) => { if (e.isIntersecting) start(); else stop(); });
+    }, { threshold: 0.55 });
+    io.observe(tile);
+    return;
+  }
+  if (!HOVER_OK) return;
+  tile.addEventListener("mouseenter", start);
+  tile.addEventListener("mouseleave", stop);
 }
 
 const spinner = () => view.replaceChildren(el("div", { className: "spinner", textContent: "Loading…" }));
@@ -1013,7 +1079,7 @@ async function routeGame(sysId, gid) {
 function dropzone() {
   const drop = el("label", { className: "drop", htmlFor: "rom-input" },
     el("input", { id: "rom-input", type: "file", accept: ".nes,.sfc,.smc,.fig,.gb,.gbc,.gba,.n64,.z64,.md,.gen,.smd,.sms,.gg,.pce,.a26,.a78,.lnx,.ws,.wsc,.col,.vb,.zip,.bin,.iso,.cue,.chd" }),
-    el("div", {}, el("strong", { textContent: "Drop a ROM here" }), " or click — plays locally, never uploaded."));
+    el("div", {}, el("strong", { textContent: "Load a ROM file" })));
   const input = drop.querySelector("input");
   input.onchange = () => input.files[0] && startUpload(input.files[0]);
   ["dragover", "dragenter"].forEach((e) => drop.addEventListener(e, (ev) => { ev.preventDefault(); drop.classList.add("hot"); }));
@@ -1063,7 +1129,7 @@ async function routeNetplay() {
   view.replaceChildren(el("section", { className: "pane", style: "max-width:720px;margin:0 auto;padding:28px var(--pad) 60px" },
     el("div", { className: "big-emoji", textContent: "🌐" }),
     el("h1", { textContent: "Play with a friend" }),
-    el("p", { textContent: "Netplay syncs two (or more) browsers over the tailnet using EmulatorJS. Best on the same LAN or Tailscale; both of you need the same game running." }),
+    el("p", { textContent: "Netplay is peer-to-peer on the tailnet. Host taps Netplay (Player 1), then Invite. Guest taps Join room and is Player 2. No savestate freeze on every input." }),
     status, steps,
     el("p", { className: "hint", textContent: "Works great for NES, SNES, Genesis, GB/GBA, and most 2D systems. Heavier cores (N64, PSX, NDS) are laggy unless you're on a fast local link." }),
     el("div", { style: "display:flex;gap:10px;flex-wrap:wrap;margin-top:18px" },
@@ -1133,7 +1199,7 @@ async function routePlaySystem(id) {
   };
   fText.oninput = debounce(apply, 150);
   apply();
-  if (HOVER_OK && SELF_HOSTED) gameVideoMap().then((m) => {
+  if (SELF_HOSTED && (HOVER_OK || IN_APP)) gameVideoMap().then((m) => {
     if (Object.keys(m).some((k) => k.startsWith(id + "|"))) { previews = m; apply(); }
   });
 }
@@ -1404,7 +1470,9 @@ async function routePlayGame(sys, romParam, resume = false) {
       el("button", { type: "button", className: "chrome-peek", title: "Show controls",
         onclick: (e) => { e.preventDefault(); e.stopPropagation(); showChrome(); } }),
       el("button", { type: "button", className: "fab-pad", title: "Hide or show touch controls",
-        onclick: (e) => { e.preventDefault(); e.stopPropagation(); toggleTouchPad(); } }));
+        onclick: (e) => { e.preventDefault(); e.stopPropagation(); toggleTouchPad(); } }),
+      el("button", { type: "button", className: "fab-ctrl", textContent: "🎮", title: "Controller setup",
+        onclick: (e) => { e.preventDefault(); e.stopPropagation(); controlsPanel(core); } }));
   }
   document.body.append(shell);
   view.replaceChildren();
@@ -1451,7 +1519,7 @@ async function routePlayGame(sys, romParam, resume = false) {
   const bios = sys !== "upload" && meta(sys).bios;
   if (bios) window.EJS_biosUrl = ROM_BASE + "bios/" + encodeURIComponent(bios);
   window.EJS_Buttons = { restart: true, settings: true, fullscreen: true, saveState: true,
-    loadState: true, screenshot: true, cheat: true, gamepad: true, netplay: true,
+    loadState: true, screenshot: true, cheat: true, gamepad: true, netplay: false,
     exitEmulation: true };
   const vf = prefs().videoFilter;
   window.EJS_defaultOptions = Object.assign(
@@ -1459,19 +1527,9 @@ async function routePlayGame(sys, romParam, resume = false) {
     vf === "crt" ? { shader: "crt-aperture.glslp" }
       : vf === "smooth" ? { shader: "bicubic.glslp" } : {});
   window.EJS_color = "#1fe6ff";
-  // unique per game — without a number, EmulatorJS 4.2.3 never shows the netplay globe
   window.EJS_gameID = gameIdNum(sys, file || romName);
-  // Netplay signalling — tailnet :8712; disable in Settings or localStorage ssw:netplay="off".
+  // Our own WebRTC netplay — EmulatorJS 4.2.3 lockstep is broken ("control syncing").
   const np = netplayUrl();
-  if (np) {
-    // Same origin on the self-host so socket.io can use WebSockets on :443.
-    // :8712 often degrades to HTTP long-poll (~seconds of input delay).
-    window.EJS_netplayServer = (SELF_HOSTED && np === NETPLAY_URL) ? (location.origin + "/") : np;
-    window.EJS_netplayICEServers = NETPLAY_ICE;
-    window.EJS_Buttons.netplay = true;
-  } else {
-    window.EJS_Buttons.netplay = false;
-  }
 
   // cloud save-states — the stable EmulatorJS build has no onSaveState hook, so
   // we drive it ourselves via gameManager.getState()/loadState() + our own buttons.
@@ -1569,8 +1627,6 @@ async function routePlayGame(sys, romParam, resume = false) {
   window.EJS_ready = () => {
     const emu = window.EJS_emulator;
     if (!emu) return;
-    // 4.2.3 gates netplay behind debug flags; the menu still exists, so enable it ourselves.
-    if (np) emu.netplayEnabled = true;
     emu.on("exit", () => { if (window.__emuUp) exitPlayer(); });
   };
   window.EJS_onGameStart = () => {
@@ -1581,7 +1637,6 @@ async function routePlayGame(sys, romParam, resume = false) {
     rememberSession({ sys, file, name: romName });
     window.__npSnapT = setInterval(() => snapshotNetplay(sys, file, romName), 4000);
     try { window.SSPlay && window.SSPlay.postMessage("1"); } catch { /* */ }
-    armNetplayLockstep();
     const joinHint = LS.get("joinNp", null);
     if (joinHint && joinHint.sys === sys && (!joinHint.file || joinHint.file === file)) {
       LS.set("joinNp", null);
@@ -1650,36 +1705,24 @@ async function routePlayGame(sys, romParam, resume = false) {
         document.body.append(o);
       };
     }
-    if (np) {
-      const emu = window.EJS_emulator;
-      const canNp = !emu || typeof emu.gameManager?.supportsStates !== "function"
-        || emu.gameManager.supportsStates();
-      if (canNp) {
+    if (np && SELF_HOSTED && sys !== "upload") {
+      npBtn.hidden = false;
+      npBtn.onclick = async () => {
+        if (window.__watchT) { clearInterval(window.__watchT); window.__watchT = 0; }
+        if (NP.room && NP.role === "host") {
+          toast("Room is live — pick who to invite");
+          invitePicker({ sys, file, name: romName, watch: window.__watchId });
+          return;
+        }
         try {
-          const globe = emu?.elements?.bottomBar?.netplay?.[0];
-          if (globe) globe.style.display = "";
-        } catch { /* */ }
-        if (emu) emu.netplayEnabled = true;
-        npBtn.hidden = false;
-        npBtn.onclick = () => {
-          const ejs = window.EJS_emulator;
-          if (!ejs?.openNetplayMenu) { toast("Netplay isn't ready yet — wait for the game to finish booting"); return; }
-          ejs.openNetplayMenu();
-          window.__inNetplay = true;
-          if (window.__watchT) { clearInterval(window.__watchT); window.__watchT = 0; }
+          await npHost({ sys, file, name: romName });
           ping(false);
-          const pname = (prefs().netplayName || AUTH.user?.display || "").toString().trim().slice(0, 20);
-          if (pname) {
-            const input = ejs.netplayMenu?.querySelector("input[type=text]");
-            if (input && !input.value) input.value = pname;
-          }
-          const syncBtn = document.getElementById("np-sync-btn");
-          if (syncBtn) {
-            syncBtn.hidden = false;
-            syncBtn.onclick = resyncNetplay;
-          }
-        };
-      }
+          const sb = document.getElementById("np-sync-btn");
+          if (sb) { sb.hidden = false; sb.onclick = resyncNetplay; }
+          toast("You are Player 1 — invite Player 2");
+          invitePicker({ sys, file, name: romName, watch: window.__watchId });
+        } catch { toast("Couldn't start netplay"); }
+      };
     }
     if (SELF_HOSTED && sys !== "upload") {
       invBtn.hidden = false;
@@ -1724,6 +1767,7 @@ function emuCleanup() {
   clearInterval(window.__watchT); clearInterval(window.__npSnapT);
   if (window.__watchId) fetch(`${API}/watch/${window.__watchId}`, { method: "DELETE", keepalive: true }).catch(() => {});
   window.__watchId = null; window.__inNetplay = false; window.__npRoom = null;
+  try { npStop(); } catch { /* */ }
   try { window.SSPlay && window.SSPlay.postMessage("0"); } catch { /* */ }
   try { screen.orientation.unlock(); } catch { /* */ }
   try { window.__emuFlush?.(); } catch { /* */ }

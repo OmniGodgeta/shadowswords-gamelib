@@ -847,7 +847,7 @@ body.lite .btn, body.lite .badge, body.lite .stat-n, body.lite #live-badge { box
 
 /* ---- controller setup panel ------------------------------------------------ */
 #ctrl-panel {
-  position: fixed; inset: 0; z-index: 90; display: grid; place-items: center;
+  position: fixed; inset: 0; z-index: 500; display: grid; place-items: center;
   padding: 20px; background: rgba(4, 4, 10, .74); backdrop-filter: blur(6px);
   animation: ctrl-in .16s ease-out;
 }
@@ -1148,17 +1148,17 @@ body.lite .pad-row.listening .pr-chip { animation: none; border-style: dashed; }
 }
 .ejs_virtualGamepad_left,
 .ejs_virtualGamepad_right {
-  width: 200px !important;
-  height: 200px !important;
+  width: 168px !important;
+  height: 160px !important;
   bottom: 28px !important;
 }
 .ejs_virtualGamepad_left { left: 8px !important; }
 .ejs_virtualGamepad_right { right: 8px !important; }
 .ejs_virtualGamepad_button {
-  width: 72px !important;
-  height: 72px !important;
-  line-height: 72px !important;
-  font-size: 26px !important;
+  width: 48px !important;
+  height: 48px !important;
+  line-height: 48px !important;
+  font-size: 16px !important;
   font-weight: 800 !important;
   background: rgba(255,255,255,.16) !important;
   border: 2px solid rgba(255,255,255,.4) !important;
@@ -1168,12 +1168,17 @@ body.lite .pad-row.listening .pr-chip { animation: none; border-style: dashed; }
   backdrop-filter: blur(8px);
   transition: background .08s, box-shadow .08s, transform .08s !important;
 }
+/* diamond: X top, Y left, A right, B bottom — don't sit on top of each other */
+.ejs_virtualGamepad_button.b_x { left: 56px !important; top: 2px !important; }
+.ejs_virtualGamepad_button.b_y { left: 8px !important; top: 50px !important; }
+.ejs_virtualGamepad_button.b_a { left: 104px !important; top: 50px !important; }
+.ejs_virtualGamepad_button.b_b { left: 56px !important; top: 98px !important; }
 .ejs_virtualGamepad_button.ejs_virtualGamepad_button_down {
   background: #1fe6ff !important;
   color: #041018 !important;
   border-color: #fff !important;
-  box-shadow: 0 0 22px #1fe6ff !important;
-  transform: scale(1.08);
+  box-shadow: 0 0 18px #1fe6ff !important;
+  transform: scale(1.06);
 }
 .ejs_virtualGamepad_button.b_speed_fast,
 .ejs_virtualGamepad_button.b_speed_slow,
@@ -1241,4 +1246,19 @@ html.hide-touch .player.in-app-player .fab-pad::after { content: "Show pad"; }
 .player.in-app-player.show-chrome .fab-exit,
 .player.in-app-player.show-chrome .chrome-peek,
 .player.in-app-player.show-chrome .fab-pad { opacity: 0; pointer-events: none; }
+.player.in-app-player .fab-ctrl {
+  position: absolute;
+  right: max(8px, env(safe-area-inset-right));
+  bottom: max(8px, env(safe-area-inset-bottom));
+  z-index: 8; width: 44px; height: 44px; border-radius: 12px;
+  background: rgba(6,6,12,.82); border: 1px solid rgba(255,255,255,.3);
+  font-size: 22px;
+}
+html.in-app #ctrl-panel {
+  z-index: 500; padding: 8px; align-items: stretch;
+}
+html.in-app .ctrl-card { max-height: 100%; height: 100%; width: 100%; }
+html.in-app .cc-body { grid-template-columns: 1fr; overflow: auto; }
+html.in-app .pad-row { grid-template-columns: 1fr 96px 88px; min-height: 44px; }
+html.in-app .pr-chip { min-height: 40px; font-size: 13px; }
 #invite-overlay { position: fixed; inset: 0; z-index: 400; display: grid; place-items: center; background: rgba(7,7,13,.8); backdrop-filter: blur(4px); }

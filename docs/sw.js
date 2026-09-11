@@ -5,7 +5,7 @@
    ssw-data   : data/*.json, network-first, PERSISTS across version bumps (offline browse)
    ssw-ejs    : /emulatorjs/* core files, cache-first, PERSISTS (offline play)
    Never touched: /roms, /music, /states, search.json, cross-origin CDN, dynamic APIs */
-const VERSION = "ssw-v2.34";
+const VERSION = "ssw-v2.35";
 const SHELL = VERSION, DATA = "ssw-data", EJS_CACHE = "ssw-ejs";
 const KEEP = [SHELL, DATA, EJS_CACHE];
 const SHELL_FILES = [
@@ -47,7 +47,7 @@ self.addEventListener("fetch", (e) => {
     return;
   }
   // large / dynamic / API — never cache, let it hit the network (and fail plainly offline)
-  if (/^\/(roms|music|gamevideo|states|netplay|thumb|jellyfin|play|twitch|discord|search|request|auth|admin|banner|u|watch|socket\.io|list)(\/|$|\?)/.test(u.pathname)) return;
+  if (/^\/(roms|music|gamevideo|states|netplay|thumb|jellyfin|play|twitch|discord|search|request|auth|admin|banner|u|watch|socket\.io|list|np)(\/|$|\?)/.test(u.pathname)) return;
   if (u.pathname.endsWith("search.json")) return;                  // 6 MB, not worth caching
 
   // data/*.json — network-first, persist in ssw-data so offline browse survives updates.

@@ -553,6 +553,14 @@ function watchMeta(id, w) {
   return { id, sys: w.sys, file: w.file, name: w.name, host: w.host, at: w.at, live: !!w.frame };
 }
 
+// ---- WebRTC netplay signalling (game traffic is peer-to-peer) ----
+const NP_SIG = new Map(); // id -> { host, sys, file, name, n, msgs, at }
+function pruneNp() {
+  const cut = now() - 30 * 60 * 1000;
+  for (const [id, r] of NP_SIG) if (r.at < cut) NP_SIG.delete(id);
+}
+setInterval(pruneNp, 60000).unref?.();
+
 // ---- auth endpoints ---------------------------------------------------
 const NAME_RE = /^[a-z0-9_.-]{2,24}$/i;
 async function authRegister(req, res) {
@@ -1065,6 +1073,36 @@ const server = http.createServer(async (req, res) => {
     if (P === "/banner" && req.method === "GET") { getBanner(req, res); return; }
     const am = P.match(/^\/admin\/([a-z]+)$/);
     if (am) { if (rateLimited(req, res, 60, 60000)) return; admin(req, res, am[1], u0); return; }
+
+    // ---- WebRTC netplay signalling ----
+    if (P === "/np/room" && req.method === "POST") {
+      if (rateLimited(req, res, 30, 60000)) return;
+      let b = {};
+      try { b = JSON.parse((await readBody(req, 4096)).toString() || "{}"); } catch { /* */ }
+      const id = crypto.randomBytes(4).toString("hex");
+      NP_SIG.set(id, { id, host: b.cid || "", sys: b.sys, file: b.file, name: b.name || "Game",
+        n: 0, msgs: [], at: now() });
+      jsonRes(res, 200, { id }); return;
+    }
+    if (P === "/np/sig" && req.method === "POST") {
+      let b = {};
+      try { b = JSON.parse((await readBody(req, 65536)).toString() || "{}"); } catch { /* */ }
+      const r = NP_SIG.get(b.room);
+      if (!r) { jsonRes(res, 404, { error: "no room" }); return; }
+      r.n++; r.at = now();
+      r.msgs.push({ n: r.n, from: b.from, payload: b.payload });
+      if (r.msgs.length > 80) r.msgs.splice(0, r.msgs.length - 40);
+      jsonRes(res, 200, { ok: true, n: r.n }); return;
+    }
+    if (P === "/np/sig" && req.method === "GET") {
+      const room = u0.searchParams.get("room");
+      const after = +u0.searchParams.get("after") || 0;
+      const r = NP_SIG.get(room);
+      if (!r) { jsonRes(res, 404, { error: "no room" }); return; }
+      jsonRes(res, 200, { host: r.host, sys: r.sys, file: r.file, name: r.name,
+        after: r.n, msgs: r.msgs.filter((m) => m.n > after) });
+      return;
+    }
 
     // ---- watch party (before the write-token gate; frames are jpeg, not saves) ----
     if (P === "/watch" && req.method === "POST") {
