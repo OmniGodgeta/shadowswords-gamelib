@@ -69,6 +69,8 @@ The app is a WebView wrapper. These must not change shape without coordinating:
 - `window.sswOfflineStats()`, `window.sswCores()`.
 - PWA `manifest.json` `"id"` = `shadowswords-arcade` (kept through the rebrand
   so installed PWAs keep identity — change it and every install is orphaned).
+- Top nav labels: Home / Play / Lounge / Library. Deep hashes `#/movies`
+  `#/music` `#/videos` still work (Lounge children). Don't rename `#/play`.
 
 ## 6. Testing in the browser-automation tab — known lies
 
@@ -128,6 +130,20 @@ If you re-tune `_lr_loose()` (libretro fuzzy match) in build.py, `rm -rf
 - Custom domain (`DOMAIN.md`), MAME 2003-Plus romsets (`ARCADE.md`).
 - `logo-lg.webp` — only used as the build source for `og.jpg` (manual), not
   referenced at runtime.
+
+## 11. EmulatorJS netplay (4.2.3 gotchas)
+
+Stable EmulatorJS **hides** the netplay globe unless `EJS_gameID` is a
+number, and then *still* sets `netplayEnabled` only when both
+`EJS_DEBUG_XX` and `EJS_EXPERIMENTAL_NETPLAY` are true. We don't turn debug
+on; we set a hashed `EJS_gameID`, `EJS_netplayServer`, `EJS_netplayICEServers`,
+flip `emu.netplayEnabled` in `EJS_ready`, and unhide the globe + our player-bar
+button on game start. Signalling is `arcade-netplay` on tailnet `:8712`.
+Disable with Settings → Netplay, or `localStorage['ssw:netplay']='off'`.
+
+The ‹ Exit button must **not** `await` the cloud-save PUT — a hung fetch
+leaves the player stuck. Fire-and-forget, then reload. Also listen for
+EmulatorJS's `exit` event (stable loader.js never wired `EJS_onExit`).
 
 ---
 *Keep this file current. If you learn something the hard way, add it here.*

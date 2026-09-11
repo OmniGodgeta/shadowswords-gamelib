@@ -468,15 +468,19 @@ body.lite .shelf-track > .tile, body.lite .tile-grid > .tile { animation: none; 
 
 /* ---- emulator player ---- */
 .player { position: fixed; inset: 0; z-index: 60; background: #000; display: flex; flex-direction: column; }
+.player.leaving { pointer-events: none; }
 .player-bar {
+  position: relative; z-index: 2;
   height: 46px; flex: 0 0 auto; display: flex; align-items: center; gap: 14px; padding: 0 14px;
   background: #06060c; border-bottom: 1px solid var(--line);
 }
 .player-bar .exit {
   padding: 7px 14px; border-radius: 8px; border: 1px solid var(--pink); color: var(--pink);
   font-weight: 800; font-size: 12px; text-transform: uppercase; letter-spacing: .06em;
+  cursor: pointer;
 }
 .player-bar .exit:hover { box-shadow: var(--glow-pink); }
+.player-bar .exit:disabled { opacity: .6; cursor: default; }
 .player-bar .title { font-weight: 700; font-size: 13px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .player-stage { flex: 1; position: relative; min-height: 0; }
 .player-stage #game { width: 100%; height: 100%; }
@@ -653,6 +657,10 @@ body.has-mp .foot { margin-bottom: 74px; }
 .btn.sm { padding: 5px 12px; font-size: 12px; }
 .player-bar #flag-btn { color: var(--muted); }
 .player-bar #flag-btn:hover { color: var(--pink); border-color: var(--pink); }
+.player-bar #np-btn { color: var(--gold); border-color: rgba(255,210,61,.45); }
+.player-bar #np-btn:hover { border-color: var(--gold); box-shadow: 0 0 14px rgba(255,210,61,.45); }
+.np-steps { margin: 12px 0 18px; padding-left: 22px; color: var(--muted); }
+.np-steps li { margin: 8px 0; }
 
 /* ---- site banner (owner-set) ---- */
 #site-banner {
@@ -1036,3 +1044,102 @@ body.lite .pad-row.listening .pr-chip { animation: none; border-style: dashed; }
 }
 
 .sc-strip-load { position:absolute; inset:0; display:grid; place-items:center; color:var(--dim); font-size:12px; letter-spacing:.12em; text-transform:uppercase; }
+
+/* ---- cabinet dock (home) ---- */
+.cab-dock {
+  display: flex; gap: 10px; overflow-x: auto; padding: 4px 0 18px;
+  -webkit-overflow-scrolling: touch; scrollbar-width: none;
+}
+.cab-dock::-webkit-scrollbar { display: none; }
+.cab-plaque {
+  flex: 0 0 auto; display: flex; flex-direction: column; align-items: flex-start; gap: 2px;
+  min-width: 132px; padding: 14px 16px; border-radius: 12px;
+  border: 1px solid var(--line-2); background: linear-gradient(180deg, var(--bg-3), var(--bg-1));
+  text-decoration: none; color: inherit;
+}
+.cab-plaque:hover { border-color: var(--cyan); box-shadow: var(--glow-cyan); }
+.cab-plaque .cab-k { font-size: 18px; line-height: 1; }
+.cab-plaque .cab-t { font-weight: 800; font-size: 13px; letter-spacing: .04em; }
+.cab-plaque .cab-s { font-size: 11px; color: var(--dim); }
+
+/* live cabinet */
+.live-row {
+  display: flex; gap: 10px; overflow-x: auto; padding: 2px 0 8px;
+  -webkit-overflow-scrolling: touch;
+}
+.live-card {
+  flex: 0 0 auto; width: min(280px, 78vw); padding: 12px 14px; border-radius: 12px;
+  border: 1px solid var(--line-2); background: var(--bg-2); display: flex; flex-direction: column; gap: 8px;
+}
+.live-card .live-who { font-size: 12px; color: var(--muted); }
+.live-card .live-game { font-weight: 800; font-size: 15px; }
+.live-card .live-sys { font-size: 11px; color: var(--dim); }
+.live-card .live-acts { display: flex; gap: 6px; flex-wrap: wrap; }
+.live-dot {
+  display: inline-block; width: 8px; height: 8px; border-radius: 50%;
+  background: #3dff8a; box-shadow: 0 0 8px #3dff8a; margin-right: 6px; vertical-align: middle;
+}
+
+/* lounge */
+.lounge-grid {
+  display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px;
+  padding: 8px 0 40px;
+}
+@media (max-width: 820px) { .lounge-grid { grid-template-columns: 1fr; } }
+.lounge-card {
+  display: flex; flex-direction: column; justify-content: flex-end;
+  min-height: 220px; padding: 22px; border-radius: 16px; text-decoration: none; color: inherit;
+  border: 1px solid var(--line-2); position: relative; overflow: hidden;
+}
+.lounge-card::before {
+  content: ""; position: absolute; inset: 0;
+  background: radial-gradient(80% 70% at 100% 0%, var(--cab, rgba(31,230,255,.22)), transparent 60%);
+  pointer-events: none;
+}
+.lounge-card[data-k="movies"] { --cab: rgba(255,43,208,.28); }
+.lounge-card[data-k="music"] { --cab: rgba(31,230,255,.28); }
+.lounge-card[data-k="videos"] { --cab: rgba(181,104,255,.3); }
+.lounge-card .lg-k { font-size: 28px; position: relative; }
+.lounge-card .lg-t { font-size: 22px; font-weight: 900; position: relative; margin-top: 8px; }
+.lounge-card .lg-s { color: var(--muted); position: relative; margin-top: 4px; }
+.lounge-card:hover { border-color: var(--cyan); box-shadow: var(--glow-cyan); }
+
+/* watch party */
+.watch-stage {
+  max-width: 1100px; margin: 0 auto; padding: 16px var(--pad) 40px;
+}
+.watch-stage img {
+  width: 100%; height: auto; image-rendering: pixelated; background: #000;
+  border: 1px solid var(--line); border-radius: 10px; aspect-ratio: 4/3; object-fit: contain;
+}
+.watch-meta { display: flex; align-items: baseline; gap: 12px; margin: 10px 0 14px; flex-wrap: wrap; }
+
+/* save timeline */
+.slot-row { display: flex; align-items: center; gap: 8px; margin: 6px 0; }
+.slot-shot {
+  width: 72px; height: 54px; object-fit: cover; border-radius: 6px;
+  border: 1px solid var(--line-2); background: #000; flex: 0 0 auto;
+}
+
+/* player notes */
+.note-chip {
+  flex: 0 0 auto; height: 30px; padding: 0 10px; border-radius: 8px;
+  border: 1px dashed var(--gold); color: var(--gold); font-size: 12px; font-weight: 700;
+}
+.player-bar #ff-btn.on { color: var(--gold); border-color: var(--gold); }
+
+/* phone / touch player chrome */
+@media (pointer: coarse) {
+  .player-bar {
+    height: auto; min-height: 52px; flex-wrap: wrap; gap: 8px;
+    padding: 8px 10px calc(8px + env(safe-area-inset-bottom, 0px));
+  }
+  .player-bar .exit {
+    min-height: 44px; padding: 10px 16px; font-size: 14px;
+  }
+  .player-bar .pbtn { min-height: 40px; padding: 0 12px; }
+  .ejs_virtualGamepad_parent {
+    transform: scale(1.18); transform-origin: bottom center;
+  }
+}
+.player-bar { padding-left: max(14px, env(safe-area-inset-left)); padding-right: max(14px, env(safe-area-inset-right)); }

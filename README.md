@@ -10,10 +10,13 @@ A **webRcade-style** browser for the whole ES-DE library on `shadow` —
 ~108 consoles, ~77k games, box art where it's scraped, console logos for every
 system. Three sections:
 
-- **Home / Browse** — every system, filter, search across all of them
-- **Play** — 39 systems emulated in-browser via [EmulatorJS]; ROMs stream from
-  the home server, or load-your-own with the file picker
-- **Movies** — opens the Jellyfin library
+- **Home** — continue playing, who's on the floor, trending, playable consoles,
+  two-player night. Not a catalog dump.
+- **Play** — 40-plus systems emulated in-browser via [EmulatorJS]; ROMs stream
+  from the home server, or load-your-own with the file picker. Netplay and
+  watch-party are tailnet-only.
+- **Lounge** — movies (Jellyfin), music, videos
+- **Library** — every console, collections, franchises
 
 Dark 10-foot UI, hash-routed vanilla JS, no frontend build step.
 
@@ -96,9 +99,20 @@ cathode-theme wordmark logo (rendered white) when there's no photo.
 ## Controller support
 
 EmulatorJS has full **Gamepad API** support — plug in a controller and it's
-detected automatically; remap in its in-game settings menu (gear icon). Works
-for keyboard too. The site's own menus are mouse/touch/keyboard (not yet
-gamepad-navigable).
+detected automatically; remap in its in-game settings menu (gear icon) or the
+🎮 button on the player bar. Works for keyboard too. The site's own menus are
+mouse/touch/keyboard and a connected gamepad (D-pad to move, A to select, B to
+go back).
+
+## Netplay
+
+Two people on the tailnet can play the same game: open it, click **Netplay**
+on the player bar, host or join a room. Signalling is `arcade-netplay` on
+`:8712`; the actual game traffic is WebRTC (peer-to-peer). Heavier cores
+(N64 / PSX / NDS) want a fast local link. Toggle it off in Settings.
+
+Escape or **‹ Exit** leaves a game (cloud-save is fired in the background so
+a stalled upload can't trap you in the player).
 
 ## Notes / limits
 

@@ -45,6 +45,29 @@ const STATE_BASE = SELF_HOSTED ? "/states/" : TS + "/states/";   // cloud save-s
 const API = SELF_HOSTED ? "" : TS;                               // dynamic endpoints (search, stats, twitch…)
 const VIDEO_BASE = SELF_HOSTED ? "/gamevideo/" : TS + "/gamevideo/"; // ES-DE game preview clips
 const NETPLAY_URL = TS + ":8712/";                                // EmulatorJS netplay signalling (tailnet)
+const NETPLAY_ICE = [
+  { urls: "stun:stun.l.google.com:19302" },
+  { urls: "stun:stun1.l.google.com:19302" },
+];
+// stable numeric id per game — EmulatorJS netplay requires a number, and 4.2.3
+// hides the globe unless this is set. FNV-1a → 31-bit so it stays a real JS int.
+function gameIdNum(sys, file) {
+  const s = String(sys || "") + "\0" + String(file || "");
+  let h = 2166136261;
+  for (let i = 0; i < s.length; i++) h = Math.imul(h ^ s.charCodeAt(i), 16777619);
+  return (h >>> 1) || 1;
+}
+function netplayUrl() {
+  if (prefs().netplay === false) return null;
+  let raw;
+  try { raw = localStorage.getItem("ssw:netplay"); } catch { raw = null; }
+  if (raw == null) return NETPLAY_URL;
+  let v = raw;
+  try { v = JSON.parse(raw); } catch { /* accept a raw string from the console */ }
+  if (v === "off" || v === false) return null;
+  if (typeof v === "string" && v.trim()) return v.trim();
+  return NETPLAY_URL;
+}
 const CID = (() => {
   try {
     let c = localStorage.getItem("ssw:cid");
@@ -66,6 +89,57 @@ const SOCIALS = [
 const DISCORD = "https://discord.gg/QnMc35rUdB";
 const PAGE = 90;
 const COLLAGE_SYSTEMS = ["atari2600", "archimedes", "3do", "wii", "xbox", "gba", "psx", "gc"];
+
+// curated couch / netplay night — files verified against this library
+const MULTIPLAYER_PICKS = [
+  { sys: "n64", file: "Mario Kart 64 (NA).z64", tag: "4P" },
+  { sys: "n64", file: "Super Smash Bros. (NA).z64", tag: "4P" },
+  { sys: "n64", file: "Mario Party (NA).z64", tag: "4P" },
+  { sys: "n64", file: "GoldenEye 007 (NA).z64", tag: "4P" },
+  { sys: "n64", file: "Diddy Kong Racing (NA, Rev 1).z64", tag: "4P" },
+  { sys: "n64", file: "Mario Tennis (NA).z64", tag: "4P" },
+  { sys: "snes", file: "Super Mario Kart (NA).sfc", tag: "2P" },
+  { sys: "snes", file: "Super Bomberman (NA).sfc", tag: "4P" },
+  { sys: "snes", file: "NBA Jam (NA, Rev 1).sfc", tag: "2P" },
+  { sys: "snes", file: "Contra III - The Alien Wars (NA).sfc", tag: "2P" },
+  { sys: "snes", file: "Kirby Super Star (NA).sfc", tag: "2P" },
+  { sys: "snes", file: "Micro Machines (NA).sfc", tag: "2P" },
+  { sys: "genesis", file: "Streets of Rage 2 (U) [!].zip", tag: "2P" },
+  { sys: "genesis", file: "Golden Axe (JU) (REV 00) [!].zip", tag: "2P" },
+  { sys: "nes", file: "Teenage Mutant Ninja Turtles (U) [!].nes", tag: "2P" },
+  { sys: "nes", file: "Double Dragon II - The Revenge (U) (PRG1) [!].nes", tag: "2P" },
+  { sys: "gba", file: "Advance Wars (NA, Rev 1).gba", tag: "2P" },
+  { sys: "psx", file: "Crash Team Racing.img", tag: "4P" },
+];
+const SYS_NOTES = {
+  cps1: "Needs an FBNeo-era romset. Current dumps often fail with “missing files for THIS VERSION”.",
+  cps2: "Needs an FBNeo-era romset. Current dumps often fail with “missing files for THIS VERSION”.",
+  mame: "Needs a MAME 2003-Plus (0.78) set. Newer romsets won't load.",
+  neogeo: "Needs a matching FBNeo set plus neogeo.zip in BIOS.",
+  amiga: "PUAE is experimental here — WHDLoad/ADF titles often won't boot.",
+  pcecd: "Boots via syscard3; multi-track .cue discs are hit-or-miss.",
+  "tg-cd": "Boots via syscard3; multi-track .cue discs are hit-or-miss.",
+  segacd: "Needs the region BIOS. Multi-track .cue images sometimes hang black.",
+  n64: "Heavy core. Fast-forward helps menus; netplay wants a fast local link.",
+  psx: "Heavy core. Disc images (.cue/.bin) beat .img when they exist.",
+  nds: "Touch screen is the mouse. Dual-screen layout lives in the emulator menu.",
+};
+const TITLE_NOTES = [
+  { sys: "n64", re: /smash/i, n: "4 players. Extra pads map to P2–P4 automatically." },
+  { sys: "n64", re: /mario kart/i, n: "4 players. Mirror mode is in the Grand Prix menu." },
+  { sys: "n64", re: /goldeneye|perfect dark/i, n: "4 players. Start a multiplayer match from the title, not the campaign." },
+  { sys: "n64", re: /mario party/i, n: "4 players. Mini-games need all pads plugged in before the board." },
+  { sys: "snes", re: /bomberman/i, n: "Up to 4 players. Battle mode is the netplay one." },
+  { sys: "snes", re: /mario kart/i, n: "2 players. Battle mode is VS on the title." },
+  { sys: "genesis", re: /streets of rage/i, n: "2 players. P2 joins at the character select." },
+];
+function notesFor(sys, file, name) {
+  const out = [];
+  if (SYS_NOTES[sys]) out.push(SYS_NOTES[sys]);
+  const hay = `${name || ""} ${file || ""}`;
+  for (const t of TITLE_NOTES) if (t.sys === sys && t.re.test(hay)) out.push(t.n);
+  return out;
+}
 
 const view = $("#view");
 const state = { sys: null, systems: {}, cache: {}, search: null, render: 0 };
@@ -113,6 +187,7 @@ function pushRecent(sys, file, name, img) {
 const PREF_DEFAULTS = {
   lite: false, autoResume: false, musicShuffle: false, videoFilter: "pixel",
   region: "", playingToasts: true, confirmOverwrite: false,
+  netplay: true, netplayName: "",
 };
 const AUTH = { token: LS.get("auth", null), user: null };
 const authHdr = () => AUTH.token ? { "x-ssw-auth": AUTH.token } : {};
@@ -498,8 +573,8 @@ async function routeHome() {
 
   const frag = document.createDocumentFragment();
   const heroCopy = {
-    title: "Every console. Every game.",
-    desc: `${total.toLocaleString()} games across ${systems.length} systems — browse the lot, play ${playable.length} of them right in your browser, and stream the movie library.`,
+    title: "Drop in. Pick a cabinet.",
+    desc: `${total.toLocaleString()} games on the floor — ${playable.length} of them run in the browser. Continue where you left off, or grab a pad.`,
     actions: [
       { label: "▶ Play now", href: "#/play", primary: true },
       { label: "🎲 Surprise me", href: "#/play/random" },
@@ -514,7 +589,7 @@ async function routeHome() {
     if (token !== state.render) return;
   }
 
-  const resolve = [];   // art-less tiles → hydrateCovers() once the shelves are in
+  const resolve = [];
   const recent = recentList();
   if (recent.length) frag.append(shelf({
     title: "Continue playing", count: recent.length,
@@ -527,32 +602,72 @@ async function routeHome() {
           el("div", { className: "s", textContent: sysName(r.sys) })));
     }),
   }));
-  const favs = favList();
-  if (favs.length) frag.append(shelf({
-    title: "Favorites", count: favs.length, moreHref: "#/favorites",
-    tiles: favs.slice(0, 24).map((f) => favTile(f)),
-  }));
+
+  const liveAnchor = el("div");
+  frag.append(liveAnchor);
 
   frag.append(shelf({
     title: "Play now", count: playable.length, moreHref: "#/play",
     tiles: playable.slice(0, 24).map((s) => consoleTile(s, { play: true })),
   }));
 
-  const anchor = el("div");
-  frag.append(anchor);
+  const trendAnchor = el("div");
+  frag.append(trendAnchor);
+
+  const mpAnchor = el("div");
+  frag.append(mpAnchor);
+
+  frag.append(el("section", { className: "shelf" },
+    el("div", { className: "shelf-head" }, el("h2", { textContent: "The rest of the floor" })),
+    el("div", { className: "wrap", style: "padding-bottom:28px" },
+      el("div", { className: "cab-dock" },
+        ...[
+          ["#/lounge", "🎬", "Lounge", "Movies, music, videos"],
+          ["#/library", "🗂", "Library", "Every console & collection"],
+          ["#/favorites", "♥", "Favorites", "Starred games"],
+          ["#/saves", "☁", "Saves", "Cloud states"],
+          ["#/netplay", "🌐", "Netplay", "Play with a friend"],
+          ["#/profile", "👤", "You", signedIn() ? AUTH.user.display : "Sign in"],
+        ].map(([href, k, t, s]) => el("a", { className: "cab-plaque", href },
+          el("span", { className: "cab-k", textContent: k }),
+          el("span", { className: "cab-t", textContent: t }),
+          el("span", { className: "cab-s", textContent: s })))))));
+
+  view.replaceChildren(frag);
+
+  fetch(`${API}/play/stats`).then((r) => r.json()).then((ps) => {
+    if (token !== state.render) return;
+    const live = (ps && ps.nowPlaying) || [];
+    if (!live.length) return;
+    liveAnchor.replaceWith(el("section", { className: "shelf" },
+      el("div", { className: "shelf-head" },
+        el("h2", { textContent: "On the floor" }),
+        el("span", { className: "count", textContent: `${live.length} playing` })),
+      el("div", { className: "wrap", style: "padding-bottom:8px" },
+        el("div", { className: "live-row" }, ...live.map((x) => {
+          const playHref = x.sys && x.file
+            ? `#/play/${x.sys}/${x.file.split("/").map(encodeURIComponent).join("/")}` : "#/play";
+          return el("div", { className: "live-card" },
+            el("div", { className: "live-who" }, el("span", { className: "live-dot" }), x.who),
+            el("div", { className: "live-game", textContent: x.game }),
+            el("div", { className: "live-sys", textContent: x.sys ? sysName(x.sys) : ""}),
+            el("div", { className: "live-acts" },
+              el("a", { className: "btn btn-primary sm", href: playHref, textContent: x.netplay ? "Join" : "Play too" }),
+              x.watch && el("a", { className: "btn btn-ghost sm", href: `#/watch/${x.watch}`, textContent: "Watch" })));
+        })))));
+  }).catch(() => {});
+
   Promise.all([
-    getJSON("added"), getJSON("collections"), getJSON("franchises"),
     fetch(`${API}/play/stats`).then((r) => r.json()).catch(() => null),
-    getJSON("trending"),   // committed snapshot — the mirror has no stats server
-  ]).then(([added, cols, fr, ps, trendSnap]) => {
-    if (location.hash !== "#/" && location.hash !== "" && location.hash !== "#") return;
-    const bits = document.createDocumentFragment();
-    // live rows: {sys,file,name,count} → play link.  snapshot rows: [name,sys,gid,img,count] → game link.
+    getJSON("trending"),
+  ]).then(([ps, trendSnap]) => {
+    if (token !== state.render) return;
     let trend = ps && (ps.trending && ps.trending.length ? ps.trending : ps.top) || [];
     if (trend.length < 4 && trendSnap && trendSnap.length) {
       trend = trendSnap.map(([name, sys, gid, img, count]) => ({ name, sys, gid, img, count, snap: true }));
     }
-    if (trend.length >= 4) bits.append(shelf({ title: "Trending", count: trend.length,
+    if (trend.length < 4) { trendAnchor.remove(); return; }
+    trendAnchor.replaceWith(shelf({ title: "Trending", count: trend.length,
       tiles: trend.map((p) => {
         const gm = !p.snap && (state.cache[p.sys] || []).find((x) => x.file === p.file);
         const art = coverArt({ img: p.img || (gm && gm.img), name: p.name, sys: p.sys, badge: "Play",
@@ -564,51 +679,111 @@ async function routeHome() {
             el("div", { className: "t", textContent: p.name }),
             el("div", { className: "s", textContent: `${sysName(p.sys)} · ${p.count} play${p.count === 1 ? "" : "s"}` })));
       }) }));
-    if (added && added.length) bits.append(shelf({ title: "Recently added", count: added.length,
-      tiles: added.slice(0, 24).map((r) => refTile(r, resolve)) }));
-    if (cols && cols.length) {
-      const pick = [...cols].sort(() => Math.random() - 0.5).slice(0, 3);
-      for (const c of pick) bits.append(shelf({ title: c.title, count: c.items.length,
-        moreHref: `#/collection/${c.id}`, tiles: c.items.slice(0, 20).map((r) => refTile(r, resolve)) }));
-    }
-    if (fr && fr.length) bits.append(shelf({ title: "Franchises", count: fr.length, moreHref: "#/franchises",
-      tiles: fr.slice(0, 24).map((f) => {
-        const cover = el("div", { className: "tile-art console coll-cover" });
-        (f.items.filter((i) => i[3]).slice(0, 4)).forEach((i) => cover.append(el("img", { src: artUrl(i[3]), loading: "lazy", alt: "" })));
-        cover.append(el("span", { className: "coll-label", textContent: f.title }));
-        return el("a", { className: "tile", href: `#/franchise/${f.id}` }, cover,
-          el("div", { className: "tile-cap" }, el("div", { className: "t", textContent: f.title }),
-            el("div", { className: "s", textContent: f.note })));
-      }) }));
-    anchor.replaceWith(bits);
     hydrateCovers(resolve, { save: backfillRecent });
   });
 
-  const withLogo = systems.filter((s) => s.logo);
-  const rest = systems.filter((s) => !s.logo);
-  frag.append(shelf({
-    title: "All consoles", count: systems.length, moreHref: "#/browse",
-    tiles: [...withLogo, ...rest].map((s) => consoleTile(s)),
-  }));
-  const linkTile = (href, emoji, title, sub) => el("a", { className: "tile", href },
-    el("div", { className: "tile-art console" }, el("div", { className: "ph", textContent: `${emoji}  ${title}` })),
-    el("div", { className: "tile-cap" }, el("div", { className: "t", textContent: title }),
-      el("div", { className: "s", textContent: sub })));
-  frag.append(el("div", { className: "shelf" },
-    el("div", { className: "shelf-head" }, el("h2", { textContent: "More" })),
-    el("div", { className: "shelf-track" },
-      linkTile("#/movies", "🎬", "Movies", "Jellyfin library"),
-      linkTile("#/music", "🎧", "Music", "Albums on the server"),
-      linkTile("#/videos", "▶", "Videos", "Latest YouTube uploads"),
-      linkTile("#/collections", "🗂", "Collections", "Curated & by genre"),
-      linkTile("#/franchises", "🎯", "Franchises", "Mario, Zelda, Sonic…"),
-      linkTile("#/contact", "📡", "Contact", "Socials & Discord"),
-      linkTile("#/favorites", "♥", "Favorites", "Your starred games"),
-      linkTile("#/saves", "☁", "Cloud saves", "Resume on any device"),
-      linkTile("#/profile", "👤", "Profile", signedIn() ? AUTH.user.display : "Sign in & settings"),
-      linkTile("#/stats", "📊", "Stats", "Trending & reports"),
-      linkTile("#/cache", "💾", "Offline", "Install & ROM cache"))));
-  view.replaceChildren(frag);
+  const mpSys = [...new Set(MULTIPLAYER_PICKS.map((p) => p.sys))];
+  Promise.all(mpSys.map((id) => getSystem(id).catch(() => []))).then(() => {
+    if (token !== state.render) return;
+    const tiles = [];
+    for (const p of MULTIPLAYER_PICKS) {
+      const g = (state.cache[p.sys] || []).find((x) => x.file === p.file);
+      if (!g) continue;
+      const art = coverArt({ img: g.img, name: g.name, sys: p.sys, badge: p.tag, file: g.file, resolve });
+      tiles.push(el("a", { className: "tile wide",
+        href: `#/play/${p.sys}/${g.file.split("/").map(encodeURIComponent).join("/")}` }, art,
+        el("div", { className: "tile-cap" },
+          el("div", { className: "t", textContent: g.name }),
+          el("div", { className: "s", textContent: `${sysName(p.sys)} · ${p.tag}` }))));
+    }
+    if (!tiles.length) { mpAnchor.remove(); return; }
+    mpAnchor.replaceWith(shelf({ title: "Two-player night", count: tiles.length, moreHref: "#/netplay", tiles }));
+    hydrateCovers(resolve, { save: backfillRecent });
+  });
+}
+
+async function routeLounge() {
+  ++state.render;
+  document.title = "Lounge — RetroVerse";
+  view.replaceChildren(el("div", { className: "wrap", style: "padding-top:28px" },
+    el("h1", { textContent: "Lounge" }),
+    el("p", { className: "hint", style: "margin:0 0 18px", textContent: "Step off the cabinets. Movies on Jellyfin, the album wall, and the YouTube uploads." }),
+    el("div", { className: "lounge-grid" },
+      el("a", { className: "lounge-card", href: "#/movies", dataset: { k: "movies" } },
+        el("div", { className: "lg-k", textContent: "🎬" }),
+        el("div", { className: "lg-t", textContent: "Movies" }),
+        el("div", { className: "lg-s", textContent: "The Jellyfin library — popcorn, couch, dim the scanlines." })),
+      el("a", { className: "lounge-card", href: "#/music", dataset: { k: "music" } },
+        el("div", { className: "lg-k", textContent: "🎧" }),
+        el("div", { className: "lg-t", textContent: "Music" }),
+        el("div", { className: "lg-s", textContent: "Albums on the home server. Plays in the background while you browse." })),
+      el("a", { className: "lounge-card", href: "#/videos", dataset: { k: "videos" } },
+        el("div", { className: "lg-k", textContent: "▶" }),
+        el("div", { className: "lg-t", textContent: "Videos" }),
+        el("div", { className: "lg-s", textContent: "Latest uploads from the YouTube channel." })))));
+}
+
+async function routeLibrary() {
+  ++state.render;
+  spinner();
+  await getSystems().catch(() => {});
+  document.title = "Library — RetroVerse";
+  const q = el("input", { type: "search", placeholder: "Filter consoles…" });
+  const grid = el("div", { className: "tile-grid" });
+  const draw = () => {
+    const t = q.value.trim().toLowerCase();
+    grid.replaceChildren(...state.sys.systems
+      .filter((s) => !t || s.name.toLowerCase().includes(t) || s.id.includes(t))
+      .map((s) => consoleTile(s)));
+  };
+  q.oninput = debounce(draw, 120);
+  view.replaceChildren(el("div", { className: "wrap", style: "padding-top:22px" },
+    el("div", { className: "shelf-head", style: "padding:0 0 12px" },
+      el("h1", { textContent: "Library" }),
+      el("span", { className: "count", textContent: `${state.sys.systems.length} systems` })),
+    el("p", { className: "hint", style: "margin:0 0 14px" },
+      el("a", { href: "#/collections", textContent: "Collections" }), " · ",
+      el("a", { href: "#/franchises", textContent: "Franchises" }), " · ",
+      el("a", { href: "#/browse", textContent: "Just the consoles" })),
+    el("div", { className: "grid-tools", style: "padding:0" }, q),
+    grid));
+  draw();
+}
+
+async function routeWatch(id) {
+  ++state.render;
+  document.title = "Watch party — RetroVerse";
+  const img = el("img", { alt: "Live play" });
+  const meta = el("div", { className: "watch-meta" },
+    el("span", { className: "live-dot" }),
+    el("strong", { id: "watch-title", textContent: "Connecting…" }),
+    el("span", { className: "hint", id: "watch-host" }));
+  const playLink = el("a", { className: "btn btn-primary sm", hidden: true, textContent: "Play this too" });
+  view.replaceChildren(el("div", { className: "watch-stage" },
+    el("h1", { textContent: "Watch party" }),
+    meta, playLink, img,
+    el("p", { className: "hint", textContent: "Someone on the tailnet is playing. Picture updates a few times a second — not a full netplay stream." })));
+  let dead = 0;
+  const token = state.render;
+  const poll = async () => {
+    if (token !== state.render) return;
+    try {
+      const info = await fetch(`${API}/watch/${id}`, { cache: "no-store" }).then((r) => r.ok ? r.json() : null);
+      if (!info) { dead++; if (dead > 8) { $("#watch-title").textContent = "This party ended."; return; } }
+      else {
+        dead = 0;
+        $("#watch-title").textContent = info.name || "Live";
+        $("#watch-host").textContent = info.host ? `hosted by ${info.host}` : "";
+        if (info.sys && info.file) {
+          playLink.hidden = false;
+          playLink.href = `#/play/${info.sys}/${info.file.split("/").map(encodeURIComponent).join("/")}`;
+        }
+        img.src = `${API}/watch/${id}/frame?t=${Date.now()}`;
+      }
+    } catch { dead++; }
+    if (token === state.render) setTimeout(poll, 180);
+  };
+  poll();
 }
 
 async function routeBrowse() {
@@ -708,11 +883,14 @@ async function routeGame(sysId, gid) {
   if (m.playable) actions.push({ label: "▶ Play", primary: true,
     href: `#/play/${sysId}/${g.file.split("/").map(encodeURIComponent).join("/")}` });
   actions.push({ label: `All ${m.name}`, href: `#/s/${sysId}` });
+  const tips = notesFor(sysId, g.file, g.name);
+  const desc = [g.desc || "No description scraped for this title.", tips.length ? "Note: " + tips.join(" ") : ""]
+    .filter(Boolean).join(" ");
 
   view.replaceChildren(hero({
     kicker: [m.name, g.year].filter(Boolean).join(" · "),
     title: g.name,
-    desc: g.desc || "No description scraped for this title.",
+    desc,
     meta: [g.developer && `Dev: ${g.developer}`, g.publisher && `Pub: ${g.publisher}`,
       g.players && `${g.players} players`].filter(Boolean).join("   ·   "),
     art: g.img ? el("img", { src: artUrl(g.img), alt: g.name })
@@ -752,6 +930,7 @@ async function routePlay() {
     actions: [
       { label: "Pick a ROM file", primary: true, onClick: () => $("#rom-input")?.click() },
       { label: "Browse all games", href: "#/browse" },
+      { label: "Netplay", href: "#/netplay" },
     ],
   }));
   frag.append(el("div", { className: "wrap", style: "padding-bottom:6px" }, dropzone()));
@@ -761,6 +940,36 @@ async function routePlay() {
     el("div", { className: "tile-grid", style: "padding:0" },
       ...playable.map((s) => consoleTile(s, { play: true })))));
   view.replaceChildren(frag);
+}
+
+async function routeNetplay() {
+  ++state.render;
+  document.title = "Netplay — RetroVerse";
+  const np = netplayUrl();
+  const status = el("p", { className: "hint", textContent: np ? "Checking the netplay server…" : "Netplay is turned off in Settings." });
+  const steps = el("ol", { className: "np-steps" },
+    el("li", { textContent: "You and a friend both open the same game on the tailnet." }),
+    el("li", { textContent: "Click Netplay in the top bar (or the globe in the emulator menu)." }),
+    el("li", { textContent: "One person creates a room; the other hits Join. Same ROM, same core — that's it." }));
+  view.replaceChildren(el("section", { className: "pane", style: "max-width:720px;margin:0 auto;padding:28px var(--pad) 60px" },
+    el("div", { className: "big-emoji", textContent: "🌐" }),
+    el("h1", { textContent: "Play with a friend" }),
+    el("p", { textContent: "Netplay syncs two (or more) browsers over the tailnet using EmulatorJS. Best on the same LAN or Tailscale; both of you need the same game running." }),
+    status, steps,
+    el("p", { className: "hint", textContent: "Works great for NES, SNES, Genesis, GB/GBA, and most 2D systems. Heavier cores (N64, PSX, NDS) are laggy unless you're on a fast local link." }),
+    el("div", { style: "display:flex;gap:10px;flex-wrap:wrap;margin-top:18px" },
+      el("a", { className: "btn btn-primary", href: "#/play", textContent: "Pick a game" }),
+      el("a", { className: "btn btn-ghost", href: "#/profile", textContent: "Netplay name & settings" }))));
+  if (!np) return;
+  try {
+    const r = await fetch(np.replace(/\/$/, "") + "/list", { cache: "no-store" });
+    if (!r.ok) throw 0;
+    status.textContent = "Netplay server is up. Open a game and hit Netplay.";
+    status.style.color = "var(--cyan)";
+  } catch {
+    status.textContent = "Couldn't reach the netplay server. You need to be on the tailnet, and arcade-netplay has to be running on shadow.";
+    status.style.color = "var(--pink)";
+  }
 }
 
 async function routePlaySystem(id) {
@@ -1051,14 +1260,19 @@ async function routePlayGame(sys, romParam, resume = false) {
   const saveAsBtn = el("button", { className: "pbtn", id: "cloud-save-as", textContent: "＋", title: "Save to a named slot", hidden: true });
   const loadBtn = el("button", { className: "pbtn", id: "cloud-load", textContent: "☁ Load", title: "Load a save slot", hidden: true });
   const ctrlBtn = el("button", { className: "pbtn", id: "ctrl-btn", textContent: "🎮", title: "Controller setup — see & remap buttons", hidden: true });
+  const ffBtn = el("button", { className: "pbtn", id: "ff-btn", textContent: "⏩", title: "Fast-forward", hidden: true });
+  const rwBtn = el("button", { className: "pbtn", id: "rw-btn", textContent: "⏪", title: "Hold to rewind", hidden: true });
+  const watchBtn = el("button", { className: "pbtn", id: "watch-btn", textContent: "Watch", title: "Start a watch party — others on the tailnet can spectate", hidden: true });
+  const noteBtn = el("button", { className: "note-chip", textContent: "Note", title: "Tips for this game", hidden: true });
+  const npBtn = el("button", { className: "pbtn", id: "np-btn", textContent: "Netplay", title: "Host or join a netplay room for this game", hidden: true });
   const flagBtn = el("button", { className: "pbtn", id: "flag-btn", textContent: "⚑", title: "Report a problem with this game" });
   if (sys !== "upload") flagBtn.onclick = () => reportGame(sys, file, romName);
   else flagBtn.hidden = true;
   const shell = el("div", { className: "player" },
     el("div", { className: "player-bar" },
-      el("button", { className: "exit", textContent: "‹ Exit", onclick: exitPlayer }),
+      el("button", { type: "button", className: "exit", textContent: "‹ Exit", onclick: (e) => { e.preventDefault(); exitPlayer(); } }),
       el("div", { className: "title", id: "player-title", textContent: "Loading…" }),
-      saveBtn, saveAsBtn, loadBtn, ctrlBtn, flagBtn),
+      saveBtn, saveAsBtn, loadBtn, rwBtn, ffBtn, ctrlBtn, npBtn, watchBtn, noteBtn, flagBtn),
     el("div", { className: "player-stage" },
       el("div", { id: "game" }), loadEl));
   document.body.append(shell);
@@ -1106,19 +1320,31 @@ async function routePlayGame(sys, romParam, resume = false) {
   const bios = sys !== "upload" && meta(sys).bios;
   if (bios) window.EJS_biosUrl = ROM_BASE + "bios/" + encodeURIComponent(bios);
   window.EJS_Buttons = { restart: true, settings: true, fullscreen: true, saveState: true,
-    loadState: true, screenshot: true, cheat: true, gamepad: true };
+    loadState: true, screenshot: true, cheat: true, gamepad: true, netplay: true,
+    exitEmulation: true };
   const vf = prefs().videoFilter;
-  window.EJS_defaultOptions = vf === "crt" ? { shader: "crt-aperture.glslp" }
-    : vf === "smooth" ? { shader: "bicubic.glslp" } : {};
-  // Netplay signalling server — tailnet default; override with localStorage ssw:netplay ("off" disables).
-  const np = LS.get("netplay", NETPLAY_URL);
-  if (np && np !== "off") { window.EJS_netplayServer = np; window.EJS_Buttons.netplay = true; }
+  window.EJS_defaultOptions = Object.assign(
+    { rewindEnabled: "enabled" },
+    vf === "crt" ? { shader: "crt-aperture.glslp" }
+      : vf === "smooth" ? { shader: "bicubic.glslp" } : {});
+  window.EJS_color = "#1fe6ff";
+  // unique per game — without a number, EmulatorJS 4.2.3 never shows the netplay globe
+  window.EJS_gameID = gameIdNum(sys, file || romName);
+  // Netplay signalling — tailnet :8712; disable in Settings or localStorage ssw:netplay="off".
+  const np = netplayUrl();
+  if (np) {
+    window.EJS_netplayServer = np;
+    window.EJS_netplayICEServers = NETPLAY_ICE;
+    window.EJS_Buttons.netplay = true;
+  } else {
+    window.EJS_Buttons.netplay = false;
+  }
 
   // cloud save-states — the stable EmulatorJS build has no onSaveState hook, so
   // we drive it ourselves via gameManager.getState()/loadState() + our own buttons.
   // named slots via ?s=<slot>; "auto" is the default / auto-save / resume slot.
   const key = sys === "upload" ? null : stateKey(sys, file);
-  const slotUrl = (slot) => key + "?s=" + encodeURIComponent(slot || "auto");
+  const slotUrl = (slot) => key + "?s=" + encodeURIComponent(slot || "auto") + (AUTH.token ? "&a=" + encodeURIComponent(AUTH.token) : "");
   const wantResume = resume || prefs().autoResume;
   let hasCloudSave = false;
   if (key && wantResume) {
@@ -1128,9 +1354,18 @@ async function routePlayGame(sys, romParam, resume = false) {
     const gm = window.EJS_emulator?.gameManager;
     if (!gm || !key) return false;
     try {
-      await fetch(slotUrl(slot), { method: "PUT",
+      await fetch(slotUrl(slot), { method: "PUT", keepalive: true,
         headers: { "content-type": "application/octet-stream", ...tokenHdr(), ...authHdr() }, body: gm.getState() });
-      hasCloudSave = true; return true;
+      hasCloudSave = true;
+      const canvas = document.querySelector("#game canvas");
+      if (canvas && canvas.toBlob) {
+        canvas.toBlob((blob) => {
+          if (!blob) return;
+          fetch(slotUrl(slot) + "&shot=1", { method: "PUT", keepalive: true,
+            headers: { "content-type": "image/jpeg", ...tokenHdr(), ...authHdr() }, body: blob }).catch(() => {});
+        }, "image/jpeg", 0.72);
+      }
+      return true;
     } catch { return false; }
   };
   const cloudSave = async () => {
@@ -1161,6 +1396,7 @@ async function routePlayGame(sys, romParam, resume = false) {
     const o = el("div", { id: "help-overlay", onclick: (e) => { if (e.target.id === "help-overlay") o.remove(); } },
       el("div", { className: "help-card" }, el("h3", { textContent: "Load a save" }),
         slots.length ? el("div", {}, ...slots.map((s) => el("div", { className: "slot-row" },
+          s.shot ? el("img", { className: "slot-shot", alt: "", src: slotUrl(s.slot) + "&shot=1" }) : el("div", { className: "slot-shot" }),
           el("button", { className: "btn btn-ghost", style: "flex:1;text-align:left",
             textContent: `${s.slot === "auto" ? "Auto-save" : s.slot} · ${new Date(s.mtime).toLocaleString()}`,
             onclick: () => { o.remove(); cloudLoad(s.slot); } }),
@@ -1180,7 +1416,12 @@ async function routePlayGame(sys, romParam, resume = false) {
   let ptStart = 0;
   const ping = (start) => fetch(`${API}/play/ping`, {
     method: "POST", headers: { "content-type": "application/json", ...authHdr() },
-    body: JSON.stringify({ sys, file, name: romName, start, cid: CID }),
+    body: JSON.stringify({
+      sys, file, name: romName, start, cid: CID,
+      who: AUTH.user?.display || prefs().netplayName || null,
+      watch: window.__watchId || null,
+      netplay: !!window.__inNetplay,
+    }),
   }).catch(() => {});
   const flushPlaytime = () => {
     if (!ptKey || !ptStart) return;
@@ -1191,6 +1432,13 @@ async function routePlayGame(sys, romParam, resume = false) {
     }
   };
 
+  window.EJS_ready = () => {
+    const emu = window.EJS_emulator;
+    if (!emu) return;
+    // 4.2.3 gates netplay behind debug flags; the menu still exists, so enable it ourselves.
+    if (np) emu.netplayEnabled = true;
+    emu.on("exit", () => { if (window.__emuUp) exitPlayer(); });
+  };
   window.EJS_onGameStart = () => {
     $("#player-load")?.remove();
     ptStart = Date.now();
@@ -1199,6 +1447,90 @@ async function routePlayGame(sys, romParam, resume = false) {
     window.__emuAutoSaveT = key ? setInterval(autoSave, 180000) : 0;
     ctrlBtn.hidden = false;
     ctrlBtn.onclick = () => controlsPanel(core);
+    ffBtn.hidden = false;
+    ffBtn.onclick = () => {
+      const emu = window.EJS_emulator;
+      if (!emu?.gameManager?.toggleFastForward) return;
+      emu.isFastForward = !emu.isFastForward;
+      emu.gameManager.toggleFastForward(emu.isFastForward ? 1 : 0);
+      ffBtn.classList.toggle("on", !!emu.isFastForward);
+      ffBtn.title = emu.isFastForward ? "Fast-forward on" : "Fast-forward";
+    };
+    rwBtn.hidden = false;
+    const rewind = (on) => {
+      const gm = window.EJS_emulator?.gameManager;
+      if (!gm) return;
+      if (typeof gm.simulateInput === "function") gm.simulateInput(0, 28, on ? 1 : 0);
+    };
+    rwBtn.onpointerdown = (e) => { e.preventDefault(); rewind(true); };
+    rwBtn.onpointerup = rwBtn.onpointerleave = () => rewind(false);
+    watchBtn.hidden = false;
+    watchBtn.onclick = async () => {
+      if (window.__watchId) {
+        try { await navigator.clipboard.writeText(`${location.origin}${location.pathname}#/watch/${window.__watchId}`); } catch { /* */ }
+        toast("Watch-party link copied again");
+        return;
+      }
+      try {
+        const d = await fetch(`${API}/watch`, { method: "POST",
+          headers: { "content-type": "application/json", ...authHdr() },
+          body: JSON.stringify({ sys, file, name: romName, who: AUTH.user?.display || prefs().netplayName || "Host" }),
+        }).then((r) => r.json());
+        window.__watchId = d.id;
+        const link = `${location.origin}${location.pathname}#/watch/${d.id}`;
+        try { await navigator.clipboard.writeText(link); } catch { /* */ }
+        toast("Watch-party link copied — anyone on the tailnet can spectate");
+        watchBtn.textContent = "Live";
+        watchBtn.classList.add("on");
+        ping(false);
+        const grab = () => document.querySelector("#game canvas");
+        window.__watchT = setInterval(() => {
+          const c = grab();
+          if (!c || !window.__watchId || !c.toBlob) return;
+          c.toBlob((blob) => {
+            if (!blob) return;
+            fetch(`${API}/watch/${window.__watchId}/frame`, { method: "PUT", body: blob, keepalive: true }).catch(() => {});
+          }, "image/jpeg", 0.55);
+        }, 160);
+      } catch { toast("Couldn't start a watch party"); }
+    };
+    const tips = notesFor(sys, file, romName);
+    if (tips.length) {
+      noteBtn.hidden = false;
+      noteBtn.onclick = () => {
+        const o = el("div", { id: "help-overlay", onclick: (e) => { if (e.target.id === "help-overlay") o.remove(); } },
+          el("div", { className: "help-card" },
+            el("h3", { textContent: "Before you play" }),
+            ...tips.map((t) => el("p", { textContent: t })),
+            el("button", { className: "btn btn-ghost", textContent: "Got it", onclick: () => o.remove() })));
+        document.body.append(o);
+      };
+    }
+    if (np) {
+      const emu = window.EJS_emulator;
+      const canNp = !emu || typeof emu.gameManager?.supportsStates !== "function"
+        || emu.gameManager.supportsStates();
+      if (canNp) {
+        try {
+          const globe = emu?.elements?.bottomBar?.netplay?.[0];
+          if (globe) globe.style.display = "";
+        } catch { /* */ }
+        if (emu) emu.netplayEnabled = true;
+        npBtn.hidden = false;
+        npBtn.onclick = () => {
+          const ejs = window.EJS_emulator;
+          if (!ejs?.openNetplayMenu) { toast("Netplay isn't ready yet — wait for the game to finish booting"); return; }
+          ejs.openNetplayMenu();
+          window.__inNetplay = true;
+          ping(false);
+          const pname = (prefs().netplayName || AUTH.user?.display || "").toString().trim().slice(0, 20);
+          if (pname) {
+            const input = ejs.netplayMenu?.querySelector("input[type=text]");
+            if (input && !input.value) input.value = pname;
+          }
+        };
+      }
+    }
     if (key) {
       saveBtn.hidden = false;
       saveBtn.onclick = cloudSave;
@@ -1231,12 +1563,26 @@ async function routePlayGame(sys, romParam, resume = false) {
 }
 function emuCleanup() {
   clearInterval(window.__emuHeartbeat); clearInterval(window.__emuAutoSaveT);
+  clearInterval(window.__watchT);
+  if (window.__watchId) fetch(`${API}/watch/${window.__watchId}`, { method: "DELETE", keepalive: true }).catch(() => {});
+  window.__watchId = null; window.__inNetplay = false;
   try { window.__emuFlush?.(); } catch { /* */ }
 }
-async function exitPlayer() {
+let _exiting = false;
+function exitPlayer() {
+  if (_exiting) return;
+  _exiting = true;
+  const btn = document.querySelector(".player-bar .exit");
+  if (btn) { btn.textContent = "Exiting…"; btn.disabled = true; }
+  document.querySelector(".player")?.classList.add("leaving");
   emuCleanup();
-  try { await window.__emuAutoSave?.(); } catch { /* */ }
-  window.__emuUp = false; location.hash = "#/play"; location.reload();
+  // fire-and-forget — awaiting the cloud save used to hang Exit forever if the
+  // PUT stalled. The 3-minute auto-save already covers a recent state.
+  try { window.__emuAutoSave?.(); } catch { /* */ }
+  window.__emuUp = false;
+  try { window.EJS_emulator?.pause?.(); } catch { /* */ }
+  location.hash = "#/play";
+  location.reload();
 }
 window.addEventListener("beforeunload", () => { if (window.__emuUp) { emuCleanup(); navigator.sendBeacon?.(`${API}/play/ping`, JSON.stringify({ cid: CID, bye: true })); } });
 
@@ -2223,13 +2569,16 @@ async function routeSaves() {
     var saveResolve = [];
     saves.sort((a, b) => b.mtime - a.mtime).forEach((s) => {
       const gm = (state.cache[s.sys] || []).find((x) => x.file === s.file);
-      const art = coverArt({ img: gm && gm.img, name: s.name, sys: s.sys, file: s.file, resolve: saveResolve,
+      const shot = (s.slots || []).find((x) => x.shot);
+      const shotUrl = shot ? (STATE_BASE + encodeURIComponent(s.sys) + "/" + s.file.split("/").map(encodeURIComponent).join("/")
+        + "?s=" + encodeURIComponent(shot.slot) + "&shot=1" + (AUTH.token ? "&a=" + encodeURIComponent(AUTH.token) : "")) : null;
+      const art = coverArt({ img: shotUrl || (gm && gm.img), name: s.name, sys: s.sys, file: s.file, resolve: shotUrl ? null : saveResolve,
         badge: s.shared ? "Shared" : "Resume" });
       grid.append(el("a", { className: "tile wide",
         href: `#/resume/${s.sys}/${s.file.split("/").map(encodeURIComponent).join("/")}` }, art,
         el("div", { className: "tile-cap" },
           el("div", { className: "t", textContent: s.name }),
-          el("div", { className: "s", textContent: `${sysName(s.sys)} · ${new Date(s.mtime).toLocaleDateString()}` }))));
+          el("div", { className: "s", textContent: `${sysName(s.sys)} · ${(s.slots || []).length} slot${(s.slots || []).length === 1 ? "" : "s"} · ${new Date(s.mtime).toLocaleDateString()}` }))));
     });
   }
   frag.append(el("div", { className: "wrap" }, grid));
@@ -2355,6 +2704,15 @@ function settingsCard() {
       select("region", "Prefer game region", [["", "No preference"], ["USA", "USA"], ["Europe", "Europe"], ["Japan", "Japan"]]),
       accentRow,
       toggle("autoResume", "Auto-resume cloud saves", "Load your last save automatically when you open a game"),
+      toggle("netplay", "Netplay", "Show Host / Join on the player bar so you can play with someone on the tailnet"),
+      (() => {
+        const inp = el("input", { type: "text", maxLength: 20, placeholder: AUTH.user?.display || "Player",
+          value: p.netplayName || "", style: "width:140px" });
+        inp.onchange = () => setPref("netplayName", inp.value.trim().slice(0, 20));
+        return el("label", { className: "set-row" }, inp,
+          el("div", {}, el("div", { textContent: "Netplay name" }),
+            el("div", { className: "hint", textContent: "Shown to the other player when you host or join a room" })));
+      })(),
       toggle("musicShuffle", "Shuffle albums by default", "Start an album shuffled when you hit Play"),
       toggle("lite", "Lite mode", "Drop the scanlines, glow and animations"),
       toggle("playingToasts", "Show “people playing now” popups", ""),
@@ -2620,7 +2978,7 @@ async function routeSearch(qRaw) {
 function parseHash() {
   return location.hash.replace(/^#\/?/, "").split(/[/?]/).map((s) => { try { return decodeURIComponent(s); } catch { return s; } });
 }
-const TOP_NAV = new Set(["home", "play", "favorites", "saves", "movies", "music", "videos", "contact"]);
+const TOP_NAV = new Set(["home", "play", "lounge", "library"]);
 function setNav(name) {
   $$(".bar-link, .drawer a").forEach((a) => a.classList.toggle("active", a.dataset.nav === name));
   const top = TOP_NAV.has(name);
@@ -2647,23 +3005,27 @@ async function router() {
   if (a === "play" && b === "random") { setNav("play"); return surpriseMe(); }
   if (a === "play" && b) { setNav("play"); return routePlaySystem(b); }
   if (a === "play") { setNav("play"); return routePlay(); }
-  if (a === "favorites") { setNav("favorites"); return routeFavorites(); }
-  if (a === "saves") { setNav("saves"); return routeSaves(); }
+  if (a === "netplay") { setNav("play"); return routeNetplay(); }
+  if (a === "watch" && b) { setNav("play"); return routeWatch(b); }
+  if (a === "lounge") { setNav("lounge"); return routeLounge(); }
+  if (a === "library") { setNav("library"); return routeLibrary(); }
+  if (a === "favorites") { setNav(null); return routeFavorites(); }
+  if (a === "saves") { setNav(null); return routeSaves(); }
   if (a === "cache") { setNav(null); return routeCache(); }
   if (a === "profile") { setNav(null); return routeProfile(); }
   if (a === "login") { setNav(null); return routeLogin(); }
   if (a === "stats") { setNav(null); return routeStats(); }
   if (a === "admin") { setNav(null); return routeAdmin(); }
   if (a === "u" && b) { setNav(null); return routePublicProfile(b); }
-  if (a === "collections") { setNav(null); return routeCollections(); }
-  if (a === "collection" && b) { setNav(null); return routeCollection(b); }
-  if (a === "franchises") { setNav(null); return routeFranchises(); }
-  if (a === "franchise" && b) { setNav(null); return routeFranchise(b); }
-  if (a === "movies") { setNav("movies"); return routeMovies(); }
-  if (a === "music") { setNav("music"); return routeMusic(b); }
-  if (a === "videos") { setNav("videos"); return routeVideos(); }
-  if (a === "contact") { setNav("contact"); return routeContact(); }
-  if (a === "browse") { setNav("home"); return routeBrowse(); }
+  if (a === "collections") { setNav("library"); return routeCollections(); }
+  if (a === "collection" && b) { setNav("library"); return routeCollection(b); }
+  if (a === "franchises") { setNav("library"); return routeFranchises(); }
+  if (a === "franchise" && b) { setNav("library"); return routeFranchise(b); }
+  if (a === "movies") { setNav("lounge"); return routeMovies(); }
+  if (a === "music") { setNav("lounge"); return routeMusic(b); }
+  if (a === "videos") { setNav("lounge"); return routeVideos(); }
+  if (a === "contact") { setNav(null); return routeContact(); }
+  if (a === "browse") { setNav("library"); return routeBrowse(); }
   if (a === "q" && b) { setNav(null); return routeSearch(b); }
   if (a && a !== "") { setNav(null); return route404(); }
   setNav("home"); $("#q").value = ""; return routeHome();
@@ -2749,15 +3111,17 @@ renderAcctChip();
 hydrateAuth();
 
 /* ---- keyboard shortcuts ------------------------------------- */
-const HELP = [["/", "search"], ["g h", "home"], ["g p", "play"], ["g m", "music"], ["g v", "videos"],
-  ["g f", "favorites"], ["r", "random game"], ["l", "toggle lite mode"], ["?", "this help"]];
+const HELP = [["/", "search"], ["g h", "home"], ["g p", "play"], ["g l", "lounge"], ["g b", "library"],
+  ["g f", "favorites"], ["r", "random game"], ["l", "toggle lite mode"],
+  ["Esc", "exit a game"], ["?", "this help"]];
 let _kchord = 0;
 addEventListener("keydown", (e) => {
+  if (window.__emuUp && e.key === "Escape") { e.preventDefault(); exitPlayer(); return; }
   if (/^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName) || window.__emuUp || e.metaKey || e.ctrlKey || e.altKey) return;
   const now = Date.now();
   if (_kchord && now - _kchord < 900) {
     _kchord = 0;
-    const map = { h: "#/", p: "#/play", m: "#/music", v: "#/videos", f: "#/favorites", c: "#/contact", s: "#/saves" };
+    const map = { h: "#/", p: "#/play", m: "#/music", v: "#/videos", f: "#/favorites", c: "#/contact", s: "#/saves", l: "#/lounge", b: "#/library" };
     if (map[e.key]) { location.hash = map[e.key]; return; }
   }
   if (e.key === "g") { _kchord = now; return; }

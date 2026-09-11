@@ -69,7 +69,10 @@ function readToken(tok) {
   } catch { return null; }
 }
 function userByToken(req) {
-  const tok = req.headers["x-ssw-auth"] || "";
+  let tok = req.headers["x-ssw-auth"] || "";
+  if (!tok) {
+    try { tok = new URL(req.url, "http://x").searchParams.get("a") || ""; } catch { tok = ""; }
+  }
   const uid = readToken(tok);
   if (!uid) return null;
   return Object.values(accts().users).find((u) => u.id === uid) || null;
@@ -139,9 +142,11 @@ function serveStatic(req, res, urlPath) {
     res.writeHead(200, {
       "content-type": MIME[ext] || "application/octet-stream",
       "content-length": st.size,
-      "cache-control": (rel.startsWith("/media/") || rel.startsWith("/data/"))
-        ? "public, max-age=3600"
-        : "no-store",              // html/js/css: always fresh
+      "cache-control": rel.startsWith("/media/")
+        ? "public, max-age=86400"                 // box art: content-stable, cache hard
+        : rel.startsWith("/data/")
+          ? "public, max-age=300, must-revalidate" // browse data: a rebuild should land fast
+          : "no-store",                            // html/js/css: always fresh
     });
     if (req.method === "HEAD") return res.end();
     fs.createReadStream(full).pipe(res);
@@ -421,6 +426,8 @@ const slotOf = (u0) => (u0.searchParams.get("s") || "auto").replace(/[^a-z0-9_ -
 // STATES/<ns>/<sys>/<base64url(rompath)>/<slot>.state
 const stateDir = (ns, sys, rel) => path.join(STATES, ns, sys, Buffer.from(rel).toString("base64url"));
 const stateFile = (ns, sys, rel, slot) => path.join(stateDir(ns, sys, rel), (slot || "auto") + ".state");
+const shotFile = (ns, sys, rel, slot) => path.join(stateDir(ns, sys, rel), (slot || "auto") + ".jpg");
+const SHOT_MAX = 512 * 1024;
 
 // migrations: legacy STATES/<sys>/ -> _shared/<sys>/ ; then <b64>.state file -> <b64>/auto.state
 (function migrateStates() {
@@ -467,7 +474,9 @@ function nsList(ns, shared) {
         for (const sf of fs.readdirSync(gd)) {
           if (!sf.endsWith(".state")) continue;
           const st = fs.statSync(path.join(gd, sf));
-          slots.push({ slot: sf.slice(0, -6), size: st.size, mtime: st.mtimeMs });
+          const slot = sf.slice(0, -6);
+          const hasShot = fs.existsSync(path.join(gd, slot + ".jpg"));
+          slots.push({ slot, size: st.size, mtime: st.mtimeMs, shot: hasShot || undefined });
         }
         if (!slots.length) continue;
         slots.sort((a, b) => b.mtime - a.mtime);
@@ -489,13 +498,15 @@ function statesList(req, res) {
 function stateGet(req, res, sys, rel, u0) {
   if (!stateSys(sys) || rel.split(/[/\\]/).includes("..")) { res.writeHead(400, CORS).end("bad"); return; }
   const ns = nsFor(req), slot = slotOf(u0);
-  let full = stateFile(ns, sys, rel, slot), st;
+  const wantShot = u0.searchParams.get("shot");
+  const pick = (nspace) => wantShot ? shotFile(nspace, sys, rel, slot) : stateFile(nspace, sys, rel, slot);
+  let full = pick(ns), st;
   try { st = fs.statSync(full); }
   catch {
-    if (ns !== "_shared") { full = stateFile("_shared", sys, rel, slot); try { st = fs.statSync(full); } catch { /* */ } }
+    if (ns !== "_shared") { full = pick("_shared"); try { st = fs.statSync(full); } catch { /* */ } }
     if (!st) { res.writeHead(404, CORS).end("no save"); return; }
   }
-  res.writeHead(200, { ...CORS, "content-type": "application/octet-stream",
+  res.writeHead(200, { ...CORS, "content-type": wantShot ? "image/jpeg" : "application/octet-stream",
     "content-length": st.size, "cache-control": "no-store" });
   if (req.method === "HEAD") return res.end();
   fs.createReadStream(full).pipe(res);
@@ -503,12 +514,14 @@ function stateGet(req, res, sys, rel, u0) {
 
 function statePut(req, res, sys, rel, u0) {
   if (!stateSys(sys) || rel.split(/[/\\]/).includes("..")) { res.writeHead(400, CORS).end("bad"); return; }
-  const full = stateFile(nsFor(req), sys, rel, slotOf(u0));
+  const isShot = u0.searchParams.get("shot");
+  const full = isShot ? shotFile(nsFor(req), sys, rel, slotOf(u0)) : stateFile(nsFor(req), sys, rel, slotOf(u0));
   fs.mkdirSync(path.dirname(full), { recursive: true });
+  const max = isShot ? SHOT_MAX : STATE_MAX;
   const chunks = []; let n = 0;
   req.on("data", (c) => {
     n += c.length;
-    if (n > STATE_MAX) { req.destroy(); res.writeHead(413, CORS).end("too big"); return; }
+    if (n > max) { req.destroy(); res.writeHead(413, CORS).end("too big"); return; }
     chunks.push(c);
   });
   req.on("end", () => {
@@ -520,9 +533,23 @@ function statePut(req, res, sys, rel, u0) {
 
 function stateDelete(req, res, sys, rel, u0) {
   if (!stateSys(sys) || rel.split(/[/\\]/).includes("..")) { res.writeHead(400, CORS).end("bad"); return; }
-  try { fs.unlinkSync(stateFile(nsFor(req), sys, rel, slotOf(u0))); } catch { /* already gone */ }
-  try { fs.rmdirSync(stateDir(nsFor(req), sys, rel)); } catch { /* not empty */ }
+  const ns = nsFor(req), slot = slotOf(u0);
+  try { fs.unlinkSync(stateFile(ns, sys, rel, slot)); } catch { /* already gone */ }
+  try { fs.unlinkSync(shotFile(ns, sys, rel, slot)); } catch { /* */ }
+  try { fs.rmdirSync(stateDir(ns, sys, rel)); } catch { /* not empty */ }
   res.writeHead(200, { ...CORS, "content-type": "application/json" }).end('{"ok":true}');
+}
+
+// ---- watch party: last JPEG frame per room, tailnet spectators poll it ----
+const WATCH = new Map();   // id -> { sys, file, name, host, at, frame, ctype }
+const WATCH_MAX = 400 * 1024;
+function pruneWatch() {
+  const cut = now() - 25000;
+  for (const [id, w] of WATCH) if (w.at < cut) WATCH.delete(id);
+}
+setInterval(pruneWatch, 8000).unref?.();
+function watchMeta(id, w) {
+  return { id, sys: w.sys, file: w.file, name: w.name, host: w.host, at: w.at, live: !!w.frame };
 }
 
 // ---- auth endpoints ---------------------------------------------------
@@ -725,8 +752,13 @@ async function playPing(req, res) {
   let body = {};
   try { body = JSON.parse((await readBody(req, 4096)).toString() || "{}"); } catch { /* */ }
   const s = stats();
-  const key = `${body.sys}/${body.file}`;
   const u = userByToken(req);
+  if (body.bye && body.cid) {
+    delete s.sessions[body.cid];
+    statsDirty = true;
+    jsonRes(res, 200, { ok: true }); return;
+  }
+  const key = `${body.sys}/${body.file}`;
   if (body.sys && body.file && PLAYABLE.has(body.sys)) {
     const p = s.plays[key] || { sys: body.sys, file: body.file, name: body.name || body.file, count: 0, last: 0 };
     if (body.start) {
@@ -740,7 +772,14 @@ async function playPing(req, res) {
     p.last = now(); p.name = body.name || p.name;
     s.plays[key] = p;
   }
-  if (body.cid) s.sessions[body.cid] = { game: body.name || null, at: now(), who: u ? u.display : null };
+  if (body.cid) {
+    s.sessions[body.cid] = {
+      game: body.name || null, at: now(),
+      who: u ? u.display : (body.who || null),
+      sys: body.sys || null, file: body.file || null,
+      watch: body.watch || null, netplay: !!body.netplay,
+    };
+  }
   statsDirty = true;
   jsonRes(res, 200, { ok: true });
 }
@@ -757,9 +796,12 @@ function playStats(req, res) {
     .sort((a, b) => b.n - a.n).slice(0, 30)
     .map(({ sys, file, name, n, issues }) => ({ sys, file, name, n, issues }));
   const cutoff = now() - 90000;
-  const live = Object.values(s.sessions).filter((x) => x.at > cutoff);
+  const live = Object.values(s.sessions).filter((x) => x.at > cutoff && x.game);
   jsonRes(res, 200, { top, trending, reported, playingNow: live.length,
-    nowPlaying: live.filter((x) => x.who && x.game).map((x) => ({ who: x.who, game: x.game })).slice(0, 12) });
+    nowPlaying: live.map((x) => ({
+      who: x.who || "Someone", game: x.game, sys: x.sys || null, file: x.file || null,
+      watch: x.watch || null, netplay: !!x.netplay,
+    })).slice(0, 16) });
 }
 
 // ---- public profile -------------------------------------------------
@@ -942,7 +984,7 @@ function tokenOK(req) {
   return got === want;
 }
 
-http.createServer((req, res) => {
+http.createServer(async (req, res) => {
   if (req.method === "OPTIONS") { res.writeHead(204, { ...CORS, "access-control-max-age": "86400", "access-control-allow-headers": "range, content-type, x-ssw-token, x-ssw-auth" }).end(); return; }
 
   {
@@ -959,6 +1001,57 @@ http.createServer((req, res) => {
     if (P === "/banner" && req.method === "GET") { getBanner(req, res); return; }
     const am = P.match(/^\/admin\/([a-z]+)$/);
     if (am) { if (rateLimited(req, res, 60, 60000)) return; admin(req, res, am[1], u0); return; }
+
+    // ---- watch party (before the write-token gate; frames are jpeg, not saves) ----
+    if (P === "/watch" && req.method === "POST") {
+      if (rateLimited(req, res, 20, 60000)) return;
+      let b = {};
+      try { b = JSON.parse((await readBody(req, 4096)).toString() || "{}"); } catch { /* */ }
+      const id = crypto.randomBytes(4).toString("hex");
+      const u = userByToken(req);
+      WATCH.set(id, { sys: b.sys || null, file: b.file || null, name: b.name || "Game",
+        host: u ? u.display : (b.who || "Host"), at: now(), frame: null, ctype: "image/jpeg" });
+      jsonRes(res, 200, { id, url: `/#/watch/${id}` }); return;
+    }
+    if (P === "/watch/list" && req.method === "GET") {
+      pruneWatch();
+      jsonRes(res, 200, [...WATCH.entries()].filter(([, w]) => w.frame).map(([id, w]) => watchMeta(id, w)));
+      return;
+    }
+    const wm = P.match(/^\/watch\/([a-z0-9]+)(?:\/(frame))?$/i);
+    if (wm) {
+      const id = wm[1], kind = wm[2];
+      const w = WATCH.get(id);
+      if (req.method === "PUT" && kind === "frame") {
+        if (rateLimited(req, res, 240, 60000)) return;
+        if (!w) { res.writeHead(404, CORS).end("no room"); return; }
+        const chunks = []; let n = 0;
+        req.on("data", (c) => {
+          n += c.length;
+          if (n > WATCH_MAX) { req.destroy(); res.writeHead(413, CORS).end("too big"); return; }
+          chunks.push(c);
+        });
+        req.on("end", () => {
+          if (res.writableEnded) return;
+          w.frame = Buffer.concat(chunks); w.at = now();
+          w.ctype = (req.headers["content-type"] || "image/jpeg").split(";")[0];
+          res.writeHead(200, { ...CORS, "content-type": "application/json" }).end('{"ok":true}');
+        });
+        return;
+      }
+      if (req.method === "DELETE") {
+        WATCH.delete(id); jsonRes(res, 200, { ok: true }); return;
+      }
+      if (!w) { res.writeHead(404, CORS).end("no room"); return; }
+      if (kind === "frame" && (req.method === "GET" || req.method === "HEAD")) {
+        if (!w.frame) { res.writeHead(204, CORS).end(); return; }
+        res.writeHead(200, { ...CORS, "content-type": w.ctype || "image/jpeg",
+          "content-length": w.frame.length, "cache-control": "no-store" });
+        if (req.method === "HEAD") return res.end();
+        res.end(w.frame); return;
+      }
+      if (req.method === "GET") { jsonRes(res, 200, watchMeta(id, w)); return; }
+    }
 
     const writeEP = req.method === "PUT" || req.method === "DELETE"
       || (req.method === "POST" && (P === "/request" || P === "/report"));

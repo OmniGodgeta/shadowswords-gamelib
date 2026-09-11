@@ -2,6 +2,62 @@
 
 All notable changes to the RetroVerse website.
 
+## [2.17.0] — 2026-09-11 — The floor, not the catalog
+
+Home was a pile of the same shelf eleven times. It's a cabinet floor now.
+
+### Changed
+- **Top nav is four items:** Home · Play · Lounge · Library. Movies / music /
+  videos live under Lounge; every console, collection and franchise under
+  Library. Favorites, saves, contact sit in the drawer and a compact dock
+  at the bottom of Home — not a second wall of identical tiles.
+- **Home keeps what you liked:** Continue playing, Play now (consoles),
+  Trending. Dropped the random collections, franchises, "all consoles" and
+  "More" dump that repeated the same games.
+
+### Added
+- **On the floor** — live "who's playing" cards with Play too / Join /
+  Watch when a watch-party is up.
+- **Two-player night** — curated couch & netplay picks (Kart, Smash,
+  Bomberman, Streets of Rage, CTR…).
+- **Watch party** — 👁 Watch on the player bar copies a tailnet link;
+  `#/watch/<id>` spectates the canvas a few times a second. No public
+  streaming, signalling stays on the tailnet.
+- **Rewind / fast-forward** on the player bar (hold ⏪, toggle ⏩).
+- **Per-game notes** — a Note chip when a title or core has a known
+  quirk (BIOS, 4-player, romset version).
+- **Save-state timeline** — cloud saves store a JPEG snapshot next to
+  the state; the load picker and Saves page show the picture.
+- **Phone player chrome** — bigger Exit, wrapping bar, scaled on-screen pad.
+
+### Internal
+- SW `ssw-v2.31`, assets `?v=2.31`.
+- `arcade-server`: `/watch` rooms + frame PUT/GET, session pings carry
+  sys/file/watch/netplay, save slots grow a `.jpg` sidecar.
+
+## [2.16.0] — 2026-09-11 — Exit actually exits, netplay actually netplays
+
+### Fixed
+- **Exit from a game now works.** The ‹ Exit button awaited the cloud auto-save
+  PUT; if that fetch stalled, the click did nothing and you were stuck. Exit
+  now leaves immediately (save still fires in the background), shows
+  “Exiting…”, and **Escape** does the same. The emulator's own exit button is
+  hooked too — EmulatorJS 4.2.3 fired an `exit` event with nobody listening.
+
+### Added
+- **Netplay that shows up.** EmulatorJS 4.2.3 hides the globe unless
+  `EJS_gameID` is a unique number *and* then still gates it behind debug
+  flags. We now set a stable per-game id, STUN servers, force-enable the
+  menu, and put a **Netplay** button on the player bar. Host / join a room
+  with anyone on the tailnet running the same game.
+- **`#/netplay`** — short how-to plus a live check of the signalling server
+  (`arcade-netplay` on `:8712`). Linked from the Play page.
+- Settings: toggle netplay, and a **Netplay name** (defaults to your account
+  display name).
+
+### Internal
+- SW `ssw-v2.30`, assets `?v=2.30`.
+
 ## [2.15.1] — 2026-09-10 — AGENTS.md
 
 ### Added
