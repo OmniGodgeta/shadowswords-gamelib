@@ -194,3 +194,78 @@ Current APK: 1.6.3 (`v1.6.3` GitHub Release, `RetroVerse-1.6.3.apk`).
 
 ---
 *Keep this file current. If you learn something the hard way, add it here.*
+
+---
+
+## Browser & App Netplay Fixes (2026-09-11) — Session Summary
+
+**Issues fixed:**
+
+1. **Browser Netplay controls were hidden** (RetroVerse v2.22.2)
+   - **Root cause:** UI only showed Netplay/Create Room/Invite buttons when `SELF_HOSTED` was true (tailnet domain)
+   - **Fix:** Removed the SELF_HOSTED gate; API requests still target the tailnet server
+   - **Commits:** `35e2bf3` (shadowswords-gamelib)
+   - **Testing:** Netplay controls now visible on both public (omnigodgeta.github.io) and self-hosted (shadow-1.tail51f9d6.ts.net) builds
+
+2. **In-app Netplay button overlapped Start/Select controls**
+   - **Root cause:** FAB positioned bottom-center, same zone as EmulatorJS touch pad
+   - **Fix:** Moved to upper-right corner with safe-area insets
+   - **Commit:** `a8aac2f` (shadowswords-gamelib)
+
+3. **WebRTC room-join failures (ICE candidates before peer description)**
+   - **Root cause:** Candidates arrived before remote SDP; RTCPeerConnection rejects them
+   - **Fix:** Queue ICE candidates until remote description exists, then flush
+   - **Commit:** `a8aac2f`
+
+4. **App updater button does nothing** (RetroVerse v1.6.3+ → v1.6.4)
+   - **Root causes:**
+     - Permission flow opens settings, returns "needPermission", but doesn't retry automatically
+     - Installer crashes (FileProvider/Intent errors) are silently caught and shown as generic "couldn't download" message
+     - APK path not retained, so permission → grant → return to app = user must re-tap Install
+   - **Fixes:**
+     - Store APK path in `_pendingUpdatePath` field
+     - Resume pending install in `didChangeAppLifecycleState(AppLifecycleState.resumed)`
+     - Return structured error codes from Kotlin (e.g., "provider: FileNotFoundException", "installer: ActivityNotFoundException")
+     - Display real installer error instead of generic message
+   - **Commits:** `e0178a9` (shadowswords)
+
+**Remaining work for next agent:**
+
+- Test the app updater on a real device with unknown-app permission denied initially, then granted
+- Verify release keystore signing (requires `android/key.properties`); debug-signed APKs cannot upgrade to release-signed or vice versa
+- Consider adding logcat diagnostics for updater failures (currently only in-memory ring buffer)
+- Test Netplay on actual tailnet: room creation, guest join, ICE connectivity, input sync
+
+**File locations:**
+
+| Repo | File | Change | Lines |
+|------|------|--------|-------|
+| shadowswords-gamelib | docs/assets/app.js | Netplay visibility gate removed, ICE queue added | 108, 189-201 |
+| shadowswords-gamelib | docs/assets/style.css | FAB position changed | 1276-1278 |
+| shadowswords-gamelib | server/arcade-server.mjs | /np/health endpoint added | 1078 |
+| shadowswords | lib/main.dart | APK path retention + resume logic | 109, 436, 603, 615-621, 637-649 |
+| shadowswords | android/app/src/main/kotlin/com/shadowswords/shadowswords/MainActivity.kt | Structured error codes | 122-138 |
+
+**Build & test commands:**
+
+```bash
+# RetroVerse web (after changes)
+cd /home/shadowswords/Work/shadowswords-gamelib
+./deploy.sh
+
+# RetroVerse app (after changes)
+cd /home/shadowswords/Work/shadowswords
+flutter pub get
+flutter build apk --release  # requires android/key.properties
+# or for debug:
+flutter build apk --debug
+adb install -r build/app/outputs/apk/debug/app-debug.apk
+```
+
+**Server status:**
+
+- `arcade-server.service` (port 8710): running, serves site + netplay signaling
+- `arcade-netplay.service` (port 8712): running, EmulatorJS relay (deprecated; we use WebRTC)
+- Both auto-restart on boot via systemd `--user` units
+
+All changes are live as of 2026-09-11T17:43 UTC.
