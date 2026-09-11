@@ -1495,6 +1495,7 @@ async function routePlayGame(sys, romParam, resume = false) {
   ++state.render;
   if (window.__emuUp) { location.reload(); return; }
   window.__emuUp = true;
+  document.documentElement.classList.add("playing");
   if (MP.ai && !MP.ai.paused) { MP.ai.pause(); toast("Music paused for the game"); }
   await getSystems().catch(() => {});
 
@@ -1822,6 +1823,7 @@ async function routePlayGame(sys, romParam, resume = false) {
   document.body.append(s);
 }
 function emuCleanup() {
+  document.documentElement.classList.remove("playing");
   clearInterval(window.__emuHeartbeat); clearInterval(window.__emuAutoSaveT);
   clearInterval(window.__watchT); clearInterval(window.__npSnapT);
   if (window.__watchId) fetch(`${API}/watch/${window.__watchId}`, { method: "DELETE", keepalive: true }).catch(() => {});
@@ -1839,6 +1841,7 @@ function _exitDest(hash) {
 // the JS thread (N64/PSX especially), which is why "Exiting…" used to stick.
 function exitPlayer() {
   window.__emuUp = false;
+  document.documentElement.classList.remove("playing");
   forgetSession();
   const btn = document.querySelector(".player-bar .exit");
   if (btn) { btn.textContent = "Exiting…"; btn.disabled = true; }
@@ -3443,15 +3446,23 @@ window.toggleLite = () => { setPref("lite", !(prefs().lite === true)); toast(doc
 function renderAcctChip() {
   let c = $("#acct-chip");
   if (!c) {
-    c = el("a", { id: "acct-chip", href: "#/profile" });
+    c = el("a", { id: "acct-chip", href: "#/profile", title: AUTH.user ? "Profile" : "Sign in" });
     ($("#bar-right") || $("#bar")).prepend(c);
   }
   c.replaceChildren(el("span", { className: "ac-av", textContent: AUTH.user ? AUTH.user.avatar : "👤" }),
     el("span", { className: "ac-name", textContent: AUTH.user ? AUTH.user.display : "Sign in" }));
   c.href = AUTH.user ? "#/profile" : "#/login";
-  // mirror into the mobile drawer
-  const dl = $('#drawer a[data-nav="profile"]');
-  if (dl) dl.textContent = AUTH.user ? `${AUTH.user.avatar} ${AUTH.user.display}` : "Sign in / Profile";
+  c.title = AUTH.user ? "Profile" : "Sign in";
+  const dl = $("#drawer-acct");
+  if (dl) {
+    dl.className = "drawer-acct" + (AUTH.user ? "" : " signin");
+    dl.href = AUTH.user ? "#/profile" : "#/login";
+    dl.replaceChildren(
+      el("span", { className: "ac-av", textContent: AUTH.user ? AUTH.user.avatar : "👤" }),
+      el("span", { textContent: AUTH.user ? AUTH.user.display : "Sign in" }));
+  }
+  const prof = $('#drawer a[data-nav="profile"]');
+  if (prof) prof.textContent = AUTH.user ? "Profile & settings" : "Sign in / Profile";
 }
 addEventListener("ssw-auth", renderAcctChip);
 addEventListener("ssw-prefs", applyPrefs);

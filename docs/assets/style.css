@@ -109,7 +109,7 @@ h1, h2, h3 { letter-spacing: -.01em; }
 #acct-chip .ac-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 @media (max-width: 700px) { #acct-chip .ac-name { display: none; } #acct-chip { padding: 6px; } }
 @media (max-width: 560px) {
-  #acct-chip { display: none; }          /* the ☰ drawer carries the account state here */
+  #acct-chip { display: flex; padding: 6px; } /* icon only — Sign in / profile */
   .brand .logo { height: 30px; }
   .bar { gap: 4px; padding: 0 8px; }
   .bar-btn { width: 34px; height: 34px; font-size: 17px; }
@@ -1214,7 +1214,25 @@ html.hide-touch .nipple { display: none !important; }
 
 /* Android app: hide the player chrome so the game fills the landscape screen.
    Tap the top nub to pull the bar down; a small ‹ stays in the corner to exit. */
-html.in-app .bar, html.in-app .foot, html.in-app .scanlines { display: none; }
+html.in-app .foot, html.in-app .scanlines { display: none; }
+html.in-app .bar {
+  display: grid;
+  padding-top: env(safe-area-inset-top);
+  height: calc(var(--bar-h) + env(safe-area-inset-top, 0px));
+}
+html.in-app #menu-btn { display: block; }
+html.in-app .bar-nav { display: none; }
+html.in-app #acct-chip { display: flex !important; }
+html.in-app .drawer { top: calc(var(--bar-h) + env(safe-area-inset-top, 0px)); }
+html.in-app.playing .bar,
+html.in-app.playing .drawer { display: none !important; }
+.drawer-acct {
+  display: flex; align-items: center; gap: 10px;
+  padding: 16px 24px; font-weight: 800; font-size: 15px; color: var(--text);
+  border-bottom: 1px solid var(--line);
+}
+.drawer-acct .ac-av { font-size: 22px; }
+.drawer-acct.signin { color: var(--cyan); }
 .player.in-app-player .player-bar {
   position: absolute; top: 0; left: 0; right: 0; z-index: 5;
   transform: translateY(-110%);

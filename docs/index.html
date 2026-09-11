@@ -21,7 +21,7 @@
 <link rel="icon" href="assets/img/favicon.png">
 <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
 <link rel="preconnect" href="https://cdn.emulatorjs.org" crossorigin>
-<link rel="stylesheet" href="assets/style.css?v=2.36">
+<link rel="stylesheet" href="assets/style.css?v=2.37">
 </head>
 <body>
 <div class="scanlines" aria-hidden="true"></div>
@@ -48,11 +48,16 @@
 </header>
 
 <nav class="drawer" id="drawer" hidden>
+  <a href="#/login" class="drawer-acct signin" id="drawer-acct" data-nav="acct">👤 Sign in</a>
   <a href="#/" data-nav="home">Home</a>
   <a href="#/play" data-nav="play">Play</a>
   <a href="#/lounge" data-nav="lounge">Lounge</a>
   <a href="#/library" data-nav="library">Library</a>
   <a href="#/netplay" data-nav="netplay">Netplay</a>
+  <div class="drawer-sep" role="separator"></div>
+  <a href="#/movies" data-nav="movies">Movies</a>
+  <a href="#/music" data-nav="music">Music</a>
+  <a href="#/videos" data-nav="videos">Videos</a>
   <div class="drawer-sep" role="separator"></div>
   <a href="#/favorites" data-nav="favorites">Favorites</a>
   <a href="#/saves" data-nav="saves">Cloud saves</a>
@@ -75,6 +80,6 @@
   <a href="javascript:void 0" onclick="toggleHelp()">Shortcuts</a>
 </footer>
 
-<script src="assets/app.js?v=2.36"></script>
+<script src="assets/app.js?v=2.37"></script>
 </body>
 </html>

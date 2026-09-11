@@ -137,6 +137,10 @@ If you re-tune `_lr_loose()` (libretro fuzzy match) in build.py, `rm -rf
   shouldn't be — Funnel is off).
 - In-app: 🎮 / Netplay FABs vs EJS own settings gear overlapping on some cores.
 
+**In-app chrome (2.22.0):** `html.in-app .bar` is **visible** (brand, ☰ menu, Sign in / avatar).
+It is hidden only with `html.playing` while a game runs. Do not `display:none` the
+header for all `in-app` — that's why users couldn't log in from the phone.
+
 ## 11. Exit (don't hang the player)
 
 The ‹ Exit button must **not** `await` the cloud-save PUT or call

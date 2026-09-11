@@ -2,6 +2,18 @@
 
 All notable changes to the RetroVerse website.
 
+## [2.22.0] — 2026-09-11 — In-app top bar: brand, Sign in, sections
+
+### Fixed
+- The Android WebView hid the entire site header (`html.in-app .bar { display:none }`),
+  so you could only reach Sign in / Profile / Lounge from the home dock.
+  The header is back: RetroVerse logo, ☰ menu (Home, Play, Lounge, Library,
+  Movies, Music, Videos, Favorites, Saves…), and a **Sign in** / avatar chip
+  top-right. It still hides **while a game is running**.
+
+### Internal
+- `html.playing` gates in-app chrome. SW `ssw-v2.37`.
+
 ## [2.21.0] — 2026-09-11 — Netplay FAB, Join room actually joins
 
 ### Fixed
