@@ -1,6 +1,15 @@
 # Changelog
 
 All notable changes to the RetroVerse website.
+
+## [2.22.3] — 2026-09-11 — Netplay health check
+
+### Fixed
+
+- Updated the Netplay page to use the server's `/np/health` endpoint instead
+  of the retired EmulatorJS `/list` probe.
+- Bumped the service-worker and asset versions to `2.40`.
+
 ## [2.22.2] — 2026-09-11 — Netplay controls on browser builds
 
 ### Fixed

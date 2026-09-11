@@ -1215,7 +1215,7 @@ async function routeNetplay() {
       el("a", { className: "btn btn-ghost", href: "#/profile", textContent: "Netplay name & settings" }))));
   if (!np) return;
   try {
-    const r = await fetch(np.replace(/\/$/, "") + "/list", { cache: "no-store" });
+    const r = await fetch(`${API}/np/health`, { cache: "no-store" });
     if (!r.ok) throw 0;
     status.textContent = "Netplay server is up. Open a game and hit Netplay.";
     status.style.color = "var(--cyan)";
