@@ -2,6 +2,16 @@
 
 All notable changes to the RetroVerse website.
 
+## [2.22.1] — 2026-09-11 — Netplay signaling and in-game controls
+
+### Fixed
+
+- Queue WebRTC ICE candidates received before the remote session description so
+  joining a room does not randomly fail during connection setup.
+- Moved the in-app Netplay button to the upper-right corner so it no longer
+  covers EmulatorJS's Start and Select touch controls.
+- Bumped the service-worker and asset versions to `2.38`.
+
 ## [2.22.0] — 2026-09-11 — In-app top bar: brand, Sign in, sections
 
 ### Fixed

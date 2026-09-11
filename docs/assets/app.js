@@ -108,7 +108,7 @@ function snapshotNetplay(sys, file, name) {
 }
 /* WebRTC netplay — replaces EmulatorJS's broken savestate lockstep.
    Host = player 1, guest = player 2. Inputs ride a datachannel on the tailnet. */
-const NP = { role: null, room: null, pc: null, dc: null, myP: 0, after: 0, pollT: 0, alive: false };
+const NP = { role: null, room: null, pc: null, dc: null, myP: 0, after: 0, pollT: 0, alive: false, pendingIce: [] };
 
 function npCore(p, i, v) {
   const fn = window.EJS_emulator?.gameManager?.functions?.simulateInput;
@@ -189,7 +189,17 @@ async function npHandleSig(m) {
       npSendLocalSdp();
     }
   }
-  if (pl.ice) { try { await NP.pc.addIceCandidate(pl.ice); } catch { /* */ } }
+  if (pl.ice) {
+    if (!NP.pc.remoteDescription) {
+      NP.pendingIce.push(pl.ice);
+      return;
+    }
+    await NP.pc.addIceCandidate(pl.ice);
+  }
+  if (NP.pc.remoteDescription && NP.pendingIce.length) {
+    const pending = NP.pendingIce.splice(0);
+    for (const ice of pending) await NP.pc.addIceCandidate(ice);
+  }
 }
 function npPoll() {
   if (!NP.alive || !NP.room) return;
@@ -234,7 +244,7 @@ function npStop() {
   NP.alive = false; clearTimeout(NP.pollT);
   try { NP.dc && NP.dc.close(); } catch { /* */ }
   try { NP.pc && NP.pc.close(); } catch { /* */ }
-  NP.dc = NP.pc = NP.room = NP.role = null; NP.myP = 0;
+  NP.dc = NP.pc = NP.room = NP.role = null; NP.myP = 0; NP.pendingIce = [];
   window.__inNetplay = false; window.__npRoom = null;
 }
 async function autoJoinNetplay(wantRoom) {
