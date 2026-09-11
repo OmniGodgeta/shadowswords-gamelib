@@ -2,6 +2,21 @@
 
 All notable changes to the RetroVerse website.
 
+## [2.21.0] — 2026-09-11 — Netplay FAB, Join room actually joins
+
+### Fixed
+- **Netplay was invisible in the app** — it lived on the hidden top bar.
+  Gold **Netplay** button is now bottom-center in-game: Create room /
+  Invite Player 2 / Sync.
+- **Join room did nothing** if you were already in that game (same hash,
+  `EJS_onGameStart` already fired). Join now calls `npJoin` immediately
+  and waits for the datachannel.
+- **Invite with no room id** — tapping Invite before Create sent
+  `room: null`. Invite now creates the room first.
+
+### Internal
+- AGENTS.md §12 is the netplay map for the next agent. SW `ssw-v2.36`.
+
 ## [2.20.0] — 2026-09-11 — Real WebRTC netplay (P1/P2), pad spacing, in-app controls
 
 ### Changed

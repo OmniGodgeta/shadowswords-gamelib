@@ -1254,6 +1254,14 @@ html.hide-touch .player.in-app-player .fab-pad::after { content: "Show pad"; }
   background: rgba(6,6,12,.82); border: 1px solid rgba(255,255,255,.3);
   font-size: 22px;
 }
+.player.in-app-player .fab-np {
+  position: absolute;
+  left: 50%; transform: translateX(-50%);
+  bottom: max(8px, env(safe-area-inset-bottom));
+  z-index: 8; height: 40px; padding: 0 18px; border-radius: 12px;
+  background: rgba(6,6,12,.9); border: 1px solid var(--gold); color: var(--gold);
+  font-size: 13px; font-weight: 800; letter-spacing: .06em; text-transform: uppercase;
+}
 html.in-app #ctrl-panel {
   z-index: 500; padding: 8px; align-items: stretch;
 }

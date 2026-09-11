@@ -134,7 +134,7 @@ function npBindDc(dc) {
     npHookInput();
     toast(NP.role === "host" ? "P2 can join — you are Player 1" : "Linked — you are Player 2");
   };
-  dc.onclose = () => { window.__inNetplay = false; toast("Netplay disconnected"); };
+  dc.onclose = () => { window.__inNetplay = false; if (NP.alive) toast("Netplay disconnected"); };
   dc.onmessage = (e) => {
     if (typeof e.data !== "string") {
       const gm = window.EJS_emulator?.gameManager;
@@ -150,15 +150,28 @@ async function npSendSig(payload) {
   await fetch(`${API}/np/sig`, { method: "POST", headers: { "content-type": "application/json", ...authHdr() },
     body: JSON.stringify({ room: NP.room, from: CID, payload }) }).catch(() => {});
 }
+function npSendLocalSdp() {
+  const d = NP.pc && NP.pc.localDescription;
+  if (!d) return;
+  npSendSig({ sdp: { type: d.type, sdp: d.sdp } });
+}
 function npStartPc(isHost) {
-  NP.pc = new RTCPeerConnection({ iceServers: [] });
+  // STUN is only for candidate gathering; on the tailnet ICE still prefers 100.x
+  NP.pc = new RTCPeerConnection({ iceServers: [{ urls: "stun:stun.l.google.com:19302" }] });
   NP.pc.onicecandidate = (e) => { if (e.candidate) npSendSig({ ice: e.candidate.toJSON?.() || e.candidate }); };
+  const sendSdpSoon = () => {
+    if (NP.pc.iceGatheringState === "complete") npSendLocalSdp();
+    else {
+      const t = setTimeout(npSendLocalSdp, 1200);
+      NP.pc.addEventListener("icegatheringstatechange", () => {
+        if (NP.pc.iceGatheringState === "complete") { clearTimeout(t); npSendLocalSdp(); }
+      });
+    }
+  };
   if (isHost) {
     const dc = NP.pc.createDataChannel("np", { ordered: true });
     npBindDc(dc);
-    NP.pc.createOffer().then((o) => NP.pc.setLocalDescription(o)).then(() => {
-      const d = NP.pc.localDescription; npSendSig({ sdp: { type: d.type, sdp: d.sdp } });
-    });
+    NP.pc.createOffer().then((o) => NP.pc.setLocalDescription(o)).then(sendSdpSoon);
   } else {
     NP.pc.ondatachannel = (e) => npBindDc(e.channel);
   }
@@ -173,7 +186,7 @@ async function npHandleSig(m) {
     if (desc.type === "offer") {
       const ans = await NP.pc.createAnswer();
       await NP.pc.setLocalDescription(ans);
-      const d = NP.pc.localDescription; npSendSig({ sdp: { type: d.type, sdp: d.sdp } });
+      npSendLocalSdp();
     }
   }
   if (pl.ice) { try { await NP.pc.addIceCandidate(pl.ice); } catch { /* */ } }
@@ -196,11 +209,26 @@ async function npHost({ sys, file, name }) {
   npPoll();
   return d.id;
 }
+function npWaitLinked(ms = 18000) {
+  return new Promise((resolve, reject) => {
+    if (NP.dc && NP.dc.readyState === "open") return resolve();
+    const t0 = Date.now();
+    const iv = setInterval(() => {
+      if (NP.dc && NP.dc.readyState === "open") { clearInterval(iv); resolve(); }
+      else if (Date.now() - t0 > ms) { clearInterval(iv); reject(new Error("timeout")); }
+    }, 200);
+  });
+}
 async function npJoin(room) {
+  if (!room) throw new Error("no room");
+  if (NP.room === room && NP.dc && NP.dc.readyState === "open") return;
+  npStop();
   NP.room = room; NP.role = "guest"; NP.myP = 1; NP.after = 0; NP.alive = true;
   window.__npRoom = room;
   npStartPc(false);
   npPoll();
+  toast("Connecting as Player 2…");
+  await npWaitLinked();
 }
 function npStop() {
   NP.alive = false; clearTimeout(NP.pollT);
@@ -210,9 +238,49 @@ function npStop() {
   window.__inNetplay = false; window.__npRoom = null;
 }
 async function autoJoinNetplay(wantRoom) {
-  if (!wantRoom) { toast("Waiting for the host to open netplay…"); return; }
-  toast("Joining as Player 2…");
-  try { await npJoin(wantRoom); } catch { toast("Couldn't join netplay"); }
+  if (!wantRoom) { toast("Host hasn't created a room yet — they need to tap Netplay first"); return; }
+  try { await npJoin(wantRoom); }
+  catch { toast("Couldn't link — host should tap Netplay, then Invite again"); }
+}
+function acceptInvite(inv) {
+  const room = inv.room;
+  const playHref = `#/play/${inv.sys}/${String(inv.file || "").split("/").map(encodeURIComponent).join("/")}`;
+  if (!room) { toast("Host hasn't created a room yet"); return; }
+  const same = window.__emuUp && window.__playSys === inv.sys && window.__playFile === inv.file;
+  if (same) { autoJoinNetplay(room); return; }
+  LS.set("joinNp", { sys: inv.sys, file: inv.file, room, t: Date.now() });
+  if (location.hash === playHref) autoJoinNetplay(room);
+  else location.hash = playHref;
+}
+function openNetplaySheet(sys, file, name) {
+  const o = el("div", { id: "help-overlay", onclick: (e) => { if (e.target.id === "help-overlay") o.remove(); } });
+  const linked = NP.dc && NP.dc.readyState === "open";
+  const status = linked
+    ? (NP.role === "host" ? "Linked — you are Player 1." : "Linked — you are Player 2.")
+    : (NP.room ? "Room is up. Invite Player 2 — they must tap Join room." : "Create a room, then invite someone online.");
+  const kids = [el("h3", { textContent: "Netplay" }), el("p", { className: "hint", textContent: status })];
+  if (NP.role !== "guest") {
+    kids.push(el("button", { className: "btn btn-primary", style: "width:100%;margin:8px 0",
+      textContent: NP.room ? "Invite Player 2" : "Create room",
+      onclick: async () => {
+        o.remove();
+        if (window.__watchT) { clearInterval(window.__watchT); window.__watchT = 0; }
+        try {
+          if (!NP.room) { await npHost({ sys, file, name }); toast("Room created — you are Player 1"); }
+          const sb = document.getElementById("np-sync-btn");
+          if (sb) { sb.hidden = false; sb.onclick = resyncNetplay; }
+          ping(false);
+          invitePicker({ sys, file, name, watch: window.__watchId });
+        } catch { toast("Couldn't create a room"); }
+      } }));
+  }
+  if (NP.role === "host") {
+    kids.push(el("button", { className: "btn btn-ghost", style: "width:100%;margin:6px 0", textContent: "Sync screens",
+      onclick: () => { o.remove(); resyncNetplay(); } }));
+  }
+  kids.push(el("button", { className: "btn btn-ghost", style: "width:100%;margin:6px 0", textContent: "Close", onclick: () => o.remove() }));
+  o.append(el("div", { className: "help-card" }, ...kids));
+  document.body.append(o);
 }
 function resyncNetplay() {
   if (NP.role !== "host") { toast("Only the host can sync"); return; }
@@ -1472,12 +1540,15 @@ async function routePlayGame(sys, romParam, resume = false) {
       el("button", { type: "button", className: "fab-pad", title: "Hide or show touch controls",
         onclick: (e) => { e.preventDefault(); e.stopPropagation(); toggleTouchPad(); } }),
       el("button", { type: "button", className: "fab-ctrl", textContent: "🎮", title: "Controller setup",
-        onclick: (e) => { e.preventDefault(); e.stopPropagation(); controlsPanel(core); } }));
+        onclick: (e) => { e.preventDefault(); e.stopPropagation(); controlsPanel(core); } }),
+      el("button", { type: "button", className: "fab-np", textContent: "Netplay", title: "Create a room or invite Player 2",
+        onclick: (e) => { e.preventDefault(); e.stopPropagation(); openNetplaySheet(sys, file, romName); } }));
   }
   document.body.append(shell);
   view.replaceChildren();
 
   const file = sys === "upload" ? null : romParam;
+  window.__playSys = sys; window.__playFile = file;
   let romUrl, romName, core;
   try {
     if (sys === "upload") {
@@ -1705,24 +1776,12 @@ async function routePlayGame(sys, romParam, resume = false) {
         document.body.append(o);
       };
     }
+    window.__playSys = sys; window.__playFile = file;
     if (np && SELF_HOSTED && sys !== "upload") {
       npBtn.hidden = false;
-      npBtn.onclick = async () => {
-        if (window.__watchT) { clearInterval(window.__watchT); window.__watchT = 0; }
-        if (NP.room && NP.role === "host") {
-          toast("Room is live — pick who to invite");
-          invitePicker({ sys, file, name: romName, watch: window.__watchId });
-          return;
-        }
-        try {
-          await npHost({ sys, file, name: romName });
-          ping(false);
-          const sb = document.getElementById("np-sync-btn");
-          if (sb) { sb.hidden = false; sb.onclick = resyncNetplay; }
-          toast("You are Player 1 — invite Player 2");
-          invitePicker({ sys, file, name: romName, watch: window.__watchId });
-        } catch { toast("Couldn't start netplay"); }
-      };
+      npBtn.onclick = () => openNetplaySheet(sys, file, romName);
+      invBtn.hidden = false;
+      invBtn.onclick = () => invitePicker({ sys, file, name: romName, watch: window.__watchId });
     }
     if (SELF_HOSTED && sys !== "upload") {
       invBtn.hidden = false;
@@ -1808,25 +1867,25 @@ function ackInvite(id) {
 }
 function showInvite(inv) {
   if (document.getElementById("invite-overlay")) return;
-  const playHref = `#/play/${inv.sys}/${String(inv.file || "").split("/").map(encodeURIComponent).join("/")}`;
-  const go = () => {
-    LS.set("joinNp", { sys: inv.sys, file: inv.file, room: inv.room || null, t: Date.now() });
-    ackInvite(inv.id);
-  };
   const o = el("div", { id: "invite-overlay", className: "help-overlay", onclick: (e) => { if (e.target.id === "invite-overlay") { o.remove(); ackInvite(inv.id); } } },
     el("div", { className: "help-card" },
       el("h3", { textContent: "You're invited" }),
       el("p", { textContent: `${inv.fromName || "Someone"} wants you to play ${inv.name || "a game"}.` }),
+      el("p", { className: "hint", textContent: inv.room ? "You'll join as Player 2." : "Host still needs to tap Netplay to create a room." }),
       el("div", { style: "display:flex;gap:8px;flex-wrap:wrap;margin-top:12px" },
-        el("a", { className: "btn btn-primary", href: playHref, textContent: inv.np === false ? "Play" : "Join room",
-          onclick: go }),
-        inv.watch && el("a", { className: "btn btn-ghost", href: `#/watch/${inv.watch}`, textContent: "Watch",
-          onclick: () => { ackInvite(inv.id); o.remove(); } }),
+        el("button", { className: "btn btn-primary", textContent: "Join room",
+          onclick: () => { o.remove(); ackInvite(inv.id); acceptInvite(inv); } }),
+        inv.watch && el("button", { className: "btn btn-ghost", textContent: "Watch",
+          onclick: () => { ackInvite(inv.id); o.remove(); location.hash = `#/watch/${inv.watch}`; } }),
         el("button", { className: "btn btn-ghost", textContent: "Not now",
           onclick: () => { ackInvite(inv.id); o.remove(); } }))));
   document.body.append(o);
 }
 async function invitePicker({ sys, file, name, watch }) {
+  if (!NP.room) {
+    try { await npHost({ sys, file, name }); toast("Room created — pick Player 2"); }
+    catch { toast("Couldn't create a room"); return; }
+  }
   const ps = await fetch(`${API}/play/stats`).then((r) => r.json()).catch(() => null);
   const people = ((ps && ps.online) || (ps && ps.nowPlaying) || [])
     .filter((x) => x.cid && x.cid !== CID);
@@ -1841,7 +1900,7 @@ async function invitePicker({ sys, file, name, watch }) {
             headers: { "content-type": "application/json", ...authHdr() },
             body: JSON.stringify({ to: p.cid, toUser: p.uid || null, from: CID,
               fromName: AUTH.user?.display || prefs().netplayName || "Someone",
-              sys, file, name, watch: watch || null, room: window.__npRoom || null, np: true }) });
+              sys, file, name, watch: watch || null, room: NP.room || window.__npRoom || null, np: true }) });
           toast(`Invited ${p.who}`);
         } catch { toast("Couldn't send the invite"); }
       } }))

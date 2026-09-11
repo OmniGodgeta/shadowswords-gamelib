@@ -130,20 +130,63 @@ If you re-tune `_lr_loose()` (libretro fuzzy match) in build.py, `rm -rf
 - Custom domain (`DOMAIN.md`), MAME 2003-Plus romsets (`ARCADE.md`).
 - `logo-lg.webp` — only used as the build source for `og.jpg` (manual), not
   referenced at runtime.
+- Netplay: rollback/GGPO-style delay frames if fighting games still desync.
+  Current path is input-forwarding over WebRTC (host P1, guest P2) — good on
+  the tailnet, not lockstep. Optional host **Sync** sends a savestate.
+- Netplay: more than 2 players; ICE TURN if someone is off Tailscale (they
+  shouldn't be — Funnel is off).
+- In-app: 🎮 / Netplay FABs vs EJS own settings gear overlapping on some cores.
 
-## 11. EmulatorJS netplay (4.2.3 gotchas)
+## 11. Exit (don't hang the player)
 
-Stable EmulatorJS **hides** the netplay globe unless `EJS_gameID` is a
-number, and then *still* sets `netplayEnabled` only when both
-`EJS_DEBUG_XX` and `EJS_EXPERIMENTAL_NETPLAY` are true. We don't turn debug
-on; we set a hashed `EJS_gameID`, `EJS_netplayServer`, `EJS_netplayICEServers`,
-flip `emu.netplayEnabled` in `EJS_ready`, and unhide the globe + our player-bar
-button on game start. Signalling is `arcade-netplay` on tailnet `:8712`.
-Disable with Settings → Netplay, or `localStorage['ssw:netplay']='off'`.
+The ‹ Exit button must **not** `await` the cloud-save PUT or call
+`EJS_emulator.pause()` / `getState()` — those freeze N64/PSX on the main
+thread. `exitPlayer()` strips the overlay and `location.replace`s to `#/play`.
+Android back button must call `window.exitPlayer`. EmulatorJS 4.2.3 fires
+`exit` with nobody listening unless we hook it.
 
-The ‹ Exit button must **not** `await` the cloud-save PUT — a hung fetch
-leaves the player stuck. Fire-and-forget, then reload. Also listen for
-EmulatorJS's `exit` event (stable loader.js never wired `EJS_onExit`).
+## 12. Netplay (as of 2.21.0) — READ THIS BEFORE TOUCHING IT
+
+**Do not turn EmulatorJS netplay back on.** 4.2.3 lockstep is savestate-over-
+Socket.IO, comments in their source say "control syncing - broken", guest
+inputs stay on player 0, and every menu Start froze both clients.
+
+**What we run instead** (see `NP` in `docs/assets/app.js`):
+
+- Host taps **Netplay** (in-app: gold FAB, bottom-center) → `POST /np/room`
+  then WebRTC `RTCPeerConnection` + datachannel. Host = player 0.
+- Invite `POST /play/invite` **must include `room`** (the `/np/room` id).
+- Guest taps **Join room** → `acceptInvite` → `npJoin(room)` which polls
+  `GET /np/sig` and answers the offer. Guest = player 1.
+- Inputs: wrap `gameManager.simulateInput` so local presses go to
+  `functions.simulateInput(myP, …)` **and** `dc.send({t:'i',p,i,v})`.
+- Signalling is **arcade-server** (`/np/room`, `/np/sig`), not `:8712`.
+  Copy `~/arcade-server.mjs` ↔ `server/arcade-server.mjs` and restart
+  `arcade-server.service` after changing it.
+
+**Join-room bugs we already hit:**
+
+- In-app player-bar is hidden (`transform: translateY(-110%)`). Anything
+  the host needs (Netplay / Invite / Sync) **must be a FAB**, not only a
+  `.pbtn` on `.player-bar`.
+- If guest is **already in that game**, setting `location.hash` to the same
+  play URL does nothing and `EJS_onGameStart` will not fire again. Join
+  must call `npJoin` immediately (`acceptInvite` → `same` branch).
+- Inviting before `npHost` produced `room: null`. `invitePicker` now
+  creates the room first.
+
+**How to test:** phone creates room + invites; PC (other account) Join
+room while **already in the same game**; toast "Linked — you are Player 2";
+P2 moves character 2, not P1.
+
+## 13. Android app (`~/Work/shadowswords`)
+
+Separate repo `OmniGodgeta/shadowswords`. WebView loads the live tailnet
+site, so **site JS/CSS deploys without a new APK**. Rebuild the APK only
+when Dart/Kotlin changes (landscape lock via `SSPlay`, in-app update
+installer, last-game restore). Frozen contracts: §5.
+
+Current APK: 1.6.3 (`v1.6.3` GitHub Release, `RetroVerse-1.6.3.apk`).
 
 ---
 *Keep this file current. If you learn something the hard way, add it here.*
