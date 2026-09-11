@@ -733,6 +733,7 @@ function stats() {
   catch { STATS = {}; }
   STATS.plays ||= {}; STATS.sessions ||= {}; STATS.reports ||= {};
   STATS.requests ||= []; STATS.userPlays ||= {}; STATS.banner ??= null;
+  STATS.invites ||= [];
   return STATS;
 }
 // first account created is the owner; also cfg().admins (usernames)
@@ -773,15 +774,21 @@ async function playPing(req, res) {
     s.plays[key] = p;
   }
   if (body.cid) {
+    const idle = !!body.idle;
     s.sessions[body.cid] = {
-      game: body.name || null, at: now(),
+      cid: body.cid,
+      game: idle ? null : (body.name || null), at: now(),
       who: u ? u.display : (body.who || null),
-      sys: body.sys || null, file: body.file || null,
-      watch: body.watch || null, netplay: !!body.netplay,
+      sys: idle ? null : (body.sys || null),
+      file: idle ? null : (body.file || null),
+      watch: idle ? null : (body.watch || null),
+      netplay: idle ? false : !!body.netplay,
+      idle,
     };
   }
   statsDirty = true;
-  jsonRes(res, 200, { ok: true });
+  const invites = (s.invites || []).filter((i) => i.to === body.cid && i.at > now() - 120000);
+  jsonRes(res, 200, { ok: true, invites });
 }
 function playStats(req, res) {
   const s = stats();
@@ -796,12 +803,45 @@ function playStats(req, res) {
     .sort((a, b) => b.n - a.n).slice(0, 30)
     .map(({ sys, file, name, n, issues }) => ({ sys, file, name, n, issues }));
   const cutoff = now() - 90000;
-  const live = Object.values(s.sessions).filter((x) => x.at > cutoff && x.game);
-  jsonRes(res, 200, { top, trending, reported, playingNow: live.length,
-    nowPlaying: live.map((x) => ({
-      who: x.who || "Someone", game: x.game, sys: x.sys || null, file: x.file || null,
-      watch: x.watch || null, netplay: !!x.netplay,
-    })).slice(0, 16) });
+  const live = Object.values(s.sessions).filter((x) => x.at > cutoff);
+  const playing = live.filter((x) => x.game);
+  const pack = (x) => ({
+    cid: x.cid || null,
+    who: x.who || "Someone",
+    game: x.game || null,
+    sys: x.sys || null, file: x.file || null,
+    watch: x.watch || null, netplay: !!x.netplay, idle: !x.game,
+  });
+  jsonRes(res, 200, { top, trending, reported, playingNow: playing.length,
+    nowPlaying: playing.map(pack).slice(0, 16),
+    online: live.map(pack).slice(0, 40) });
+}
+
+async function playInvite(req, res) {
+  let b = {};
+  try { b = JSON.parse((await readBody(req, 4096)).toString() || "{}"); } catch { /* */ }
+  if (!b.to || !b.sys || !b.file) return jsonRes(res, 400, { error: "need to, sys, file" });
+  const u = userByToken(req);
+  const s = stats();
+  s.invites = (s.invites || []).filter((i) => i.at > now() - 120000);
+  const inv = {
+    id: crypto.randomBytes(4).toString("hex"),
+    to: String(b.to), from: String(b.from || ""),
+    fromName: u ? u.display : (b.fromName || "Someone"),
+    sys: b.sys, file: b.file, name: b.name || b.file,
+    watch: b.watch || null, at: now(),
+  };
+  s.invites.push(inv);
+  statsDirty = true;
+  jsonRes(res, 200, { ok: true, id: inv.id });
+}
+async function playInviteAck(req, res) {
+  let b = {};
+  try { b = JSON.parse((await readBody(req, 4096)).toString() || "{}"); } catch { /* */ }
+  const s = stats();
+  s.invites = (s.invites || []).filter((i) => i.id !== b.id);
+  statsDirty = true;
+  jsonRes(res, 200, { ok: true });
 }
 
 // ---- public profile -------------------------------------------------
@@ -1071,6 +1111,8 @@ http.createServer(async (req, res) => {
     // POST/GET dynamic endpoints
     if (P === "/play/ping" && req.method === "POST") { if (rateLimited(req, res, 120, 60000)) return; playPing(req, res); return; }
     if (P === "/play/stats" && req.method === "GET") { playStats(req, res); return; }
+    if (P === "/play/invite" && req.method === "POST") { if (rateLimited(req, res, 40, 60000)) return; playInvite(req, res); return; }
+    if (P === "/play/invite/ack" && req.method === "POST") { playInviteAck(req, res); return; }
     if (P === "/report" && req.method === "POST") { gameReport(req, res); return; }
     if (P === "/twitch/status" && req.method === "GET") { twitchStatus(req, res); return; }
     if (P === "/discord/info" && req.method === "GET") { discordInfo(req, res); return; }

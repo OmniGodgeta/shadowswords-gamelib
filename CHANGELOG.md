@@ -2,6 +2,29 @@
 
 All notable changes to the RetroVerse website.
 
+## [2.18.0] — 2026-09-11 — Exit for real, invites, phone chrome
+
+### Fixed
+- **Exit actually leaves.** "Exiting…" used to hang because we still called
+  EmulatorJS `getState()` / `pause()` on the main thread (N64/PSX freeze it).
+  Exit now strips the overlay and does a hard navigation to `#/play` — no WASM
+  calls. A second tap force-retries. Same path for hash changes and the
+  Android back button.
+- **Site "Reload" toast** no longer waits on a stuck service worker; it
+  cache-busts the page after 300ms.
+
+### Added
+- **Invite anyone online.** Presence ping while browsing; **Invite** on the
+  player bar lists everyone on the tailnet (playing or just hanging around)
+  and sends them a Join / Watch card. `POST /play/invite`.
+- **Android in-game chrome is gone.** The top bar hides; a tiny ‹ exits and a
+  nub at the top pulls the controls down for a few seconds. The native app
+  locks **landscape** while a game is running (the old "all orientations"
+  setting is why EmulatorJS fullscreen came up portrait).
+
+### Internal
+- SW `ssw-v2.32`, assets `?v=2.32`.
+
 ## [2.17.0] — 2026-09-11 — The floor, not the catalog
 
 Home was a pile of the same shelf eleven times. It's a cabinet floor now.

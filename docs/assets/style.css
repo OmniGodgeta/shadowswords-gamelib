@@ -468,7 +468,7 @@ body.lite .shelf-track > .tile, body.lite .tile-grid > .tile { animation: none; 
 
 /* ---- emulator player ---- */
 .player { position: fixed; inset: 0; z-index: 60; background: #000; display: flex; flex-direction: column; }
-.player.leaving { pointer-events: none; }
+
 .player-bar {
   position: relative; z-index: 2;
   height: 46px; flex: 0 0 auto; display: flex; align-items: center; gap: 14px; padding: 0 14px;
@@ -1143,3 +1143,27 @@ body.lite .pad-row.listening .pr-chip { animation: none; border-style: dashed; }
   }
 }
 .player-bar { padding-left: max(14px, env(safe-area-inset-left)); padding-right: max(14px, env(safe-area-inset-right)); }
+
+/* Android app: hide the player chrome so the game fills the landscape screen.
+   Tap the top nub to pull the bar down; a small ‹ stays in the corner to exit. */
+html.in-app .bar, html.in-app .foot, html.in-app .scanlines { display: none; }
+.player.in-app-player .player-bar {
+  position: absolute; top: 0; left: 0; right: 0; z-index: 5;
+  transform: translateY(-110%);
+  transition: transform .18s ease;
+}
+.player.in-app-player.show-chrome .player-bar { transform: none; }
+.player.in-app-player .fab-exit {
+  position: absolute; top: max(8px, env(safe-area-inset-top)); left: max(8px, env(safe-area-inset-left));
+  z-index: 7; width: 40px; height: 40px; border-radius: 10px;
+  background: rgba(6,6,12,.72); border: 1px solid var(--pink); color: var(--pink);
+  font-size: 22px; line-height: 1; font-weight: 800;
+}
+.player.in-app-player .chrome-peek {
+  position: absolute; top: 0; left: 50%; transform: translateX(-50%);
+  z-index: 7; width: 56px; height: 16px; border-radius: 0 0 10px 10px;
+  background: rgba(255,255,255,.18); border: 0;
+}
+.player.in-app-player.show-chrome .fab-exit,
+.player.in-app-player.show-chrome .chrome-peek { opacity: 0; pointer-events: none; }
+#invite-overlay { position: fixed; inset: 0; z-index: 400; display: grid; place-items: center; background: rgba(7,7,13,.8); backdrop-filter: blur(4px); }

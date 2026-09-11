@@ -31,6 +31,7 @@ function toast(msg) {
 const TS = "https://shadow-1.tail51f9d6.ts.net";
 const SELF_HOSTED = location.hostname.endsWith(".ts.net");
 const IN_APP = /ShadowSwordsApp|RetroVerseApp/.test(navigator.userAgent);   // native wrapper intercepts _blank → phone browser
+if (IN_APP) document.documentElement.classList.add("in-app");
 const extTarget = { target: "_blank", rel: "noopener" };      // keep the signal the app hooks on
 const ROM_BASE = SELF_HOSTED ? "/roms/" : TS + "/roms/";       // needs Funnel when off-tailnet
 const MUSIC_BASE = SELF_HOSTED ? "/music/" : TS + "/music/";
@@ -1265,16 +1266,31 @@ async function routePlayGame(sys, romParam, resume = false) {
   const watchBtn = el("button", { className: "pbtn", id: "watch-btn", textContent: "Watch", title: "Start a watch party — others on the tailnet can spectate", hidden: true });
   const noteBtn = el("button", { className: "note-chip", textContent: "Note", title: "Tips for this game", hidden: true });
   const npBtn = el("button", { className: "pbtn", id: "np-btn", textContent: "Netplay", title: "Host or join a netplay room for this game", hidden: true });
+  const invBtn = el("button", { className: "pbtn", id: "inv-btn", textContent: "Invite", title: "Invite someone who's online", hidden: true });
   const flagBtn = el("button", { className: "pbtn", id: "flag-btn", textContent: "⚑", title: "Report a problem with this game" });
   if (sys !== "upload") flagBtn.onclick = () => reportGame(sys, file, romName);
   else flagBtn.hidden = true;
-  const shell = el("div", { className: "player" },
+  const shell = el("div", { className: "player" + (IN_APP ? " in-app-player" : "") },
     el("div", { className: "player-bar" },
       el("button", { type: "button", className: "exit", textContent: "‹ Exit", onclick: (e) => { e.preventDefault(); exitPlayer(); } }),
       el("div", { className: "title", id: "player-title", textContent: "Loading…" }),
-      saveBtn, saveAsBtn, loadBtn, rwBtn, ffBtn, ctrlBtn, npBtn, watchBtn, noteBtn, flagBtn),
+      saveBtn, saveAsBtn, loadBtn, rwBtn, ffBtn, ctrlBtn, npBtn, invBtn, watchBtn, noteBtn, flagBtn),
     el("div", { className: "player-stage" },
       el("div", { id: "game" }), loadEl));
+  if (IN_APP) {
+    const hideChrome = () => shell.classList.remove("show-chrome");
+    let hideT;
+    const showChrome = () => {
+      shell.classList.add("show-chrome");
+      clearTimeout(hideT);
+      hideT = setTimeout(hideChrome, 5000);
+    };
+    shell.append(
+      el("button", { type: "button", className: "fab-exit", textContent: "‹", title: "Exit game",
+        onclick: (e) => { e.preventDefault(); e.stopPropagation(); exitPlayer(); } }),
+      el("button", { type: "button", className: "chrome-peek", title: "Show controls",
+        onclick: (e) => { e.preventDefault(); e.stopPropagation(); showChrome(); } }));
+  }
   document.body.append(shell);
   view.replaceChildren();
 
@@ -1422,7 +1438,7 @@ async function routePlayGame(sys, romParam, resume = false) {
       watch: window.__watchId || null,
       netplay: !!window.__inNetplay,
     }),
-  }).catch(() => {});
+  }).then((r) => r.json()).then(handlePingReply).catch(() => {});
   const flushPlaytime = () => {
     if (!ptKey || !ptStart) return;
     const secs = Math.round((Date.now() - ptStart) / 1000);
@@ -1531,6 +1547,10 @@ async function routePlayGame(sys, romParam, resume = false) {
         };
       }
     }
+    if (SELF_HOSTED && sys !== "upload") {
+      invBtn.hidden = false;
+      invBtn.onclick = () => invitePicker({ sys, file, name: romName, watch: window.__watchId });
+    }
     if (key) {
       saveBtn.hidden = false;
       saveBtn.onclick = cloudSave;
@@ -1569,22 +1589,90 @@ function emuCleanup() {
   try { window.__emuFlush?.(); } catch { /* */ }
 }
 let _exiting = false;
+function _exitDest(hash) {
+  return location.pathname + "?_=" + Date.now() + (hash || "#/play");
+}
+// Kill the player without touching the WASM core. getState()/pause() can freeze
+// the JS thread (N64/PSX especially), which is why "Exiting…" used to stick.
 function exitPlayer() {
-  if (_exiting) return;
-  _exiting = true;
+  window.__emuUp = false;
   const btn = document.querySelector(".player-bar .exit");
   if (btn) { btn.textContent = "Exiting…"; btn.disabled = true; }
-  document.querySelector(".player")?.classList.add("leaving");
-  emuCleanup();
-  // fire-and-forget — awaiting the cloud save used to hang Exit forever if the
-  // PUT stalled. The 3-minute auto-save already covers a recent state.
-  try { window.__emuAutoSave?.(); } catch { /* */ }
-  window.__emuUp = false;
-  try { window.EJS_emulator?.pause?.(); } catch { /* */ }
-  location.hash = "#/play";
-  location.reload();
+  try { emuCleanup(); } catch { /* */ }
+  try { document.querySelector(".player")?.remove(); } catch { /* */ }
+  if (_exiting) { location.replace(_exitDest("#/play")); return; }
+  _exiting = true;
+  location.replace(_exitDest("#/play"));
 }
+window.exitPlayer = exitPlayer;
 window.addEventListener("beforeunload", () => { if (window.__emuUp) { emuCleanup(); navigator.sendBeacon?.(`${API}/play/ping`, JSON.stringify({ cid: CID, bye: true })); } });
+
+const _seenInv = new Set();
+function handlePingReply(d) {
+  if (!d || !Array.isArray(d.invites)) return;
+  for (const inv of d.invites) {
+    if (!inv || !inv.id || _seenInv.has(inv.id)) continue;
+    _seenInv.add(inv.id);
+    showInvite(inv);
+    break;
+  }
+}
+function ackInvite(id) {
+  fetch(`${API}/play/invite/ack`, { method: "POST", headers: { "content-type": "application/json", ...authHdr() },
+    body: JSON.stringify({ id }) }).catch(() => {});
+}
+function showInvite(inv) {
+  if (document.getElementById("invite-overlay")) return;
+  const playHref = `#/play/${inv.sys}/${String(inv.file || "").split("/").map(encodeURIComponent).join("/")}`;
+  const o = el("div", { id: "invite-overlay", className: "help-overlay", onclick: (e) => { if (e.target.id === "invite-overlay") { o.remove(); ackInvite(inv.id); } } },
+    el("div", { className: "help-card" },
+      el("h3", { textContent: "You're invited" }),
+      el("p", { textContent: `${inv.fromName || "Someone"} wants you to play ${inv.name || "a game"}.` }),
+      el("div", { style: "display:flex;gap:8px;flex-wrap:wrap;margin-top:12px" },
+        el("a", { className: "btn btn-primary", href: playHref, textContent: "Play",
+          onclick: () => { ackInvite(inv.id); o.remove(); } }),
+        inv.watch && el("a", { className: "btn btn-ghost", href: `#/watch/${inv.watch}`, textContent: "Watch",
+          onclick: () => { ackInvite(inv.id); o.remove(); } }),
+        el("button", { className: "btn btn-ghost", textContent: "Not now",
+          onclick: () => { ackInvite(inv.id); o.remove(); } }))));
+  document.body.append(o);
+}
+async function invitePicker({ sys, file, name, watch }) {
+  const ps = await fetch(`${API}/play/stats`).then((r) => r.json()).catch(() => null);
+  const people = ((ps && ps.online) || (ps && ps.nowPlaying) || [])
+    .filter((x) => x.cid && x.cid !== CID);
+  const o = el("div", { id: "help-overlay", onclick: (e) => { if (e.target.id === "help-overlay") o.remove(); } });
+  const list = people.length
+    ? people.map((p) => el("button", { className: "btn btn-ghost", style: "display:block;width:100%;margin:6px 0;text-align:left",
+      textContent: p.game ? `${p.who} — playing ${p.game}` : `${p.who} — browsing`,
+      onclick: async () => {
+        o.remove();
+        try {
+          await fetch(`${API}/play/invite`, { method: "POST",
+            headers: { "content-type": "application/json", ...authHdr() },
+            body: JSON.stringify({ to: p.cid, from: CID, fromName: AUTH.user?.display || prefs().netplayName || "Someone",
+              sys, file, name, watch: watch || null }) });
+          toast(`Invited ${p.who}`);
+        } catch { toast("Couldn't send the invite"); }
+      } }))
+    : [el("p", { className: "hint", textContent: "Nobody else is on the tailnet right now." })];
+  o.append(el("div", { className: "help-card" },
+    el("h3", { textContent: "Invite someone" }),
+    el("p", { className: "hint", textContent: "Anyone online can jump into this game." }),
+    ...list,
+    el("button", { className: "btn btn-ghost", style: "margin-top:8px", textContent: "Cancel", onclick: () => o.remove() })));
+  document.body.append(o);
+}
+function presenceTick() {
+  if (!SELF_HOSTED) return;
+  if (window.__emuUp) return;
+  fetch(`${API}/play/ping`, {
+    method: "POST", headers: { "content-type": "application/json", ...authHdr() },
+    body: JSON.stringify({ cid: CID, who: AUTH.user?.display || prefs().netplayName || null, idle: true }),
+  }).then((r) => r.json()).then(handlePingReply).catch(() => {});
+}
+setInterval(presenceTick, 20000);
+addEventListener("load", () => setTimeout(presenceTick, 800));
 
 /* ---- controller setup panel -------------------------------------------------
    A visual, restylable alternative to EmulatorJS's stock Controls submenu.
@@ -2992,8 +3080,11 @@ async function router() {
   const [a, b] = parts;
   // an emulator is live and we're navigating away from it -> hard reset (kills audio/RAF)
   if (window.__emuUp && !((a === "play" || a === "resume") && parts.length > 2)) {
-    emuCleanup(); try { window.__emuAutoSave?.(); } catch { /* */ }
-    window.__emuUp = false; setTimeout(() => location.reload(), 60); return;
+    window.__emuUp = false;
+    try { emuCleanup(); } catch { /* */ }
+    try { document.querySelector(".player")?.remove(); } catch { /* */ }
+    location.replace(_exitDest(location.hash || "#/play"));
+    return;
   }
   if (a !== "q") $("#bar-search").hidden = true;
   window.scrollTo(0, 0);
@@ -3254,9 +3345,12 @@ if ("serviceWorker" in navigator) {
     try { reg = await navigator.serviceWorker.register("sw.js"); } catch { return; }
 
     let reloading = false, updateClicked = false;
-    const doReload = () => { if (!reloading) { reloading = true; location.reload(); } };
-    // the freshly-activated worker taking control is our cue to reload —
-    // but only when the user actually asked for the update (not on first visit)
+    const doReload = () => {
+      if (reloading) return;
+      reloading = true;
+      try { window.__emuUp = false; } catch { /* */ }
+      location.replace(location.pathname + "?_=" + Date.now() + (location.hash || "#/"));
+    };
     navigator.serviceWorker.addEventListener("controllerchange", () => { if (updateClicked) doReload(); });
 
     const promptUpdate = (worker) => {
@@ -3269,11 +3363,9 @@ if ("serviceWorker" in navigator) {
         btn.disabled = true;
         btn.textContent = "Updating…";
         bar.hidden = false;
-        // message the *current* waiting worker (the captured one may be redundant
-        // if another build landed since the prompt appeared)
-        (reg.waiting || worker).postMessage("skip");
-        // controllerchange normally reloads us; reload anyway if it doesn't
-        setTimeout(doReload, 5000);
+        try { (reg.waiting || worker).postMessage("skip"); } catch { /* */ }
+        setTimeout(doReload, 300);
+        setTimeout(doReload, 2500);
       };
       document.body.append(t);
     };
