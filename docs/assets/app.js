@@ -143,6 +143,30 @@ async function autoJoinNetplay(wantRoom) {
   }
   toast("No open room yet — ask the host to hit Netplay and Create a Room");
 }
+function armNetplayLockstep() {
+  const emu = window.EJS_emulator;
+  const gm = emu?.gameManager;
+  if (!gm || gm.__sswNp) return;
+  const orig = gm.simulateInput.bind(gm);
+  gm.__sswNp = true;
+  let t = 0;
+  gm.simulateInput = (player, index, value) => {
+    orig(player, index, value);
+    if (!window.__inNetplay || !emu.netplay?.owner || !value) return;
+    if (index !== 3) return; // Start — pushing this as a savestate keeps both on the same screen
+    clearTimeout(t);
+    t = setTimeout(() => {
+      try { emu.netplay.sync(); } catch { /* */ }
+    }, 280);
+  };
+}
+function resyncNetplay() {
+  const np = window.EJS_emulator?.netplay;
+  if (!np?.sync) { toast("Start a netplay room first"); return; }
+  if (!np.owner) { toast("Only the host can resync"); return; }
+  toast("Syncing both players…");
+  try { np.sync(); } catch { toast("Sync failed"); }
+}
 function maybeResumeSession() {
   const s = LS.get("lastSession", null);
   if (!s || !s.sys || !s.file || s.sys === "upload") return false;
@@ -1350,6 +1374,7 @@ async function routePlayGame(sys, romParam, resume = false) {
   const watchBtn = el("button", { className: "pbtn", id: "watch-btn", textContent: "Watch", title: "Start a watch party — others on the tailnet can spectate", hidden: true });
   const noteBtn = el("button", { className: "note-chip", textContent: "Note", title: "Tips for this game", hidden: true });
   const npBtn = el("button", { className: "pbtn", id: "np-btn", textContent: "Netplay", title: "Host or join a netplay room for this game", hidden: true });
+  const syncBtn = el("button", { className: "pbtn", id: "np-sync-btn", textContent: "Sync", title: "Force both players onto this screen (host only)", hidden: true });
   const invBtn = el("button", { className: "pbtn", id: "inv-btn", textContent: "Invite", title: "Invite someone who's online", hidden: true });
   const flagBtn = el("button", { className: "pbtn", id: "flag-btn", textContent: "⚑", title: "Report a problem with this game" });
   if (sys !== "upload") flagBtn.onclick = () => reportGame(sys, file, romName);
@@ -1358,7 +1383,7 @@ async function routePlayGame(sys, romParam, resume = false) {
     el("div", { className: "player-bar" },
       el("button", { type: "button", className: "exit", textContent: "‹ Exit", onclick: (e) => { e.preventDefault(); exitPlayer(); } }),
       el("div", { className: "title", id: "player-title", textContent: "Loading…" }),
-      saveBtn, saveAsBtn, loadBtn, rwBtn, ffBtn, ctrlBtn, npBtn, invBtn, watchBtn, noteBtn, flagBtn,
+      saveBtn, saveAsBtn, loadBtn, rwBtn, ffBtn, ctrlBtn, npBtn, syncBtn, invBtn, watchBtn, noteBtn, flagBtn,
       el("button", { type: "button", className: "pbtn", id: "pad-btn", textContent: "Hide pad",
         title: "Hide on-screen touch controls", onclick: () => toggleTouchPad() }),
       el("button", { type: "button", className: "pbtn", id: "land-btn", textContent: "Landscape",
@@ -1556,6 +1581,7 @@ async function routePlayGame(sys, romParam, resume = false) {
     rememberSession({ sys, file, name: romName });
     window.__npSnapT = setInterval(() => snapshotNetplay(sys, file, romName), 4000);
     try { window.SSPlay && window.SSPlay.postMessage("1"); } catch { /* */ }
+    armNetplayLockstep();
     const joinHint = LS.get("joinNp", null);
     if (joinHint && joinHint.sys === sys && (!joinHint.file || joinHint.file === file)) {
       LS.set("joinNp", null);
@@ -1647,6 +1673,11 @@ async function routePlayGame(sys, romParam, resume = false) {
             const input = ejs.netplayMenu?.querySelector("input[type=text]");
             if (input && !input.value) input.value = pname;
           }
+          const syncBtn = document.getElementById("np-sync-btn");
+          if (syncBtn) {
+            syncBtn.hidden = false;
+            syncBtn.onclick = resyncNetplay;
+          }
         };
       }
     }
@@ -1660,7 +1691,11 @@ async function routePlayGame(sys, romParam, resume = false) {
       saveBtn.oncontextmenu = (e) => { e.preventDefault(); cloudSaveAs(); };
       saveAsBtn.hidden = false; saveAsBtn.onclick = cloudSaveAs;
       loadBtn.hidden = false; loadBtn.onclick = () => cloudLoad();
-      if (hasCloudSave) setTimeout(() => cloudLoad("auto"), 400);
+      // never auto-load a save once netplay is (or will be) on — that puts the
+      // host in-game while the guest is still on the title screen.
+      if (hasCloudSave && !LS.get("joinNp") && !window.__inNetplay) {
+        setTimeout(() => { if (!window.__inNetplay) cloudLoad("auto"); }, 800);
+      }
     }
     // stash this core's binary in the ssw-ejs cache so the native wrapper can
     // serve it offline (EmulatorJS loads it from a blob worker that bypasses the SW).

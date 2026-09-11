@@ -1140,37 +1140,71 @@ body.lite .pad-row.listening .pr-chip { animation: none; border-style: dashed; }
   .player-bar .pbtn { min-height: 40px; padding: 0 12px; }
 }
 
-/* Clean, low-chrome virtual pad — frosted discs, no 3D bevel or giant labels */
+/* Touch pad: larger hit targets, press glow, visible analog stick */
 .ejs_virtualGamepad_parent {
   transform: none !important;
-  opacity: .9;
   filter: none !important;
+  bottom: 12px !important;
 }
-.ejs_virtualGamepad_button,
-.ejs_virtualGamepad_parent button {
-  background: rgba(255,255,255,.14) !important;
-  border: 1px solid rgba(255,255,255,.22) !important;
-  box-shadow: none !important;
-  color: rgba(255,255,255,.5) !important;
-  font-size: 9px !important;
-  font-weight: 600 !important;
-  letter-spacing: .04em;
-  text-transform: uppercase;
+.ejs_virtualGamepad_left,
+.ejs_virtualGamepad_right {
+  width: 200px !important;
+  height: 200px !important;
+  bottom: 28px !important;
+}
+.ejs_virtualGamepad_left { left: 8px !important; }
+.ejs_virtualGamepad_right { right: 8px !important; }
+.ejs_virtualGamepad_button {
+  width: 72px !important;
+  height: 72px !important;
+  line-height: 72px !important;
+  font-size: 26px !important;
+  font-weight: 800 !important;
+  background: rgba(255,255,255,.16) !important;
+  border: 2px solid rgba(255,255,255,.4) !important;
+  color: #fff !important;
   border-radius: 999px !important;
-  backdrop-filter: blur(10px);
-}
-.ejs_virtualGamepad_button_down {
-  background: rgba(31,230,255,.35) !important;
-  border-color: rgba(31,230,255,.7) !important;
-}
-.ejs_dpad_main, .ejs_dpad_bar, .ejs_dpad_vertical, .ejs_dpad_horizontal {
-  background: rgba(255,255,255,.12) !important;
   box-shadow: none !important;
-  border: 1px solid rgba(255,255,255,.18) !important;
-  border-radius: 10px !important;
+  backdrop-filter: blur(8px);
+  transition: background .08s, box-shadow .08s, transform .08s !important;
 }
-html.hide-touch .ejs_virtualGamepad_parent { display: none !important; }
-html.ejs-fs #pad-btn, html.in-app #pad-btn { display: inline-flex; }
+.ejs_virtualGamepad_button.ejs_virtualGamepad_button_down {
+  background: #1fe6ff !important;
+  color: #041018 !important;
+  border-color: #fff !important;
+  box-shadow: 0 0 22px #1fe6ff !important;
+  transform: scale(1.08);
+}
+.ejs_virtualGamepad_button.b_speed_fast,
+.ejs_virtualGamepad_button.b_speed_slow,
+.ejs_virtualGamepad_button.b_speed_rewind { display: none !important; }
+.ejs_dpad_horizontal { height: 56px !important; }
+.ejs_dpad_vertical { width: 56px !important; }
+.ejs_dpad_bar { background: rgba(255,255,255,.22) !important; }
+.ejs_dpad_up_pressed .ejs_dpad_bar,
+.ejs_dpad_down_pressed .ejs_dpad_bar,
+.ejs_dpad_left_pressed .ejs_dpad_bar,
+.ejs_dpad_right_pressed .ejs_dpad_bar {
+  background: rgba(31,230,255,.55) !important;
+  box-shadow: 0 0 16px rgba(31,230,255,.7);
+}
+.ejs_dpad_up_pressed .ejs_dpad_vertical:before { border-bottom-color: #1fe6ff !important; }
+.ejs_dpad_down_pressed .ejs_dpad_vertical:after { border-top-color: #1fe6ff !important; }
+.ejs_dpad_left_pressed .ejs_dpad_horizontal:before { border-right-color: #1fe6ff !important; }
+.ejs_dpad_right_pressed .ejs_dpad_horizontal:after { border-left-color: #1fe6ff !important; }
+.nipple { opacity: 1 !important; }
+.nipple .back {
+  background: rgba(255,255,255,.18) !important;
+  opacity: 1 !important;
+  border: 2px solid rgba(255,255,255,.35);
+}
+.nipple .front {
+  background: #1fe6ff !important;
+  opacity: 1 !important;
+  box-shadow: 0 0 16px #1fe6ff;
+}
+html.hide-touch .ejs_virtualGamepad_parent,
+html.hide-touch .nipple { display: none !important; }
 .player-bar { padding-left: max(14px, env(safe-area-inset-left)); padding-right: max(14px, env(safe-area-inset-right)); }
 
 /* Android app: hide the player chrome so the game fills the landscape screen.
@@ -1194,9 +1228,12 @@ html.in-app .bar, html.in-app .foot, html.in-app .scanlines { display: none; }
   background: rgba(255,255,255,.18); border: 0;
 }
 .player.in-app-player .fab-pad {
-  position: absolute; top: max(8px, env(safe-area-inset-top)); right: max(8px, env(safe-area-inset-right));
-  z-index: 7; height: 36px; padding: 0 12px; border-radius: 10px;
-  background: rgba(6,6,12,.72); border: 1px solid rgba(255,255,255,.25); color: #fff;
+  position: absolute;
+  top: auto; right: auto;
+  left: max(8px, env(safe-area-inset-left));
+  bottom: max(8px, env(safe-area-inset-bottom));
+  z-index: 8; height: 36px; padding: 0 12px; border-radius: 10px;
+  background: rgba(6,6,12,.82); border: 1px solid rgba(255,255,255,.3); color: #fff;
   font-size: 12px; font-weight: 700;
 }
 .player.in-app-player .fab-pad::after { content: "Hide pad"; }

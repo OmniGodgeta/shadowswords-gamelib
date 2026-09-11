@@ -2,6 +2,23 @@
 
 All notable changes to the RetroVerse website.
 
+## [2.19.1] — 2026-09-11 — Bigger pad, press glow, netplay Start resyncs
+
+### Changed
+- On-screen buttons are ~50% larger; they **light up cyan** while held; the
+  analog stick knob is cyan and moves with your thumb. Fast/Slow/Rewind
+  extras on the pad are hidden.
+- **Hide pad** sits in the **bottom-left** so it isn't under EmulatorJS settings.
+
+### Fixed
+- Host pressing Start no longer leaves the guest on the title screen: we
+  skip cloud auto-load during netplay and the host's Start triggers a
+  savestate sync so both land in the game. A **Sync** button is on the
+  pull-down bar if you still drift apart (brief freeze is normal).
+
+### Internal
+- SW `ssw-v2.34`.
+
 ## [2.19.0] — 2026-09-11 — Real-time netplay, invites that land, landscape
 
 ### Fixed
