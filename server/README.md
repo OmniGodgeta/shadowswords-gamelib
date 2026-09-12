@@ -1,7 +1,7 @@
 # Self-hosting `shadow`
 
 The public GitHub Pages mirror is browse + play only. The **self-hosted**
-instance on `shadow` (`https://retroverse.omni.net/`) adds the ROM
+instance on `shadow` (`https://shadow-1.tail51f9d6.ts.net/`) adds the ROM
 stream, BIOS, music, cloud save-states and netplay.
 
 ## Pieces
@@ -55,6 +55,6 @@ Save-states are written to `~/.local/share/ssw-arcade/states/<system>/<base64url
 and listed at `GET /states/list`. The front end sets `EJS_loadStateURL` from
 there when you open a game from the **Cloud saves** page.
 
-Netplay defaults to `https://retroverse.omni.net:8712/`. Override in the
+Netplay defaults to `https://shadow-1.tail51f9d6.ts.net:8712/`. Override in the
 browser console with `localStorage['ssw:netplay'] = 'https://…/'` or disable it
 with `localStorage['ssw:netplay'] = 'off'`.

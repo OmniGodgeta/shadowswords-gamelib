@@ -38,10 +38,8 @@ function toast(msg) {
 }
 
 /* ---- config --------------------------------------------------------- */
-const CANONICAL_HOST = "retroverse.omni.net";
-const TAILNET_ORIGIN = "https://retroverse.tail51f9d6.ts.net";
-const SELF_HOSTED = location.hostname.endsWith(".ts.net") || location.hostname === CANONICAL_HOST;
-const TS = SELF_HOSTED ? location.origin : TAILNET_ORIGIN;
+const TS = "https://shadow-1.tail51f9d6.ts.net";
+const SELF_HOSTED = location.hostname.endsWith(".ts.net");
 const IN_APP = /ShadowSwordsApp|RetroVerseApp/.test(navigator.userAgent);   // native wrapper intercepts _blank → phone browser
 if (IN_APP) document.documentElement.classList.add("in-app");
 // Keep EmulatorJS's top-right hamburger native: it owns emulator settings

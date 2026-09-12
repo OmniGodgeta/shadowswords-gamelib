@@ -2,18 +2,17 @@
 
 All notable changes to the RetroVerse website.
 
-## [2.22.29] — 2026-09-12 — Keep the site working while custom DNS propagates
+## [2.22.29] — 2026-09-12 — Restore the original tailnet origin
 
 ### Fixed
 
-- Self-hosted pages use their current origin, while the public mirror falls
-  back to the working Tailscale origin until `retroverse.omni.net` has DNS.
+- Restored the original `https://shadow-1.tail51f9d6.ts.net/` self-hosted origin.
 
-## [2.22.28] — 2026-09-12 — Canonical hostname is now retroverse.omni.net
+## [2.22.28] — 2026-09-12 — Removed custom DNS hostname
 
 ### Changed
 
-- Self-hosted origin is now `https://retroverse.omni.net/`. The GitHub Pages
+- The custom `retroverse.omni.net` origin is no longer used. The GitHub Pages
   browse-only mirror URL is unchanged.
 
 ## [2.22.27] — 2026-09-12 — Clearer controls and roomier navigation
