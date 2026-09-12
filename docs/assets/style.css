@@ -24,7 +24,7 @@
   --glow-pink: 0 0 14px rgba(255,43,208,.7), 0 0 40px rgba(255,43,208,.32);
   --glow-purple: 0 0 14px rgba(181,104,255,.65), 0 0 40px rgba(181,104,255,.3);
   --radius: 12px;
-  --bar-h: 58px;
+  --bar-h: 68px;
   --pad: clamp(16px, 4vw, 56px);
   color-scheme: dark;
 }
@@ -87,15 +87,15 @@ h1, h2, h3 { letter-spacing: -.01em; }
 .bar-link:hover { color: var(--cyan); text-shadow: var(--glow-cyan); }
 .bar-link.active { color: #fff; text-shadow: var(--glow-pink); }
 .brand { justify-self: center; display: flex; align-items: center; }
-.brand .logo { height: 40px; width: auto; filter: drop-shadow(0 0 10px rgba(34,224,255,.35)); }
+.brand .logo { height: 52px; width: auto; filter: drop-shadow(0 0 12px rgba(34,224,255,.3)); }
 .bar-btn {
   flex: 0 0 auto;
-  width: 40px; height: 40px; border-radius: 10px;
-  font-size: 19px; line-height: 1; color: var(--muted);
+  width: 56px; height: 56px; border-radius: 14px;
+  font-size: 34px; line-height: 1; color: var(--muted);
   border: 1px solid transparent;
 }
 .bar-btn:hover { color: var(--cyan); border-color: var(--line-2); box-shadow: var(--glow-cyan); }
-#back-btn { font-size: 26px; }
+#back-btn { font-size: 36px; }
 #menu-btn { display: none; }
 #acct-chip {
   order: -1; flex: 0 0 auto; display: flex; align-items: center; gap: 7px;
@@ -105,14 +105,14 @@ h1, h2, h3 { letter-spacing: -.01em; }
   max-width: 170px;
 }
 #acct-chip:hover { border-color: var(--cyan); box-shadow: var(--glow-cyan); }
-#acct-chip .ac-av { font-size: 16px; line-height: 1; flex: 0 0 auto; }
+#acct-chip .ac-av { font-size: 30px; line-height: 1; flex: 0 0 auto; }
 #acct-chip .ac-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 @media (max-width: 700px) { #acct-chip .ac-name { display: none; } #acct-chip { padding: 6px; } }
 @media (max-width: 560px) {
-  #acct-chip { display: flex; padding: 6px; } /* icon only — Sign in / profile */
+  #acct-chip { display: flex; padding: 8px; } /* icon only — Sign in / profile */
   .brand .logo { height: 46px; }
-  .bar { gap: 4px; padding: 0 8px; }
-  .bar-btn { width: 34px; height: 34px; font-size: 17px; }
+  .bar { gap: 4px; padding: 0 10px; }
+  .bar-btn { width: 50px; height: 50px; font-size: 30px; }
 }
 @media (max-width: 420px) { .brand .logo { height: 40px; } }
 .bar-search {
@@ -972,9 +972,15 @@ body.lite .pad-row.listening .pr-chip { animation: none; border-style: dashed; }
   display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
 .sc-chip-sub { color: var(--dim); font-size: 11.5px; margin: 2px 0 9px;
   text-transform: uppercase; letter-spacing: .06em; }
-.sc-chip-row { display: flex; gap: 8px; align-items: center; }
+.sc-chip-row { display: flex; gap: 8px; align-items: stretch; }
+/* spacer balances the next button so [View game] is truly centred; both
+   controls share the same height so the row is even */
+.sc-chip-row::before { content: ""; width: 34px; flex: 0 0 auto; }
+.sc-chip-row > .btn {
+  flex: 1 1 auto; height: 34px; display: inline-flex; align-items: center; justify-content: center;
+}
 .sc-next {
-  width: 32px; height: 32px; flex: 0 0 auto; border-radius: 8px;
+  width: 34px; height: 34px; flex: 0 0 auto; border-radius: 8px;
   border: 1px solid var(--line-2); color: var(--cyan); font-size: 13px;
 }
 .sc-next:hover { border-color: var(--cyan); box-shadow: var(--glow-cyan); }
@@ -1042,7 +1048,7 @@ body.lite .pad-row.listening .pr-chip { animation: none; border-style: dashed; }
   }
   .hero-sc[data-mode="art"] .sc-toggle { margin: 12px auto 2px; }
   .sc-tg { padding: 6px 15px; font-size: 11px; }
-  .sc-chip { position: relative; max-width: none; margin: 4px var(--pad) 0; }
+  .sc-chip { position: relative; inset: auto; max-width: none; margin: 10px var(--pad) 0; }
   .sc-strip { padding-left: 12px; }
   .hero-sc[data-mode="art"] .sc-stage { height: clamp(150px, 40vw, 240px); }
 }

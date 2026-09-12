@@ -2,6 +2,24 @@
 
 All notable changes to the RetroVerse website.
 
+## [2.22.21] — 2026-09-12 — Header polish + console art without white boxes
+
+### Changed
+
+- **Logo is now transparent** (background knocked out of `logo.webp`) and larger
+  (52 px), so the neon wordmark floats on the header instead of sitting in a
+  black box; the black square is gone.
+- **Header icons 2× and consistent.** Menu and Search are now matching inline
+  SVGs (the small `⌕` glyph is gone), sized ~2× (`.bar-btn` 56 px / 34 px glyph),
+  and the profile avatar is enlarged to match. `--bar-h` 58 → 68 px.
+- **Console photos lose their white background** — `build.py` now runs
+  `strip_light_bg()` over `media/consoles/*.webp` (border flood-fill over light,
+  low-chroma pixels), so hardware floats on the tile. 65/78 existing photos
+  cleaned in place.
+- **Now-playing chip no longer overlaps the Preview/Box-art toggle on mobile**
+  (`inset: auto` on the mobile `.sc-chip`); [View game] is centred with the
+  next button at the right, same height.
+
 ## [2.22.20] — 2026-09-12 — Native netplay invites (app bridge)
 
 ### Added

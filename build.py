@@ -29,6 +29,12 @@ from pathlib import Path
 from urllib.parse import quote
 
 import time
+try:  # optional — used to knock the white background out of console photos
+    from collections import deque
+    from PIL import Image
+    _PIL = True
+except Exception:  # pragma: no cover
+    _PIL = False
 NOW = time.time()
 HOME = Path.home()
 ESDE = HOME / "ES-DE"
@@ -746,6 +752,55 @@ def convert(src, dst, width):
     return r.returncode == 0
 
 
+def strip_light_bg(path, thresh=190, tol=46):
+    """Console photos are product shots on light backgrounds; a tile showing one
+    sits inside a white box. Flood the borders over light, low-chroma pixels and
+    clear alpha there so the hardware floats on the tile instead. No-op when
+    Pillow is missing or little qualifies (already-transparent / dark shots)."""
+    if not _PIL:
+        return
+    try:
+        im = Image.open(path).convert("RGBA")
+    except Exception:
+        return
+    w, h = im.size
+    px = im.load()
+
+    def light(c):
+        r, g, b = c[0], c[1], c[2]
+        return (r + g + b) / 3 >= thresh and (max(r, g, b) - min(r, g, b)) <= tol
+
+    seen = bytearray(w * h)
+    dq = deque()
+    for x in range(w):
+        for y in (0, h - 1):
+            if light(px[x, y]) and not seen[y * w + x]:
+                seen[y * w + x] = 1; dq.append((x, y))
+    for y in range(h):
+        for x in (0, w - 1):
+            if light(px[x, y]) and not seen[y * w + x]:
+                seen[y * w + x] = 1; dq.append((x, y))
+    if not dq:
+        return
+    while dq:
+        cx, cy = dq.popleft()
+        for nx, ny in ((cx + 1, cy), (cx - 1, cy), (cx, cy + 1), (cx, cy - 1)):
+            if 0 <= nx < w and 0 <= ny < h and not seen[ny * w + nx] and light(px[nx, ny]):
+                seen[ny * w + nx] = 1; dq.append((nx, ny))
+    if sum(seen) < w * h * 0.01:
+        return
+    for y in range(h):
+        base = y * w
+        for x in range(w):
+            if seen[base + x]:
+                r, g, b, _ = px[x, y]
+                px[x, y] = (r, g, b, 0)
+    try:
+        im.save(path, "WEBP", quality=90, method=6)
+    except Exception:
+        pass
+
+
 def write_discovery(all_games, newest):
     """data/collections.json, data/franchises.json, data/added.json.
     Each entry item is [name, sys, gid, img]."""
@@ -1096,6 +1151,10 @@ def main():
             ok += bool(r)
     size = sum(f.stat().st_size for f in OUT.rglob("*") if f.is_file())
     print(f"  {ok}/{len(jobs)} converted")
+    # knock the light background out of console photos so tiles aren't white-boxed
+    if _PIL:
+        for f in (MEDIA_OUT / "consoles").glob("*.webp"):
+            strip_light_bg(f)
     print(f"\n{total:,} games / {len(systems_index)} systems · docs/ is {size/1024/1024:.1f} MB")
 
 

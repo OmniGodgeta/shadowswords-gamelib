@@ -35,10 +35,28 @@ netplay agent now owns all remaining work. Netplay internals are `NP`, `np*()`,
 
 ## Remaining (netplay agent)
 
-1. **Native push invite (app repo)** — deliver `/play/invite` as an Android
-   notification via the `SSMedia`/webview bridge so an invite works when the app
-   is backgrounded. Requires an APK build (Dart/Kotlin).
-3. **Push-to-talk** — voice is an open mic; add a PTT mode + a mute mic button.
+1. **Native push invite — code done (2.22.20), needs an APK build.** Site posts
+   `{cid,origin,on}` to the app's `SSNotify`; `MainActivity` polls
+   `/play/invites` while backgrounded and deep-links back. Build/test the APK;
+   Android 13+ needs the `POST_NOTIFICATIONS` grant.
+2. **Push-to-talk — done (2.22.19).**
+3. Longer term: invite history, spectator→player promote, TURN relay on `shadow`
+   if remote peers ever fail to connect.
+
+## UI pass (2026-09-12, "netplay agent")
+
+Done in 2.22.21, all in `docs/assets` + `build.py`:
+
+- Transparent, larger logo; header icons (menu/search/profile) 2× and matching
+  SVGs; `--bar-h` 68 px.
+- `build.py` strips the white background from `media/consoles/*.webp`
+  (`strip_light_bg`) so console tiles aren't white-boxed.
+- Mobile now-playing chip no longer overlaps the Preview/Box-art toggle;
+  [View game] centred, next at the right.
+
+Left to do (not started): true box-art for art-less **games** is the existing
+generated sleeve (`coverArt` → `.tile-art.noart`) — could be upgraded to a
+per-game procedural cover if it still looks flat.
 
 ## Do not
 
