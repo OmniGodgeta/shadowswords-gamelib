@@ -2,6 +2,13 @@
 
 All notable changes to the RetroVerse website.
 
+## [2.22.28] — 2026-09-12 — Canonical hostname is now retroverse.omni.net
+
+### Changed
+
+- Self-hosted origin is now `https://retroverse.omni.net/`. The GitHub Pages
+  browse-only mirror URL is unchanged.
+
 ## [2.22.27] — 2026-09-12 — Clearer controls and roomier navigation
 
 ### Changed

@@ -34,7 +34,7 @@ the CHANGELOG number moves independently.
 
 | Target | URL | How it updates |
 |---|---|---|
-| **Self-hosted (primary)** | `https://shadow-1.tail51f9d6.ts.net/` | `~/arcade-server.mjs` serves `docs/` **live**. Editing a file in `docs/` IS the deploy. `python3 build.py` alone refreshes the data. |
+| **Self-hosted (primary)** | `https://retroverse.omni.net/` | `~/arcade-server.mjs` serves `docs/` **live**. Editing a file in `docs/` IS the deploy. `python3 build.py` alone refreshes the data. |
 | **Public mirror (browse-only)** | `https://omnigodgeta.github.io/shadowswords-gamelib/` | `./deploy.sh` runs `build.py` then force-pushes `docs/` to the `gh-pages` branch. ~30–60s GitHub Pages build lag after. |
 
 `main` = source only. `docs/data/` and `docs/media/` are gitignored (build
@@ -209,7 +209,7 @@ Current APK: 1.6.3 (`v1.6.3` GitHub Release, `RetroVerse-1.6.3.apk`).
    - **Root cause:** UI only showed Netplay/Create Room/Invite buttons when `SELF_HOSTED` was true (tailnet domain)
    - **Fix:** Removed the SELF_HOSTED gate; API requests still target the tailnet server
    - **Commits:** `35e2bf3` (shadowswords-gamelib)
-   - **Testing:** Netplay controls now visible on both public (omnigodgeta.github.io) and self-hosted (shadow-1.tail51f9d6.ts.net) builds
+   - **Testing:** Netplay controls now visible on both public (omnigodgeta.github.io) and self-hosted (retroverse.omni.net) builds
 
 2. **In-app Netplay button overlapped Start/Select controls**
    - **Root cause:** FAB positioned bottom-center, same zone as EmulatorJS touch pad
@@ -246,7 +246,7 @@ Current APK: 1.6.3 (`v1.6.3` GitHub Release, `RetroVerse-1.6.3.apk`).
 ## 14. Tailscale stability on `shadow` (2026-09-11) — READ BEFORE “FIXING” NETPLAY
 
 **Symptom agents mis-diagnose as netplay bugs:** phones lose
-`https://shadow-1.tail51f9d6.ts.net/`, WebRTC signaling drops, toast
+`https://retroverse.omni.net/`, WebRTC signaling drops, toast
 “Netplay disconnected”. Arcade + `/np/*` were fine; the tunnel was not.
 
 **Root causes found on this host:**
@@ -258,7 +258,7 @@ Current APK: 1.6.3 (`v1.6.3` GitHub Release, `RetroVerse-1.6.3.apk`).
 2. **Wi-Fi powersave** on `Helixx` / `wlp6s0` — brief disconnects make
    Tailscale re-STUN and can bounce DERP.
 3. **Stale offline node** named `shadow` (8d+) vs live MagicDNS
-   `shadow-1`. App/site must keep using `shadow-1.tail51f9d6.ts.net`.
+   `retroverse`. App/site must keep using `retroverse.omni.net`.
 
 **Hardening applied (do not revert without cause):**
 
@@ -280,8 +280,8 @@ systemctl is-active tailscaled arcade-server.service
 tailscale status | head
 tailscale netcheck | head -20
 journalctl -u tailscaled --since '1 hour ago' | rg -c 'no-derp-connection.: error'  # want ~0
-curl -sS https://shadow-1.tail51f9d6.ts.net/health
-curl -sS https://shadow-1.tail51f9d6.ts.net/np/health
+curl -sS https://retroverse.omni.net/health
+curl -sS https://retroverse.omni.net/np/health
 tailscale ping -c 3 s24-ultra-de-eric
 ```
 
@@ -414,4 +414,3 @@ Street Fighter II, Mario Party.
 wrapper ignores EJS's local player index and sends the press as `myP`, applying
 it to the same player number on both ends. **Sync is host→guest only** and is
 manual (the **Sync** button); the guest never sends state back.
-

@@ -4,7 +4,7 @@ Right now the site answers on two hostnames:
 
 | URL | Reaches | Needs |
 |-----|---------|-------|
-| `https://shadow-1.tail51f9d6.ts.net/` | the self-hosted instance (ROMs, music, saves, netplay) | Tailscale on the client, **or** Funnel enabled |
+| `https://retroverse.omni.net/` | the self-hosted instance (ROMs, music, saves, netplay) | DNS/proxy route to the server |
 | `https://omnigodgeta.github.io/shadowswords-gamelib/` | the public browse+play mirror | nothing |
 
 A custom domain (e.g. `arcade.shadowswords.com`) can front **either** one.
@@ -44,10 +44,11 @@ This needs **Tailscale Funnel** (only `tailscale`, not Claude, can turn it on):
    tailscale funnel --bg --https=443  http://127.0.0.1:8710
    tailscale funnel --bg --https=8443 http://127.0.0.1:8096   # Jellyfin
    ```
-   The node is now public at `https://shadow-1.tail51f9d6.ts.net/`.
+   The node remains reachable at its Tailscale hostname; the canonical site is
+   `https://retroverse.omni.net/`.
 3. Point your domain at it with a CNAME:
    ```
-   CNAME  arcade  shadow-1.tail51f9d6.ts.net.
+   CNAME  retroverse  retroverse.tail51f9d6.ts.net.
    ```
    Tailscale serves a valid Let's Encrypt cert for the `ts.net` name; browsers
    that follow the CNAME will still see that cert, so for a clean padlock on

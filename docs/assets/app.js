@@ -38,7 +38,7 @@ function toast(msg) {
 }
 
 /* ---- config --------------------------------------------------------- */
-const TS = "https://shadow-1.tail51f9d6.ts.net";
+const TS = "https://retroverse.omni.net";
 const SELF_HOSTED = location.hostname.endsWith(".ts.net");
 const IN_APP = /ShadowSwordsApp|RetroVerseApp/.test(navigator.userAgent);   // native wrapper intercepts _blank → phone browser
 if (IN_APP) document.documentElement.classList.add("in-app");

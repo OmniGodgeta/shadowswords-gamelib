@@ -24,9 +24,9 @@ echo
 tailscale serve status
 cat <<'MSG'
 
-Arcade  : https://shadow-1.tail51f9d6.ts.net/
-Movies  : https://shadow-1.tail51f9d6.ts.net:8443/
-Netplay : https://shadow-1.tail51f9d6.ts.net:8712/  (signalling only)
+Arcade  : https://retroverse.omni.net/
+Movies  : https://retroverse.omni.net:8443/
+Netplay : https://retroverse.omni.net:8712/  (signalling only)
 (all reachable from any device on your tailnet — remote or on home wifi)
 
 To also make them reachable from the public internet (no Tailscale needed on
