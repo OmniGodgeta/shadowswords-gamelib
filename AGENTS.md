@@ -379,6 +379,26 @@ quitting the game; Player 2 has no controls; host **Sync** toasts "Sync failed".
    `!NP.video`). It falls back to the input-echo + 6 s resync path if capture
    fails or no track arrives. If you touch netplay, preserve `NP.video` plumbing
    and the `#np-video` overlay (guest controls pad must stay above it).
+8. **Voice chat + RTT (v2.22.17).** Mic rides the same `RTCPeerConnection`
+   (`npSetVoice()` → `getUserMedia` → `addTrack`; `onnegotiationneeded` set in
+   `dc.onopen` re-offers when it toggles). Remote audio → `NP.remoteAudio` →
+   `#np-remote-audio`. The host's game audio is a *separate* track from the video
+   (video-only stream on `#np-video`), so the audio element plays game sound +
+   voices. RTT = 2 s `{t:"ping"}/{t:"pong"}`, shown in `#np-live` and Diagnostics.
+9. **Role-aware reconnect + ready gate (v2.22.18).** Host persists `ssw:hostNp`
+   and, on game start after a reload/background, re-hosts the **same** room via
+   `npHost({reuse})` (server `/np/room` accepts `reuse`). Guest auto-rejoins on
+   link loss (`npScheduleReconnect`, ≤4 tries); host re-offers. `forgetSession()`
+   (explicit Exit) clears `hostNp`; `beforeunload` does not, so a reloaded host
+   does not become P2. Ready handshake: `{t:"ready"}`, shown as `✓ ready`.
+   **Server change needs `arcade-server.service` restarted** (or just kill the
+   node pid — the unit is `Restart=on-failure`).
+10. **Push-to-talk + WebRTC watch party (v2.22.19).** PTT/mute: `npPTT` pref,
+    floating `#np-ptt` (`MediaStreamTrack.enabled` toggle — no renegotiation).
+    Watch party: `WNP` reuses the `/np/sig` room; host `wnpStartHost()` streams
+    canvas + game audio, watcher `wnpStartWatch()` plays it; `/watch` entries
+    carry a `room` field. The JPEG still-frame path is the fallback — keep it, or
+    a watcher on a browser without the stream sees nothing.
 
 **Testing Player 2:** use a game with **simultaneous** 2P. DKC (SNES) is not
 one — 1-Player ignores controller 2, and "2 Player Team" only hands control to

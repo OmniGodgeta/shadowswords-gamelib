@@ -2,6 +2,53 @@
 
 All notable changes to the RetroVerse website.
 
+## [2.22.19] — 2026-09-11 — Push-to-talk + WebRTC watch party
+
+### Added
+
+- **Push-to-talk / mic mute.** `npPTT` pref (PTT starts muted); a floating
+  `#np-ptt` control (left edge) that mutes/unmutes, or is hold-to-talk in PTT
+  mode. Mutes via `MediaStreamTrack.enabled` (no renegotiation), plus mute
+  controls in the Netplay sheet.
+- **Watch party over WebRTC** (replaces still-frames when it connects). The host
+  creates a signaling room (`wnpStartHost`) and streams canvas + game audio; the
+  watcher (`#/watch/:id`) fetches the room from `/watch/:id` and plays the real
+  video/audio (`wnpStartWatch`). The 160 ms JPEG path is kept as a fallback, so
+  spectating never regresses.
+
+## [2.22.18] — 2026-09-11 — Role-aware netplay reconnect + ready gate
+
+### Added
+
+- **Role-aware auto-reconnect.** The host remembers its room (`ssw:hostNp`) and,
+  after a reload/background, re-hosts the **same** room id so Player 2 can
+  reconnect (server `/np/room` now accepts `reuse`). The guest re-joins its room
+  automatically on link loss (up to 4 tries); the host re-offers. An explicit
+  Exit/"Leave netplay" clears the host session, a reload does not — so a
+  reloaded host never comes back as Player 2.
+- **"Both ready" gate.** A **I'm ready** button in the Netplay sheet
+  (`{t:"ready"}` over the datachannel); the peer's state shows as `✓ ready` in
+  the badge, and both-ready toasts "Both ready — go!".
+
+### Server
+
+- `server/arcade-server.mjs` `/np/room` accepts an optional `reuse` room id.
+  **Restart `arcade-server.service`** (and sync to `~/arcade-server.mjs`) for the
+  same-room reconnect to work.
+
+## [2.22.17] — 2026-09-11 — Netplay voice chat + live ping
+
+### Added
+
+- **Voice chat during netplay.** The mic rides the existing `RTCPeerConnection`
+  (`getUserMedia({audio})` → `addTrack`), with a **🎙 Voice chat** toggle in the
+  Netplay sheet and pref `npVoice` (auto-starts on link when on). Remote audio
+  is played through `#np-remote-audio`; mic add/remove renegotiates via
+  `onnegotiationneeded`. The host's game audio and the voices share that audio
+  element, so the guest hears both (the `#np-video` element is now video-only).
+- **Live RTT** — a 2 s datachannel ping/pong (`{t:"ping"} / {t:"pong"}`) shown in
+  the badge (`● P2 connected · 42 ms`) and in the Diagnostics line (`rtt=`).
+
 ## [2.22.16] — 2026-09-11 — Offline UI, row notes, keyboard nav, presence, status
 
 ### Added

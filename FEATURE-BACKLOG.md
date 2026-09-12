@@ -1,57 +1,49 @@
-# RetroVerse feature backlog — ownership + specs
+# RetroVerse feature backlog
 
-Split of the feature list between the two agents working 2026-09-11. **One writer
-per file.** Netplay internals (`NP`, `np*()`, `handlePingReply`, `acceptInvite`,
-`/np/*`, `/play/invite*`) belong to the **netplay agent**; UI/library/app-shell
-work belongs to the **layout agent**. Coordinate through this file + `AGENTS.md`
-+ `NETPLAY-UI-CONTRACT.md`.
+**Status 2026-09-11 late:** the layout agent has finished and is gone; the
+netplay agent now owns all remaining work. Netplay internals are `NP`, `np*()`,
+`handlePingReply`, `acceptInvite`, `/np/*`, `/play/invite*`.
 
-## Assigned to the netplay agent (you own NP; keep `NETPLAY-UI-CONTRACT.md` current)
+## Done (netplay agent)
 
-1. **Voice chat during netplay** — reuse the existing `RTCPeerConnection`: add a
-   mic audio track (`getUserMedia({audio:true})`), a mute/push-to-talk button in
-   the netplay sheet, and mix it into the same peer connection. Show a small
-   "🎙" state. Biggest single UX win for playing with a friend.
-2. **Rollback / input-delay netcode** — the host currently re-pushes a savestate
-   every ~6s to mask drift (§15). Add a per-game "netcode: delay / rollback"
-   setting; start with 1–3 frames of input delay, then a savestate+frame-count
-   rollback using `gameManager.getFrameNum()` + `Module.postMainLoop`.
-3. **Role-aware auto-reconnect** — a host that reloads/backgrounds must re-host
-   the same room, not rejoin as Player 2. Persist the host room (+ game) and
-   restore it; the guest path already re-joins via `ssw:joinNp`.
-4. **Netplay lobby polish** — show live RTT/ping and a "both ready" gate in the
-   netplay sheet; surface reconnect/leave as a persistent status, not a 5s toast.
-5. **Watch-party transport** — frames are JPEG PUTs every 160ms. Move to a
-   WebRTC video track so spectating is smooth and the watcher hears the game.
-6. **Native push invite (with the app repo)** — deliver `/play/invite` as an
-   Android notification via the existing `SSMedia`/webview bridge so an invite
-   works when the app is backgrounded. Requires an APK build (Dart/Kotlin).
+1. ✅ **Voice chat** (2.22.17) — mic on the same `RTCPeerConnection`, 🎙 toggle in
+   the sheet, `npVoice` pref, `#np-remote-audio` playback, renegotiation via
+   `onnegotiationneeded`. The `#np-video` element is video-only now; game audio +
+   voices share the audio element.
+2. ✅ **Live RTT / persistent status** (2.22.17 + 2.22.12) — 2 s datachannel
+   ping/pong shown in the `#np-live` badge and Diagnostic line; link state is a
+   badge, not a 5 s toast.
+3. ✅ **Host-authoritative video** (2.22.9) — supersedes the old input-echo drift
+   fix. `NP.video` path streams canvas + game audio to the guest.
+4. ✅ **Role-aware auto-reconnect** (2.22.18) — host persists `ssw:hostNp` and
+   re-hosts the same room (server `reuse`); guest re-joins on link loss; explicit
+   exit clears it, reload does not.
+5. ✅ **"Both ready" gate** (2.22.18) — `{t:"ready"}` handshake, `✓ ready` in the
+   badge, both-ready toast.
+6. ✅ **Push-to-talk / mic mute** (2.22.19) — `npPTT` pref, floating `#np-ptt`
+   (hold-to-talk or tap-to-mute), `MediaStreamTrack.enabled` mute.
+7. ✅ **Watch-party WebRTC transport** (2.22.19) — `WNP`: host streams canvas +
+   game audio over a signaling room; watcher plays it. JPEG stream kept as
+   fallback.
 
-## Owned by the layout agent (this session)
+## Superseded / will likely not do
 
-- ✅ In-game chrome reorg, landscape toggle, netplay-in-bar, 2× reveal handle,
-  hamburger → control bar, preview sound (v2.45–2.48).
-- 🔄 **Invites**: shareable `?join=<room>` deep-link, "Copy invite link", and
-  auto-join on open (this change).
-- ⏳ **#4 Library**: "Continue playing" row + "▶ Playable only" filter.
-- ⏳ **#5 Per-system touch-pad layout presets** (size/pos/opacity per console).
-- ⏳ Accessibility pass, offline-download UI, backup/restore of favorites+saves.
+- **Rollback / input-delay netcode** — was item 2. With host-authoritative video
+  the guest renders the host's screen, so there is no drift to roll back. Only
+  revisit if a future mode runs two cores again (then use
+  `gameManager.getFrameNum()` + `Module.postMainLoop`).
 
-### ⚠️ Home header — done by the netplay agent at the user's direct request (2.22.15)
+## Remaining (netplay agent)
 
-This is app-shell territory, so flagging it here to avoid duplicate work. I only
-touched:
-- `style.css`: `.brand .logo` mobile heights (46 px ≤560, 40 px ≤420).
-- `app.js` `renderAcctChip()`: `#acct-chip` now `prepend`s into `.bar-left`
-  (leftmost) instead of `.bar-right`.
-- `app.js` `heroShowcase()`: `mode` starts at `"video"` always; `setMode(m,
-  persist)` so a video error (`vd.onerror`) falls back to art without writing
-  `scMode`.
-
-If you were mid-edit on `.bar` / `.brand` / `#acct-chip`, re-read before writing.
-
+1. **Native push invite (app repo)** — deliver `/play/invite` as an Android
+   notification via the `SSMedia`/webview bridge so an invite works when the app
+   is backgrounded. Requires an APK build (Dart/Kotlin).
+3. **Push-to-talk** — voice is an open mic; add a PTT mode + a mute mic button.
 
 ## Do not
+
 - Re-enable Tailscale Funnel (§4) or EmulatorJS `:8712` lockstep (§12).
-- Touch `NP` internals from the layout side, or `.player-bar` button ids
-  (`#np-btn`, `#inv-btn`, `#np-sync-btn`) from the netplay side, without a note.
+- Empty `NETPLAY_ICE` — host-only ICE cannot cross the tailnet (mDNS). See
+  `NETPLAY-UI-CONTRACT.md`.
+- Break the `#np-video` stacking (touch pad must stay above it) or the
+  `<details>` Diagnostics in the netplay sheet.

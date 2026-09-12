@@ -550,7 +550,7 @@ function pruneWatch() {
 }
 setInterval(pruneWatch, 8000).unref?.();
 function watchMeta(id, w) {
-  return { id, sys: w.sys, file: w.file, name: w.name, host: w.host, at: w.at, live: !!w.frame };
+  return { id, sys: w.sys, file: w.file, name: w.name, host: w.host, at: w.at, live: !!w.frame, room: w.room || null };
 }
 
 // ---- WebRTC netplay signalling (game traffic is peer-to-peer) ----
@@ -1086,7 +1086,10 @@ const server = http.createServer(async (req, res) => {
       if (rateLimited(req, res, 30, 60000)) return;
       let b = {};
       try { b = JSON.parse((await readBody(req, 4096)).toString() || "{}"); } catch { /* */ }
-      const id = crypto.randomBytes(4).toString("hex");
+      // `reuse` lets a host that reloaded/backgrounded reclaim the same room id
+      // (guests keep polling it). Any other value gets a fresh id.
+      const reuse = (typeof b.reuse === "string" && /^[0-9a-f]{4,32}$/i.test(b.reuse)) ? b.reuse : null;
+      const id = reuse || crypto.randomBytes(4).toString("hex");
       NP_SIG.set(id, { id, host: b.cid || "", sys: b.sys, file: b.file, name: b.name || "Game",
         n: 0, msgs: [], at: now() });
       jsonRes(res, 200, { id }); return;
@@ -1119,7 +1122,8 @@ const server = http.createServer(async (req, res) => {
       const id = crypto.randomBytes(4).toString("hex");
       const u = userByToken(req);
       WATCH.set(id, { sys: b.sys || null, file: b.file || null, name: b.name || "Game",
-        host: u ? u.display : (b.who || "Host"), at: now(), frame: null, ctype: "image/jpeg" });
+        host: u ? u.display : (b.who || "Host"), at: now(), frame: null, ctype: "image/jpeg",
+        room: (typeof b.room === "string" && /^[0-9a-f]{4,32}$/i.test(b.room)) ? b.room : null });
       jsonRes(res, 200, { id, url: `/#/watch/${id}` }); return;
     }
     if (P === "/watch/list" && req.method === "GET") {

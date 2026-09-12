@@ -216,6 +216,7 @@ function rememberSession(extra) {
 function forgetSession() {
   try { localStorage.removeItem("ssw:lastSession"); } catch { /* */ }
   try { localStorage.removeItem("ssw:joinNp"); } catch { /* */ }
+  try { localStorage.removeItem("ssw:hostNp"); } catch { /* */ }   // explicit exit = stop hosting
 }
 function snapshotNetplay(sys, file, name) {
   const np = window.EJS_emulator?.netplay;
@@ -229,7 +230,7 @@ function snapshotNetplay(sys, file, name) {
 }
 /* WebRTC netplay — replaces EmulatorJS's broken savestate lockstep.
    Host = player 1, guest = player 2. Inputs ride a datachannel on the tailnet. */
-const NP = { role: null, room: null, pc: null, dc: null, myP: 0, after: 0, pollT: 0, alive: false, pendingIce: [], rxLen: 0, rxGot: 0, rxChunks: [], syncT: 0, sent: 0, recv: 0, video: false, hostStream: null };
+const NP = { role: null, room: null, pc: null, dc: null, myP: 0, after: 0, pollT: 0, alive: false, pendingIce: [], rxLen: 0, rxGot: 0, rxChunks: [], syncT: 0, sent: 0, recv: 0, video: false, hostStream: null, mic: null, micTrack: null, micSender: null, remoteAudio: null, pingT: 0, rtt: 0, meReady: false, peerReady: false, micMuted: false };
 
 // Netplay diagnostics: kept in memory and shown in the Netplay sheet so a
 // failure can be read off a phone with no devtools.
@@ -244,8 +245,11 @@ function npLog(msg) {
 // Small live badge so the host can see P2 actually linked (not just a toast).
 function npIndicator() {
   let text = null;
-  if (NP.role === "host") text = NP.dc?.readyState === "open" ? "● P2 connected" : (NP.room ? "○ Waiting for P2" : null);
-  else if (NP.role === "guest") text = NP.dc?.readyState === "open" ? "● Watching P1" : "○ Connecting…";
+  const open = NP.dc?.readyState === "open";
+  const ping = (open && NP.rtt) ? ` · ${NP.rtt} ms` : "";
+  const ready = (open && NP.peerReady) ? " ✓ ready" : "";
+  if (NP.role === "host") text = open ? `● P2 connected${ping}${ready}` : (NP.room ? "○ Waiting for P2" : null);
+  else if (NP.role === "guest") text = open ? `● Watching P1${ping}${ready}` : "○ Connecting…";
   let b = document.getElementById("np-live");
   if (!text) { b?.remove(); return; }
   if (!b) {
@@ -291,6 +295,8 @@ function npBindDc(dc) {
     window.__inNetplay = true;
     npLog(`dc open role=${NP.role}`);
     npIndicator();
+    _npReconnect = 0;
+    NP.meReady = false; NP.peerReady = false;
     npHookInput();
     toast(NP.role === "host" ? "P2 can join — you are Player 1" : "Linked — you are Player 2");
     // The host is the reference. Push its screen to the guest once on link-up,
@@ -301,13 +307,31 @@ function npBindDc(dc) {
       NP.syncT = setInterval(() => { if (NP.dc && NP.dc.readyState === "open") npSendState(); }, 6000);
       setTimeout(() => { if (NP.dc && NP.dc.readyState === "open") npSendState(); }, 1200);
     }
+    // Renegotiate only after the link is up (adding/removing the mic track
+    // after this point triggers a fresh offer; the peer answers).
+    if (NP.pc) NP.pc.onnegotiationneeded = async () => {
+      if (!NP.alive || !NP.pc || NP.pc.signalingState !== "stable") return;
+      try {
+        const o = await NP.pc.createOffer();
+        await NP.pc.setLocalDescription(o);
+        npSendLocalSdp();
+        npLog("renegotiate: offer sent");
+      } catch (e) { npLog(`renegotiate err ${e?.message || e}`); }
+    };
+    if (prefs().npVoice === true) npSetVoice(true).then(() => { npUpdatePtt(); npIndicator?.(); });
+    // Live RTT readout (shown in the sheet + badge).
+    clearInterval(NP.pingT);
+    NP.pingT = setInterval(() => {
+      if (NP.dc && NP.dc.readyState === "open") { try { NP.dc.send(JSON.stringify({ t: "ping", ts: Date.now() })); } catch { /* */ } npIndicator(); }
+    }, 2000);
   };
   dc.onclose = () => {
     window.__inNetplay = false;
     npLog("dc closed");
     clearInterval(NP.syncT); NP.syncT = 0;
+    clearInterval(NP.pingT); NP.pingT = 0;
     npIndicator();
-    if (NP.alive) toast("Netplay disconnected");
+    if (NP.alive) { toast("Netplay disconnected"); npScheduleReconnect(); }
   };
   dc.onmessage = (e) => {
     if (typeof e.data !== "string") {
@@ -333,6 +357,9 @@ function npBindDc(dc) {
     let m; try { m = JSON.parse(e.data); } catch { return; }
     if (m.t === "i") npCore(m.p, m.i, m.v);
     else if (m.t === "sc") { NP.rxLen = m.n | 0; NP.rxGot = 0; NP.rxChunks = []; }
+    else if (m.t === "ping") { try { NP.dc.send(JSON.stringify({ t: "pong", ts: m.ts })); } catch { /* */ } }
+    else if (m.t === "pong") { NP.rtt = Math.max(0, Date.now() - m.ts); }
+    else if (m.t === "ready") { NP.peerReady = !!m.r; npIndicator(); }
   };
 }
 async function npSendSig(payload) {
@@ -362,7 +389,10 @@ function npStartHostStream() {
       stream = typeof canvas.captureStream === "function" ? canvas.captureStream(60) : null;
     }
     if (!stream || !stream.getTracks().length) { npLog("host stream: capture failed"); return; }
-    for (const t of stream.getTracks()) NP.pc.addTrack(t, stream);
+    const vt = stream.getVideoTracks()[0];
+    const at = stream.getAudioTracks()[0];
+    if (vt) NP.pc.addTrack(vt, new MediaStream([vt]));   // video-only stream for #np-video
+    if (at) NP.pc.addTrack(at);                          // game audio → remote <audio>
     NP.hostStream = stream;
     NP.video = true;
     npLog(`host stream on (${stream.getVideoTracks().length}v/${stream.getAudioTracks().length}a)`);
@@ -391,6 +421,72 @@ function npShowHostVideo(stream) {
   const cv = document.querySelector("#game canvas");
   if (cv) cv.style.visibility = "hidden";   // the video covers it anyway
 }
+// ---- voice chat (mic track on the same RTCPeerConnection) ----------------
+function npRemoteAudioEl() {
+  let a = document.getElementById("np-remote-audio");
+  if (!a) {
+    a = el("audio", { id: "np-remote-audio", autoplay: true, playsInline: true, style: "display:none" });
+    a.setAttribute("autoplay", "");
+    uiRoot().append(a);
+    a.onclick = () => a.play?.().catch(() => {});
+  }
+  return a;
+}
+function npAttachRemoteAudio() {
+  if (!NP.remoteAudio || !NP.remoteAudio.getAudioTracks().length) return;
+  const a = npRemoteAudioEl();
+  a.srcObject = NP.remoteAudio;
+  a.play?.().catch(() => { document.addEventListener("pointerdown", () => a.play?.().catch(() => {}), { once: true }); });
+}
+// Enable/disable the local mic. Used by the netplay sheet toggle and auto-run
+// on link if prefs().npVoice. Renegotiation is handled by onnegotiationneeded.
+async function npSetVoice(on) {
+  if (on) {
+    if (NP.mic) return true;
+    try {
+      NP.mic = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } });
+    } catch (e) { toast("Mic permission denied"); npLog(`mic denied ${e?.name || e}`); return false; }
+    NP.micTrack = NP.mic.getAudioTracks()[0] || null;
+    if (NP.micTrack && NP.pc) {
+      try { NP.micSender = NP.pc.addTrack(NP.micTrack, new MediaStream([NP.micTrack])); } catch { /* */ }
+    }
+    NP.micMuted = prefs().npPTT === true;   // PTT starts muted
+    npApplyMicMute();
+    npLog("mic on");
+    return true;
+  }
+  try { if (NP.micSender && NP.pc) NP.pc.removeTrack(NP.micSender); } catch { /* */ }
+  try { NP.mic?.getTracks().forEach((t) => t.stop()); } catch { /* */ }
+  NP.mic = null; NP.micTrack = null; NP.micSender = null; NP.micMuted = false;
+  npUpdatePtt();
+  npLog("mic off");
+  return true;
+}
+// Mic mute / push-to-talk. `enabled=false` mutes without dropping the track.
+function npApplyMicMute() {
+  try { if (NP.micTrack) NP.micTrack.enabled = !NP.micMuted; } catch { /* */ }
+  npUpdatePtt();
+}
+function npUpdatePtt() {
+  let b = document.getElementById("np-ptt");
+  const active = NP.dc?.readyState === "open" && NP.mic;
+  if (!active) { b?.remove(); return; }
+  if (!b) {
+    b = el("button", { id: "np-ptt", type: "button",
+      style: "position:fixed;left:max(8px,env(safe-area-inset-left));top:50%;transform:translateY(-50%);z-index:1000;width:46px;height:46px;border-radius:50%;font-size:20px;line-height:1;background:rgba(6,6,12,.82);border:1px solid var(--gold,#ffd23d);color:var(--gold,#ffd23d)" });
+    uiRoot().append(b);
+  }
+  const ptt = prefs().npPTT === true;
+  b.textContent = NP.micMuted ? "🔇" : "🎙";
+  b.title = ptt ? "Hold to talk" : "Mute / unmute mic";
+  b.onclick = b.onpointerdown = b.onpointerup = b.onpointerleave = null;
+  if (ptt) {
+    b.onpointerdown = (e) => { e.preventDefault(); NP.micMuted = false; npApplyMicMute(); };
+    b.onpointerup = b.onpointerleave = () => { NP.micMuted = true; npApplyMicMute(); };
+  } else {
+    b.onclick = () => { NP.micMuted = !NP.micMuted; npApplyMicMute(); };
+  }
+}
 function npStartPc(isHost) {
   NP.pc = new RTCPeerConnection({ iceServers: NETPLAY_ICE });
   NP.pc.onicecandidate = (e) => {
@@ -410,7 +506,12 @@ function npStartPc(isHost) {
   };
   NP.pc.ontrack = (e) => {
     npLog(`track ${e.track.kind}`);
-    if (NP.role === "guest" && e.streams && e.streams[0]) npShowHostVideo(e.streams[0]);
+    if (e.track.kind === "video") {
+      if (NP.role === "guest") npShowHostVideo((e.streams && e.streams[0]) || new MediaStream([e.track]));
+    } else if (e.track.kind === "audio") {
+      (NP.remoteAudio ||= new MediaStream()).addTrack(e.track);
+      npAttachRemoteAudio();
+    }
   };
   const sendSdpSoon = () => {
     if (NP.pc.iceGatheringState === "complete") npSendLocalSdp();
@@ -464,15 +565,46 @@ function npPoll() {
       for (const m of (d.msgs || [])) await npHandleSig(m);
     }).catch(() => {}).finally(() => { if (NP.alive) NP.pollT = setTimeout(npPoll, 300); });
 }
-async function npHost({ sys, file, name }) {
+async function npHost({ sys, file, name, reuse }) {
   const d = await fetch(`${API}/np/room`, { method: "POST", headers: { "content-type": "application/json", ...authHdr() },
-    body: JSON.stringify({ sys, file, name, cid: CID }) }).then((r) => r.json());
+    body: JSON.stringify({ sys, file, name, cid: CID, reuse: reuse || undefined }) }).then((r) => r.json());
   NP.room = d.id; NP.role = "host"; NP.myP = 0; NP.after = 0; NP.alive = true;
   window.__npRoom = d.id;
+  // Remember we are the host so a reload/background re-hosts instead of
+  // becoming Player 2. Cleared on an explicit leave (see npForgetHost).
+  LS.set("hostNp", { room: d.id, sys, file, t: Date.now() });
   npStartPc(true);
   npPoll();
   npIndicator();
   return d.id;
+}
+function npForgetHost() { try { localStorage.removeItem("ssw:hostNp"); } catch { /* */ } }
+let _npReconnect = 0;
+// Role-aware auto-reconnect. Guest re-joins the room; host re-offers so a
+// returning guest can answer. Prevents a reloaded host from becoming Player 2.
+function npScheduleReconnect() {
+  if (!NP.alive || !NP.room) return;
+  if (NP.role === "guest") {
+    if (_npReconnect >= 4) { toast("Netplay lost — tap Netplay to rejoin"); return; }
+    _npReconnect++;
+    const room = NP.room;
+    setTimeout(async () => {
+      if (!NP.alive || NP.role !== "guest") return;
+      if (NP.dc && NP.dc.readyState === "open") { _npReconnect = 0; return; }
+      npLog(`guest reconnect ${_npReconnect}`);
+      try { await npJoin(room); _npReconnect = 0; toast("Reconnected to P1"); }
+      catch { npScheduleReconnect(); }
+    }, 1500 * _npReconnect);
+  } else if (NP.role === "host") {
+    setTimeout(() => {
+      if (!NP.alive || NP.role !== "host") return;
+      if (NP.dc && NP.dc.readyState === "open") return;
+      try { NP.pc?.close(); } catch { /* */ }
+      npLog("host re-offer");
+      npStartPc(true);
+      npIndicator();
+    }, 1500);
+  }
 }
 function npWaitLinked(ms = 25000) {
   return new Promise((resolve, reject) => {
@@ -489,6 +621,7 @@ async function npJoin(room) {
   if (!room) throw new Error("no room");
   if (NP.room === room && NP.dc && NP.dc.readyState === "open") return;
   npStop();
+  npForgetHost();   // we are the guest now — don't re-host on next load
   NP.room = room; NP.role = "guest"; NP.myP = 1; NP.after = 0; NP.alive = true;
   window.__npRoom = room;
   npLog(`join room ${room}`);
@@ -505,13 +638,84 @@ function npStop() {
   try { NP.dc && NP.dc.close(); } catch { /* */ }
   try { NP.pc && NP.pc.close(); } catch { /* */ }
   try { NP.hostStream?.getTracks().forEach((t) => t.stop()); } catch { /* */ }
+  try { NP.mic?.getTracks().forEach((t) => t.stop()); } catch { /* */ }
+  NP.mic = null; NP.micTrack = null; NP.micSender = null; NP.micMuted = false;
+  NP.remoteAudio = null;
+  clearInterval(NP.pingT); NP.pingT = 0; NP.rtt = 0;
   NP.hostStream = null; NP.video = false;
   document.getElementById("np-video")?.remove();
+  document.getElementById("np-remote-audio")?.remove();
+  document.getElementById("np-ptt")?.remove();
   npIndicator();
   const cv = document.querySelector("#game canvas");
   if (cv) cv.style.visibility = "";
   NP.dc = NP.pc = NP.room = NP.role = null; NP.myP = 0; NP.pendingIce = [];
   window.__inNetplay = false; window.__npRoom = null;
+}
+// ---- watch-party over WebRTC (additive; the JPEG stream stays as fallback) ----
+const WNP = { room: null, pc: null, stream: null, after: 0, pollT: 0, alive: false, pendingIce: [] };
+function wnpSendSig(payload) {
+  if (!WNP.room) return;
+  fetch(`${API}/np/sig`, { method: "POST", headers: { "content-type": "application/json", ...authHdr() },
+    body: JSON.stringify({ room: WNP.room, from: CID, payload }) }).catch(() => {});
+}
+async function wnpHandleSig(m) {
+  if (!m || m.from === CID || !WNP.pc || !m.payload) return;
+  const pl = m.payload;
+  if (pl.sdp) {
+    if (WNP.pc.signalingState === "stable" && pl.sdp.type === "answer") return;
+    await WNP.pc.setRemoteDescription(pl.sdp);
+    if (pl.sdp.type === "offer") {
+      await WNP.pc.setLocalDescription(await WNP.pc.createAnswer());
+      const d = WNP.pc.localDescription; if (d) wnpSendSig({ sdp: { type: d.type, sdp: d.sdp } });
+    }
+  }
+  if (pl.ice) {
+    if (!WNP.pc.remoteDescription) WNP.pendingIce.push(pl.ice);
+    else await WNP.pc.addIceCandidate(pl.ice);
+  }
+  if (WNP.pc.remoteDescription && WNP.pendingIce.length) {
+    for (const ice of WNP.pendingIce.splice(0)) await WNP.pc.addIceCandidate(ice);
+  }
+}
+function wnpPoll() {
+  if (!WNP.alive || !WNP.room) return;
+  fetch(`${API}/np/sig?room=${encodeURIComponent(WNP.room)}&after=${WNP.after}`, { cache: "no-store" })
+    .then((r) => r.json()).then(async (d) => { if (!d || d.error) return; WNP.after = d.after || WNP.after; for (const m of (d.msgs || [])) await wnpHandleSig(m); })
+    .catch(() => {}).finally(() => { if (WNP.alive) WNP.pollT = setTimeout(wnpPoll, 300); });
+}
+function wnpStop() {
+  WNP.alive = false; clearTimeout(WNP.pollT);
+  try { WNP.pc?.close(); } catch { /* */ }
+  try { WNP.stream?.getTracks().forEach((t) => t.stop()); } catch { /* */ }
+  WNP.pc = null; WNP.stream = null; WNP.room = null; WNP.pendingIce = [];
+  document.getElementById("wnp-video")?.remove();
+}
+async function wnpStartHost() {
+  const d = await fetch(`${API}/np/room`, { method: "POST", headers: { "content-type": "application/json", ...authHdr() },
+    body: JSON.stringify({ sys: window.__playSys, file: window.__playFile, name: document.title, cid: CID, watch: true }) }).then((r) => r.json());
+  WNP.room = d.id; WNP.after = 0; WNP.alive = true;
+  WNP.pc = new RTCPeerConnection({ iceServers: NETPLAY_ICE });
+  WNP.pc.onicecandidate = (e) => { if (e.candidate) wnpSendSig({ ice: e.candidate }); };
+  let stream = null;
+  try {
+    const canvas = document.querySelector("#game canvas");
+    stream = window.EJS_emulator?.collectScreenRecordingMediaTracks?.(canvas, 60) || canvas?.captureStream?.(60) || null;
+  } catch { /* */ }
+  if (!stream || !stream.getTracks().length) { wnpStop(); return null; }
+  WNP.stream = stream;
+  for (const t of stream.getTracks()) WNP.pc.addTrack(t, stream);
+  await WNP.pc.setLocalDescription(await WNP.pc.createOffer());
+  const ld = WNP.pc.localDescription; if (ld) wnpSendSig({ sdp: { type: ld.type, sdp: ld.sdp } });
+  wnpPoll();
+  return WNP.room;
+}
+function wnpStartWatch(room, onStream) {
+  WNP.room = room; WNP.after = 0; WNP.alive = true;
+  WNP.pc = new RTCPeerConnection({ iceServers: NETPLAY_ICE });
+  WNP.pc.onicecandidate = (e) => { if (e.candidate) wnpSendSig({ ice: e.candidate }); };
+  WNP.pc.ontrack = (e) => onStream((e.streams && e.streams[0]) || new MediaStream([e.track]));
+  wnpPoll();
 }
 async function autoJoinNetplay(wantRoom) {
   if (!wantRoom) { toast("Host hasn't created a room yet — they need to tap Netplay first"); return; }
@@ -580,10 +784,47 @@ function openNetplaySheet(sys, file, name) {
       title: "Share a link that opens this game and auto-joins the room",
       onclick: () => copyInviteLink(sys, file, NP.room) }));
   }
+  if (linked) {
+    const voiceOn = !!NP.mic;
+    const vb = el("button", { className: "btn " + (voiceOn ? "btn-primary" : "btn-ghost"), style: "width:100%;margin:6px 0",
+      textContent: voiceOn ? "🎙 Voice chat on" : "🎙 Voice chat",
+      title: "Talk to each other over the same connection" });
+    vb.onclick = async () => {
+      const on = !NP.mic;
+      if (!await npSetVoice(on)) return;
+      setPref("npVoice", on);
+      vb.classList.toggle("btn-primary", on); vb.classList.toggle("btn-ghost", !on);
+      vb.textContent = on ? "🎙 Voice chat on" : "🎙 Voice chat";
+      toast(on ? "Voice chat on" : "Voice chat off");
+    };
+    kids.push(vb);
+    const rb = el("button", { className: "btn " + (NP.meReady ? "btn-primary" : "btn-ghost"), style: "width:100%;margin:6px 0",
+      textContent: NP.meReady ? "✓ Ready — waiting for " + (NP.role === "host" ? "P2" : "P1") : "I'm ready",
+      title: "Tell the other player you're set" });
+    rb.onclick = () => {
+      NP.meReady = !NP.meReady;
+      try { NP.dc.send(JSON.stringify({ t: "ready", r: NP.meReady })); } catch { /* */ }
+      rb.classList.toggle("btn-primary", NP.meReady); rb.classList.toggle("btn-ghost", !NP.meReady);
+      rb.textContent = NP.meReady ? "✓ Ready — waiting for " + (NP.role === "host" ? "P2" : "P1") : "I'm ready";
+      if (NP.meReady && NP.peerReady) toast("Both ready — go!");
+    };
+    kids.push(rb);
+    if (NP.mic) {
+      const mb = el("button", { className: "btn btn-ghost", style: "width:100%;margin:6px 0",
+        textContent: NP.micMuted ? "🔇 Mic muted — tap to unmute" : "🎙 Mic live — tap to mute",
+        title: "Mute or unmute your microphone" });
+      mb.onclick = () => {
+        NP.micMuted = !NP.micMuted; npApplyMicMute();
+        mb.textContent = NP.micMuted ? "🔇 Mic muted — tap to unmute" : "🎙 Mic live — tap to mute";
+        toast(NP.micMuted ? "Mic muted" : "Mic live");
+      };
+      kids.push(mb);
+    }
+  }
   if (NP.role && (linked || NP.room)) {
     kids.push(el("button", { className: "btn btn-ghost", style: "width:100%;margin:6px 0;color:var(--pink,#ff5fa2)",
       textContent: "Leave netplay", title: "Disconnect and stop sharing",
-      onclick: () => { npStop(); o.remove(); toast("Left netplay"); } }));
+      onclick: () => { npStop(); npForgetHost(); o.remove(); toast("Left netplay"); } }));
   }
 
   const prefRow = (label, key) => {
@@ -593,12 +834,13 @@ function openNetplaySheet(sys, file, name) {
   };
   kids.push(el("div", { style: "margin-top:10px;padding-top:10px;border-top:1px solid var(--line,#232330)" },
     prefRow("Auto-unmute P2's video", "npAutoUnmute"),
+    prefRow("Push-to-talk (hold 🎙 on the left)", "npPTT"),
     prefRow("I usually host", "npHostByDefault")));
 
   const diag = el("details", { style: "margin-top:12px" },
     el("summary", { className: "hint", style: "cursor:pointer", textContent: "Diagnostics" }),
     el("p", { className: "hint", style: "font-size:11px;opacity:.8;margin:8px 0 2px",
-      textContent: `role=${NP.role || "-"} mode=${NP.video ? "host-video" : "input-echo"} pc=${NP.pc?.connectionState || "-"} ice=${NP.pc?.iceConnectionState || "-"} dc=${NP.dc?.readyState || "-"} room=${NP.room || "-"} sent=${NP.sent} recv=${NP.recv}` }));
+      textContent: `role=${NP.role || "-"} mode=${NP.video ? "host-video" : "input-echo"} pc=${NP.pc?.connectionState || "-"} ice=${NP.pc?.iceConnectionState || "-"} dc=${NP.dc?.readyState || "-"} room=${NP.room || "-"} rtt=${NP.rtt || "-"}ms sent=${NP.sent} recv=${NP.recv}` }));
   if (window.__npLast) diag.append(el("p", { className: "hint", style: "font-size:11px;opacity:.6", textContent: "last: " + window.__npLast }));
   kids.push(diag);
   kids.push(el("button", { className: "btn btn-ghost", style: "width:100%;margin:8px 0 0", textContent: "Close", onclick: () => o.remove() }));
@@ -760,7 +1002,7 @@ function pushRecent(sys, file, name, img) {
 const PREF_DEFAULTS = {
   lite: false, autoResume: false, musicShuffle: false, videoFilter: "pixel",
   region: "", playingToasts: true, confirmOverwrite: false, previewSound: true,
-  netplay: true, netplayName: "", npAutoUnmute: true, npHostByDefault: true,
+  netplay: true, netplayName: "", npAutoUnmute: true, npHostByDefault: true, npVoice: false, npPTT: false,
 };
 const AUTH = { token: LS.get("auth", null), user: null };
 const authHdr = () => AUTH.token ? { "x-ssw-auth": AUTH.token } : {};
@@ -1379,6 +1621,9 @@ async function routeLibrary() {
 async function routeWatch(id) {
   ++state.render;
   document.title = "Watch party — RetroVerse";
+  const vid = el("video", { autoplay: true, playsInline: true, muted: true,
+    style: "width:100%;max-height:72vh;background:#000;border-radius:12px;display:none" });
+  vid.setAttribute("playsinline", "");
   const img = el("img", { alt: "Live play" });
   const meta = el("div", { className: "watch-meta" },
     el("span", { className: "live-dot" }),
@@ -1387,12 +1632,13 @@ async function routeWatch(id) {
   const playLink = el("a", { className: "btn btn-primary sm", hidden: true, textContent: "Play this too" });
   view.replaceChildren(el("div", { className: "watch-stage" },
     el("h1", { textContent: "Watch party" }),
-    meta, playLink, img,
-    el("p", { className: "hint", textContent: "Someone on the tailnet is playing. Picture updates a few times a second — not a full netplay stream." })));
+    meta, playLink, vid, img,
+    el("p", { className: "hint", textContent: "Live stream from the host — smooth video with sound (falls back to still frames if the stream can't connect)." })));
+  wnpStop();
   let dead = 0;
   const token = state.render;
   const poll = async () => {
-    if (token !== state.render) return;
+    if (token !== state.render) { wnpStop(); return; }
     try {
       const info = await fetch(`${API}/watch/${id}`, { cache: "no-store" }).then((r) => r.ok ? r.json() : null);
       if (!info) { dead++; if (dead > 8) { $("#watch-title").textContent = "This party ended."; return; } }
@@ -1404,7 +1650,16 @@ async function routeWatch(id) {
           playLink.hidden = false;
           playLink.href = `#/play/${info.sys}/${info.file.split("/").map(encodeURIComponent).join("/")}`;
         }
-        img.src = `${API}/watch/${id}/frame?t=${Date.now()}`;
+        // Prefer the WebRTC stream; keep the JPEG frame as a fallback poster.
+        if (info.room && !WNP.alive) {
+          wnpStartWatch(info.room, (stream) => {
+            vid.srcObject = stream;
+            vid.style.display = "block";
+            img.style.display = "none";
+            vid.play?.().then(() => { vid.muted = false; }).catch(() => { /* tap to unmute */ });
+          });
+        }
+        if (!info.room || !WNP.alive || vid.style.display === "none") img.src = `${API}/watch/${id}/frame?t=${Date.now()}`;
       }
     } catch { dead++; }
     if (token === state.render) setTimeout(poll, 180);
@@ -2119,6 +2374,19 @@ async function routePlayGame(sys, romParam, resume = false) {
     if (joinHint && joinHint.sys === sys && (!joinHint.file || joinHint.file === file)) {
       LS.set("joinNp", null);
       setTimeout(() => autoJoinNetplay(joinHint.room), 1400);
+    } else {
+      // We were hosting this game before a reload/background — re-host the same
+      // room (server `reuse`) so P2 can reconnect instead of us becoming P2.
+      const hostHint = LS.get("hostNp", null);
+      if (hostHint && hostHint.room && hostHint.sys === sys
+          && (!hostHint.file || hostHint.file === file)
+          && Date.now() - (hostHint.t || 0) < 15 * 60 * 1000) {
+        setTimeout(async () => {
+          if (NP.role || window.__inNetplay) return;
+          try { await npHost({ sys, file, name: romName, reuse: hostHint.room }); toast("Re-hosting — P2 can reconnect"); }
+          catch { /* */ }
+        }, 1600);
+      }
     }
     window.__emuHeartbeat = setInterval(() => { ping(false); flushPlaytime(); }, 15000);
     window.__emuAutoSaveT = key ? setInterval(autoSave, 180000) : 0;
@@ -2149,9 +2417,11 @@ async function routePlayGame(sys, romParam, resume = false) {
         return;
       }
       try {
+        // Build the WebRTC watch room first; fall back to JPEG-only if capture fails.
+        const room = await wnpStartHost().catch(() => null);
         const d = await fetch(`${API}/watch`, { method: "POST",
           headers: { "content-type": "application/json", ...authHdr() },
-          body: JSON.stringify({ sys, file, name: romName, who: AUTH.user?.display || prefs().netplayName || "Host" }),
+          body: JSON.stringify({ sys, file, name: romName, who: AUTH.user?.display || prefs().netplayName || "Host", room }),
         }).then((r) => r.json());
         window.__watchId = d.id;
         const link = `${location.origin}${location.pathname}#/watch/${d.id}`;
@@ -2247,6 +2517,7 @@ function emuCleanup() {
   clearInterval(window.__emuHeartbeat); clearInterval(window.__emuAutoSaveT);
   clearInterval(window.__watchT); clearInterval(window.__npSnapT);
   if (window.__watchId) fetch(`${API}/watch/${window.__watchId}`, { method: "DELETE", keepalive: true }).catch(() => {});
+  try { wnpStop(); } catch { /* */ }
   window.__watchId = null; window.__inNetplay = false; window.__npRoom = null;
   try { npStop(); } catch { /* */ }
   try { window.SSPlay && window.SSPlay.postMessage("0"); } catch { /* */ }
