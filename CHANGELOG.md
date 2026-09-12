@@ -2,6 +2,15 @@
 
 All notable changes to the RetroVerse website.
 
+## [2.22.25] — 2026-09-12 — Reliable mobile menu
+
+### Fixed
+
+- **Mobile menu** now handles taps on its SVG icon correctly instead of opening
+  and immediately closing through the outside-click handler.
+- **Mobile header** keeps the RetroVerse logo truly centred while the account,
+  menu, and search controls retain their own touch space at either side.
+
 ## [2.22.24] — 2026-09-12 — Profile library hub and cleaner console art
 
 ### Changed

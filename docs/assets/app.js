@@ -4299,11 +4299,15 @@ window.addEventListener("hashchange", router);
 /* ---- chrome ----------------------------------------------- */
 $("#back-btn").onclick = () => (history.length > 1 ? history.back() : (location.hash = "#/"));
 const drawer = $("#drawer");
-$("#menu-btn").onclick = () => { drawer.hidden = !drawer.hidden; };
+const toggleDrawer = (open = drawer.hidden) => {
+  drawer.hidden = !open;
+  $("#menu-btn").setAttribute("aria-expanded", String(open));
+};
+$("#menu-btn").onclick = (e) => { e.preventDefault(); e.stopPropagation(); toggleDrawer(); };
 $("#party-chat-fab").onclick = openPartyChat;
-drawer.addEventListener("click", (e) => { if (e.target.tagName === "A") drawer.hidden = true; });
+drawer.addEventListener("click", (e) => { if (e.target.closest("a")) toggleDrawer(false); });
 document.addEventListener("click", (e) => {
-  if (!drawer.hidden && !drawer.contains(e.target) && e.target.id !== "menu-btn") drawer.hidden = true;
+  if (!drawer.hidden && !drawer.contains(e.target) && !e.target.closest("#menu-btn")) toggleDrawer(false);
 });
 const sf = $("#bar-search"), qi = $("#q");
 $("#search-btn").onclick = () => { sf.hidden = !sf.hidden; if (!sf.hidden) qi.focus(); };

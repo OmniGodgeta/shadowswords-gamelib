@@ -8,6 +8,24 @@ this. (Netplay internals: `NETPLAY-UI-CONTRACT.md`. Roadmap split:
 
 ---
 
+## Session 2026-09-12 — final handoff recovery
+
+- **Mobile drawer:** SVG taps are stopped before the document-level outside-click
+  handler runs. `toggleDrawer()` owns its hidden state and keeps
+  `#menu-btn[aria-expanded]` correct; drawer links and genuine outside taps
+  close it.
+- **In-game controls:** the 2.22.22 player bar is deliberately ordered as Exit ·
+  title · rewind/fast-forward · saves · netplay · controller / notes / report /
+  pad layout. It has **no** duplicate Portrait control and **no** Hide pad
+  control. The Android in-game shell retains its separate bottom-left
+  `.fab-pad`, the only Hide/Show pad control.
+- **Android bridge status:** native background invite polling and WebView
+  microphone permission support are committed in companion repo `shadowswords`
+  at `02eec03`. They require an APK build and device test; this workspace has
+  no `flutter` executable on `PATH`.
+
+---
+
 ## Session 2026-09-11 — "layout agent"
 
 ### Context
