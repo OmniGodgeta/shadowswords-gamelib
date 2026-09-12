@@ -2,6 +2,19 @@
 
 All notable changes to the RetroVerse website.
 
+## [2.22.24] — 2026-09-12 — Profile library hub and cleaner console art
+
+### Changed
+
+- **Profile** now groups activity, Favorites, and Cloud saves into one library
+  hub, with recent favorites and save states directly below it; settings follow
+  the personal library instead of interrupting it.
+- **Desktop rail** now contains only secondary destinations: Favorites, Cloud
+  saves, and Netplay. Home, Play, Lounge, Library, and Profile remain in their
+  appropriate primary navigation.
+- **Console art** removes more light edge-connected backgrounds during builds
+  and softly fades the few archival photos that retain a rectangular backdrop.
+
 ## [2.22.23] — 2026-09-12 — Floating party chat
 
 ### Added

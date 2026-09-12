@@ -356,6 +356,11 @@ body.lite .shelf-track > .tile, body.lite .tile-grid > .tile { animation: none; 
 .tile-art .console-photo {
   width: 88%; height: 88%; object-fit: contain;
   filter: drop-shadow(0 4px 18px rgba(0,0,0,.6));
+  /* A few archival product photos retain a non-white rectangular backdrop.
+     The build removes light edge-connected backgrounds; this soft edge keeps
+     those remaining sources from reading as a square in a console tile. */
+  -webkit-mask-image: radial-gradient(ellipse 75% 75% at center, #000 58%, transparent 100%);
+  mask-image: radial-gradient(ellipse 75% 75% at center, #000 58%, transparent 100%);
   transition: transform .16s, filter .16s;
 }
 .tile:hover .console-photo, .tile:focus-visible .console-photo {
@@ -654,6 +659,14 @@ body.has-mp .foot { margin-bottom: 74px; }
 }
 .stat-n { font-size: 24px; font-weight: 900; color: var(--cyan); text-shadow: var(--glow-cyan); }
 .stat-l { font-size: 11.5px; color: var(--muted); margin-top: 4px; text-transform: uppercase; letter-spacing: .06em; }
+.profile-hub { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; margin: 4px 0 22px; }
+.profile-hub a { display: flex; align-items: center; gap: 12px; min-height: 76px; padding: 14px 16px; border: 1px solid var(--line-2); border-radius: 12px; background: var(--bg-1); color: var(--text); }
+.profile-hub a:hover { border-color: var(--cyan); box-shadow: var(--glow-cyan); }
+.profile-hub .hub-k { font-size: 24px; }
+.profile-hub .hub-t, .profile-hub .hub-s { display: block; }
+.profile-hub .hub-t { font-weight: 800; }
+.profile-hub .hub-s { margin-top: 3px; color: var(--muted); font-size: 12px; }
+@media (max-width: 560px) { .profile-hub { grid-template-columns: 1fr; } }
 
 /* ---- filter checkboxes ---- */
 .grid-tools .chk { display: inline-flex; align-items: center; gap: 6px; font-size: 12.5px; color: var(--muted); cursor: pointer; }

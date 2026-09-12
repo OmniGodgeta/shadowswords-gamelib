@@ -752,7 +752,7 @@ def convert(src, dst, width):
     return r.returncode == 0
 
 
-def strip_light_bg(path, thresh=190, tol=46):
+def strip_light_bg(path, thresh=168, tol=65):
     """Console photos are product shots on light backgrounds; a tile showing one
     sits inside a white box. Flood the borders over light, low-chroma pixels and
     clear alpha there so the hardware floats on the tile instead. No-op when

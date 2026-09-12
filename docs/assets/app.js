@@ -3754,6 +3754,19 @@ async function routeFavorites() {
   window.removeEventListener("ssw-favs", on); window.addEventListener("ssw-favs", on);
 }
 
+function cloudSaveTile(s, resolve) {
+  const gm = (state.cache[s.sys] || []).find((x) => x.file === s.file);
+  const shot = (s.slots || []).find((x) => x.shot);
+  const shotUrl = shot ? (STATE_BASE + encodeURIComponent(s.sys) + "/" + s.file.split("/").map(encodeURIComponent).join("/")
+    + "?s=" + encodeURIComponent(shot.slot) + "&shot=1" + (AUTH.token ? "&a=" + encodeURIComponent(AUTH.token) : "")) : null;
+  const art = coverArt({ img: shotUrl || (gm && gm.img), name: s.name, sys: s.sys, file: s.file,
+    resolve: shotUrl ? null : resolve, badge: s.shared ? "Shared" : "Resume" });
+  return el("a", { className: "tile wide", href: `#/resume/${s.sys}/${s.file.split("/").map(encodeURIComponent).join("/")}` }, art,
+    el("div", { className: "tile-cap" },
+      el("div", { className: "t", textContent: s.name }),
+      el("div", { className: "s", textContent: `${sysName(s.sys)} · ${(s.slots || []).length} slot${(s.slots || []).length === 1 ? "" : "s"} · ${new Date(s.mtime).toLocaleDateString()}` })));
+}
+
 async function routeSaves() {
   const token = ++state.render;
   spinner();
@@ -3773,19 +3786,7 @@ async function routeSaves() {
     grid.append(el("div", { className: "empty-state", textContent: "No cloud saves yet. Save a state from the emulator menu and it syncs here automatically." }));
   } else {
     var saveResolve = [];
-    saves.sort((a, b) => b.mtime - a.mtime).forEach((s) => {
-      const gm = (state.cache[s.sys] || []).find((x) => x.file === s.file);
-      const shot = (s.slots || []).find((x) => x.shot);
-      const shotUrl = shot ? (STATE_BASE + encodeURIComponent(s.sys) + "/" + s.file.split("/").map(encodeURIComponent).join("/")
-        + "?s=" + encodeURIComponent(shot.slot) + "&shot=1" + (AUTH.token ? "&a=" + encodeURIComponent(AUTH.token) : "")) : null;
-      const art = coverArt({ img: shotUrl || (gm && gm.img), name: s.name, sys: s.sys, file: s.file, resolve: shotUrl ? null : saveResolve,
-        badge: s.shared ? "Shared" : "Resume" });
-      grid.append(el("a", { className: "tile wide",
-        href: `#/resume/${s.sys}/${s.file.split("/").map(encodeURIComponent).join("/")}` }, art,
-        el("div", { className: "tile-cap" },
-          el("div", { className: "t", textContent: s.name }),
-          el("div", { className: "s", textContent: `${sysName(s.sys)} · ${(s.slots || []).length} slot${(s.slots || []).length === 1 ? "" : "s"} · ${new Date(s.mtime).toLocaleDateString()}` }))));
-    });
+    saves.sort((a, b) => b.mtime - a.mtime).forEach((s) => grid.append(cloudSaveTile(s, saveResolve)));
   }
   frag.append(el("div", { className: "wrap" }, grid));
   view.replaceChildren(frag);
@@ -4072,9 +4073,11 @@ async function routeLogin() {
 
 async function routeProfile() {
   ++state.render; spinner();
+  const savesP = fetch(STATE_BASE + "list", { headers: authHdr() }).then((r) => r.json()).catch(() => null);
   await getSystems().catch(() => {});
   document.title = "Your profile — RetroVerse";
   const favs = favList(), recent = recentList();
+  const saves = await savesP;
   const played = LS.get("playtime", {});          // sys/file -> seconds
   const totalSec = Object.values(played).reduce((n, s) => n + s, 0);
   const systemsTouched = new Set([...recent.map((r) => r.sys), ...Object.keys(played).map((k) => k.split("/")[0])]).size;
@@ -4087,7 +4090,6 @@ async function routeProfile() {
     el("div", { className: "shelf-head" }, el("h2", { textContent: "Your profile" }))));
 
   frag.append(el("div", { className: "wrap" }, signedIn() ? accountCard() : signInPrompt()));
-  frag.append(el("div", { className: "wrap" }, settingsCard()));
 
   frag.append(
     el("div", { className: "wrap" },
@@ -4097,11 +4099,25 @@ async function routeProfile() {
         stat(recent.length, "games launched"),
         stat(favs.length, "favorites"),
         stat(systemsTouched, "systems"),
-        stat(fmtBytes(rc.bytes), "ROMs cached"))));
+        stat(fmtBytes(rc.bytes), "ROMs cached")),
+      el("h3", { style: "margin:4px 0 10px", textContent: "Your library" }),
+      el("div", { className: "profile-hub" },
+        el("a", { href: "#/favorites" },
+          el("span", { className: "hub-k", textContent: "♥" }),
+          el("span", {}, el("span", { className: "hub-t", textContent: "Favorites" }),
+            el("span", { className: "hub-s", textContent: `${favs.length} saved game${favs.length === 1 ? "" : "s"}` }))),
+        el("a", { href: "#/saves" },
+          el("span", { className: "hub-k", textContent: "☁" }),
+          el("span", {}, el("span", { className: "hub-t", textContent: "Cloud saves" }),
+            el("span", { className: "hub-s", textContent: saves ? `${saves.length} game${saves.length === 1 ? "" : "s"} with saves` : "Check your connection" }))))));
   if (recent.length) frag.append(shelf({ title: "Continue playing", count: recent.length,
     tiles: recent.map((r) => favTile({ sys: r.sys, id: null, name: r.name, img: r.img, file: r.file })) }));
   if (favs.length) frag.append(shelf({ title: "Favorites", count: favs.length, moreHref: "#/favorites",
     tiles: favs.slice(0, 24).map((f) => favTile(f)) }));
+  const saveResolve = [];
+  if (saves?.length) frag.append(shelf({ title: "Cloud saves", count: saves.length, moreHref: "#/saves",
+    tiles: saves.slice().sort((a, b) => b.mtime - a.mtime).slice(0, 12).map((s) => cloudSaveTile(s, saveResolve)) }));
+  frag.append(el("div", { className: "wrap" }, settingsCard()));
   const impInput = el("input", { type: "file", accept: ".json", hidden: true });
   impInput.onchange = async () => {
     const f = impInput.files[0]; if (!f) return;
@@ -4128,6 +4144,7 @@ async function routeProfile() {
     } }),
     el("button", { className: "btn btn-ghost", textContent: "Import", onclick: () => impInput.click() }), impInput));
   view.replaceChildren(frag);
+  hydrateCovers(saveResolve);
 }
 
 // arcade systems whose romsets rarely match EmulatorJS's FBNeo/MAME build —
