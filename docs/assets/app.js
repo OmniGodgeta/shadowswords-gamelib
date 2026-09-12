@@ -2335,6 +2335,7 @@ async function routePlayGame(sys, romParam, resume = false) {
       if (!u) throw 0;
       romUrl = URL.createObjectURL(u.blob); romName = u.name.replace(/\.[^.]+$/, ""); core = u.core;
     } else {
+      await getSystems();
       romName = file.split("/").pop().replace(/\.[^.]+$/, "");
       core = meta(sys).core || EXT_CORE[file.split(".").pop().toLowerCase()];
       if (!core) throw 0;

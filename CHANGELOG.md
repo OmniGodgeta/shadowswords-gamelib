@@ -2,6 +2,13 @@
 
 All notable changes to the RetroVerse website.
 
+## [2.22.31] — 2026-09-12 — Load game metadata before boot
+
+### Fixed
+
+- Direct and deep-linked game routes now load system metadata before resolving
+  the emulator core, preventing every ROM from showing the generic load error.
+
 ## [2.22.30] — 2026-09-12 — Use active tailnet hostname
 
 ### Fixed
