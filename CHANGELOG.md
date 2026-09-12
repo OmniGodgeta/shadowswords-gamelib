@@ -2,6 +2,19 @@
 
 All notable changes to the RetroVerse website.
 
+## [2.22.27] — 2026-09-12 — Clearer controls and roomier navigation
+
+### Changed
+
+- **Desktop home navigation cards** are larger and easier to scan.
+- **Mobile header:** Search now lives in Play, allowing the RetroVerse logo to
+  use the newly available header space.
+- **In-game controls:** Exit now uses the same button treatment as every other
+  control, and the game title sits in its own smaller line below the toolbar.
+- **Top-right game menu:** restored EmulatorJS's native settings menu (audio,
+  video, frame-rate, and save-state import/export). The top-centre handle still
+  opens RetroVerse's own game controls.
+
 ## [2.22.26] — 2026-09-12 — Simplify desktop navigation
 
 ### Changed

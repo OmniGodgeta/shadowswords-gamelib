@@ -42,26 +42,9 @@ const TS = "https://shadow-1.tail51f9d6.ts.net";
 const SELF_HOSTED = location.hostname.endsWith(".ts.net");
 const IN_APP = /ShadowSwordsApp|RetroVerseApp/.test(navigator.userAgent);   // native wrapper intercepts _blank → phone browser
 if (IN_APP) document.documentElement.classList.add("in-app");
-// EmulatorJS draws a hamburger (three bars) in the top-right of the game, but its
-// only handler toggles EJS's own bottom menu bar, which sits under the touch
-// controls — so it looks like it does nothing. Repurpose it: tapping it toggles
-// our in-game control bar. Intercept in the capture phase so EJS's touchstart /
-// mousedown / click handlers never fire.
-if (IN_APP) {
-  let sswHambLast = 0;
-  const sswHamburger = (e) => {
-    const t = e.target;
-    if (!(t && t.closest && t.closest(".ejs_virtualGamepad_open"))) return;
-    e.preventDefault(); e.stopPropagation();
-    const now = Date.now();
-    if (now - sswHambLast < 350) return;
-    sswHambLast = now;
-    window.__sswChromeToggle && window.__sswChromeToggle();
-  };
-  for (const ev of ["pointerdown", "touchstart", "touchend", "mousedown", "mouseup", "click"]) {
-    document.addEventListener(ev, sswHamburger, true);
-  }
-}
+// Keep EmulatorJS's top-right hamburger native: it owns emulator settings
+// (sound, video, FPS and save-state import/export). RetroVerse's top-centre
+// handle independently opens its own game controls.
 const extTarget = { target: "_blank", rel: "noopener" };      // keep the signal the app hooks on
 const ROM_BASE = SELF_HOSTED ? "/roms/" : TS + "/roms/";       // needs Funnel when off-tailnet
 const MUSIC_BASE = SELF_HOSTED ? "/music/" : TS + "/music/";
@@ -1142,7 +1125,7 @@ function hero({ kicker, title, desc, meta: metaLine, art, actions = [], mod }) {
       desc && el("p", { className: "hero-desc", textContent: desc }),
       el("div", { className: "hero-actions" },
         ...actions.map((a) => el("a", {
-          className: "btn " + (a.primary ? "btn-primary" : "btn-ghost"),
+          className: "btn " + (a.primary ? "btn-primary" : "btn-ghost") + (a.className ? " " + a.className : ""),
           href: a.href || "javascript:void 0",
           target: a.blank ? "_blank" : null, rel: a.blank ? "noopener" : null,
           onclick: a.onClick || null, textContent: a.label,
@@ -1960,6 +1943,7 @@ async function routePlay() {
       { label: "Pick a ROM file", primary: true, onClick: () => $("#rom-input")?.click() },
       { label: "Browse all games", href: "#/browse" },
       { label: "Netplay", href: "#/netplay" },
+      { label: "⌕ Search games", className: "play-search", onClick: () => openGameSearch() },
     ],
   }));
   frag.append(el("div", { className: "wrap", style: "padding-bottom:6px" }, dropzone()));
@@ -2311,13 +2295,14 @@ async function routePlayGame(sys, romParam, resume = false) {
   if (sys !== "upload") flagBtn.onclick = () => reportGame(sys, file, romName);
   else flagBtn.hidden = true;
   const shell = el("div", { className: "player" + (IN_APP ? " in-app-player" : "") },
-    el("div", { className: "player-bar" },
-      el("button", { type: "button", className: "exit", textContent: "‹ Exit", onclick: (e) => { e.preventDefault(); exitPlayer(); } }),
-      el("div", { className: "title", id: "player-title", textContent: "Loading…" }),
-      rwBtn, ffBtn,
-      saveBtn, saveAsBtn, loadBtn,
-      npBtn, syncBtn, invBtn, watchBtn,
-      ctrlBtn, noteBtn, flagBtn, padLayoutBtn),
+    el("div", { className: "player-chrome" },
+      el("div", { className: "player-bar" },
+        el("button", { type: "button", className: "pbtn exit", textContent: "‹ Exit", onclick: (e) => { e.preventDefault(); exitPlayer(); } }),
+        rwBtn, ffBtn,
+        saveBtn, saveAsBtn, loadBtn,
+        npBtn, syncBtn, invBtn, watchBtn,
+        ctrlBtn, noteBtn, flagBtn, padLayoutBtn),
+      el("div", { className: "title", id: "player-title", textContent: "Loading…" })),
     el("div", { className: "player-stage" },
       el("div", { id: "game" }), loadEl));
   if (IN_APP) {
@@ -2327,10 +2312,6 @@ async function routePlayGame(sys, romParam, resume = false) {
       shell.classList.add("show-chrome");
       clearTimeout(hideT);
       hideT = setTimeout(hideChrome, 5000);
-    };
-    window.__sswChromeToggle = () => {
-      if (shell.classList.contains("show-chrome")) { clearTimeout(hideT); hideChrome(); }
-      else showChrome();
     };
     shell.append(
       el("button", { type: "button", className: "fab-exit", textContent: "‹", title: "Exit game",
@@ -4222,7 +4203,7 @@ function parseHash() {
 }
 const TOP_NAV = new Set(["home", "play", "lounge", "library"]);
 function setNav(name) {
-  $$(".bar-link, .drawer a, .side-nav a").forEach((a) => a.classList.toggle("active", a.dataset.nav === name));
+  $$(".bar-link, .drawer a").forEach((a) => a.classList.toggle("active", a.dataset.nav === name));
   const top = TOP_NAV.has(name);
   $("#bar-nav").hidden = !top;
   $("#back-btn").hidden = top;
@@ -4310,7 +4291,11 @@ document.addEventListener("click", (e) => {
   if (!drawer.hidden && !drawer.contains(e.target) && !e.target.closest("#menu-btn")) toggleDrawer(false);
 });
 const sf = $("#bar-search"), qi = $("#q");
-$("#search-btn").onclick = () => { sf.hidden = !sf.hidden; if (!sf.hidden) qi.focus(); };
+function openGameSearch() { sf.hidden = false; qi.focus(); }
+$("#search-btn").onclick = () => {
+  if (sf.hidden) openGameSearch();
+  else { sf.hidden = true; qi.blur(); }
+};
 sf.onsubmit = (e) => e.preventDefault();
 const acBox = el("div", { className: "ac", hidden: true });
 sf.append(acBox);

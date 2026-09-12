@@ -13,7 +13,8 @@ Netplay / Invite / Sync controls **in the top bar**.
 | `goLandscape()` fullscreens `.player` | top of app.js | If you change the fullscreen target, update `uiRoot()` too. |
 | `#toast`, `#help-overlay`, `#invite-overlay`, `#ctrl-panel` | many | `z-index: 400+`, `position: fixed`. Must win over the canvas. |
 | Netplay entry buttons | `routePlayGame()`, `openNetplaySheet()` | Desktop: `.pbtn` `#np-btn`, `#inv-btn`, `#np-sync-btn` on `.player-bar`. In-app: `.fab-np`. |
-| In-app FABs | `.fab-np`, `.fab-ctrl`, `.fab-exit`, `.fab-pad`, `.chrome-peek` | `openNetplaySheet`, `controlsPanel`, `toggleTouchPad`. |
+| In-app controls | `.fab-ctrl`, `.fab-exit`, `.fab-pad`, `.chrome-peek` | `controlsPanel`, `toggleTouchPad`; `.chrome-peek` opens the RetroVerse toolbar. |
+| EmulatorJS menu | `.ejs_virtualGamepad_open` | Native top-right menu: emulator audio/video/FPS and save import/export. Do not intercept it. |
 | `html.in-app.playing .bar, .drawer { display:none }` | `style.css` | the site chrome is hidden in-app during play. |
 
 ## The important trap
@@ -42,9 +43,10 @@ the sync/link is still being stabilised.
   `.player-bar` (`#np-btn`), which stays reachable because the reveal handle
   (`.chrome-peek`) was doubled to 112×32 with a chevron: tap the top-centre
   handle, then **Netplay**.
-- `.player-bar` button order was regrouped: exit · title · rewind/fast-forward ·
-  save/save-as/load · netplay/invite/sync/watch · controller/note/report ·
-  hide-pad/landscape. It is nowrap + horizontal-scroll in-app.
+- `.player-bar` button order is exit · rewind/fast-forward · save/save-as/load ·
+  netplay/invite/sync/watch · controller/note/report/pad. The smaller title is
+  in the following `#player-title` strip. The toolbar is nowrap +
+  horizontal-scroll in-app.
 - `goLandscape()` is now a toggle: browser path still fullscreens `.player`
   (so `uiRoot()` is unchanged); in-app path posts `SSPlay "0"` / `"1"` to rotate.
 - No netplay logic (`NP`, `np*()`) was touched. `#np-btn`, `#inv-btn`,
@@ -75,4 +77,3 @@ the sync/link is still being stabilised.
   fallback when capture fails.
 - Emulator load failure now offers **Retry** (and CDN fallback) — restyle the
   `#player-load` retry button if needed.
-

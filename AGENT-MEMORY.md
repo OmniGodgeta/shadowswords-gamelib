@@ -10,6 +10,15 @@ this. (Netplay internals: `NETPLAY-UI-CONTRACT.md`. Roadmap split:
 
 ## Session 2026-09-12 — final handoff recovery
 
+- **Menu split:** `.chrome-peek` opens the RetroVerse in-game toolbar. Do not
+  intercept `.ejs_virtualGamepad_open`; the top-right EmulatorJS button must
+  retain its native audio/video/FPS and save import/export menu.
+- **Toolbar layout:** `.player-chrome` wraps the controls above the small game
+  title strip. Keep `#player-title` outside `.player-bar`; the Exit button is a
+  regular `.pbtn.exit` so it visually matches the other controls.
+- **Navigation sizing:** the home `.cab-dock` cards receive desktop-only sizing
+  at 1024 px and above. Mobile hides the header search button; Play supplies
+  the `.play-search` action so the logo can grow without crowding the header.
 - **Desktop navigation:** removed the left rail entirely. Favorites and Cloud
   saves belong under Profile; Netplay is reached from Play/in-game. Keep the
   hamburger drawer intact for its mobile navigation.

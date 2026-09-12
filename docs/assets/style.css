@@ -110,11 +110,13 @@ h1, h2, h3 { letter-spacing: -.01em; }
 @media (max-width: 700px) { #acct-chip .ac-name { display: none; } #acct-chip { padding: 6px; } }
 @media (max-width: 560px) {
   #acct-chip { display: flex; padding: 8px; } /* icon only — Sign in / profile */
-  .brand .logo { height: 46px; }
+  .brand .logo { width: min(48vw, 220px); height: auto; max-height: 56px; }
   .bar { gap: 4px; padding: 0 10px; }
   .bar-btn { width: 50px; height: 50px; font-size: 30px; }
+  #search-btn { display: none; }
+  .hero .play-search { display: inline-flex; }
 }
-@media (max-width: 420px) { .brand .logo { height: 40px; } }
+@media (max-width: 420px) { .brand .logo { width: min(48vw, 190px); } }
 .bar-search {
   position: absolute; inset: 0; z-index: 2; display: flex; align-items: center;
   padding: 0 clamp(10px, 3vw, 24px); background: var(--bg);
@@ -483,20 +485,19 @@ body.lite .shelf-track > .tile, body.lite .tile-grid > .tile { animation: none; 
 
 /* ---- emulator player ---- */
 .player { position: fixed; inset: 0; z-index: 60; background: #000; display: flex; flex-direction: column; }
+.player-chrome { position: relative; z-index: 2; flex: 0 0 auto; }
 
 .player-bar {
-  position: relative; z-index: 2;
   height: 46px; flex: 0 0 auto; display: flex; align-items: center; gap: 14px; padding: 0 14px;
   background: #06060c; border-bottom: 1px solid var(--line);
 }
-.player-bar .exit {
-  padding: 7px 14px; border-radius: 8px; border: 1px solid var(--pink); color: var(--pink);
-  font-weight: 800; font-size: 12px; text-transform: uppercase; letter-spacing: .06em;
-  cursor: pointer;
-}
-.player-bar .exit:hover { box-shadow: var(--glow-pink); }
+.player-bar .exit { text-transform: uppercase; letter-spacing: .06em; }
 .player-bar .exit:disabled { opacity: .6; cursor: default; }
-.player-bar .title { font-weight: 700; font-size: 13px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.player-chrome .title {
+  min-height: 22px; padding: 3px 14px 5px; background: #05050a;
+  border-bottom: 1px solid var(--line); color: var(--muted); font-size: 11px;
+  font-weight: 700; letter-spacing: .03em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
 .player-stage { flex: 1; position: relative; min-height: 0; }
 .player-stage #game { width: 100%; height: 100%; }
 .player-load { position: absolute; inset: 0; display: grid; place-items: center; color: var(--cyan); font-size: 13px; letter-spacing: .12em; text-transform: uppercase; text-align: center; padding: 20px; }
@@ -1092,6 +1093,14 @@ body.lite .pad-row.listening .pr-chip { animation: none; border-style: dashed; }
 .cab-plaque .cab-k { font-size: 18px; line-height: 1; }
 .cab-plaque .cab-t { font-weight: 800; font-size: 13px; letter-spacing: .04em; }
 .cab-plaque .cab-s { font-size: 11px; color: var(--dim); }
+.play-search { display: none; }
+@media (min-width: 1024px) {
+  .cab-dock { gap: 14px; }
+  .cab-plaque { min-width: 158px; padding: 18px 20px; gap: 4px; }
+  .cab-plaque .cab-k { font-size: 22px; }
+  .cab-plaque .cab-t { font-size: 15px; }
+  .cab-plaque .cab-s { font-size: 12px; }
+}
 
 /* live cabinet */
 .live-row {
@@ -1303,15 +1312,17 @@ html.in-app.playing .drawer { display: none !important; }
 }
 .drawer-acct .ac-av { font-size: 22px; }
 .drawer-acct.signin { color: var(--cyan); }
-.player.in-app-player .player-bar {
+.player.in-app-player .player-chrome {
   position: absolute; top: 0; left: 0; right: 0; z-index: 5;
   transform: translateY(-110%);
   transition: transform .18s ease;
+}
+.player.in-app-player .player-bar {
   flex-wrap: nowrap; overflow-x: auto; overflow-y: hidden;
   scrollbar-width: none;
 }
 .player.in-app-player .player-bar::-webkit-scrollbar { display: none; }
-.player.in-app-player.show-chrome .player-bar { transform: none; }
+.player.in-app-player.show-chrome .player-chrome { transform: none; }
 .player.in-app-player .fab-exit {
   position: absolute; top: max(8px, env(safe-area-inset-top)); left: max(8px, env(safe-area-inset-left));
   z-index: 7; width: 40px; height: 40px; border-radius: 10px;
@@ -1326,8 +1337,7 @@ html.in-app.playing .drawer { display: none !important; }
   display: grid; place-items: center;
 }
 .player.in-app-player .chrome-peek::after { content: "▾"; margin-top: 5px; }
-/* EmulatorJS's own top-right hamburger, repurposed by app.js to open the control
-   bar — make it a real tappable button, and fade it while the bar is down. */
+/* EmulatorJS's own top-right hamburger opens its native settings and save menu. */
 .player.in-app-player .ejs_virtualGamepad_open {
   width: 38px !important; height: 38px !important;
   top: max(6px, env(safe-area-inset-top)) !important;
