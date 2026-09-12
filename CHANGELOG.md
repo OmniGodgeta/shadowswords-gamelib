@@ -2,6 +2,13 @@
 
 All notable changes to the RetroVerse website.
 
+## [2.22.29] — 2026-09-12 — Keep the site working while custom DNS propagates
+
+### Fixed
+
+- Self-hosted pages use their current origin, while the public mirror falls
+  back to the working Tailscale origin until `retroverse.omni.net` has DNS.
+
 ## [2.22.28] — 2026-09-12 — Canonical hostname is now retroverse.omni.net
 
 ### Changed
