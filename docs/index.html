@@ -21,7 +21,7 @@
 <link rel="icon" href="assets/img/favicon.png">
 <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
 <link rel="preconnect" href="https://cdn.emulatorjs.org" crossorigin>
-<link rel="stylesheet" href="assets/style.css?v=2.56">
+<link rel="stylesheet" href="assets/style.css?v=2.57">
 </head>
 <body>
 <div class="scanlines" aria-hidden="true"></div>
@@ -46,6 +46,15 @@
     <input id="q" type="search" placeholder="Search every system…" autocomplete="off" spellcheck="false">
   </form>
 </header>
+
+<nav class="side-nav" id="side-nav" aria-label="Sections">
+  <a href="#/lounge" data-nav="lounge">Lounge</a>
+  <a href="#/library" data-nav="library">Library</a>
+  <a href="#/favorites" data-nav="favorites">Favorites</a>
+  <a href="#/saves" data-nav="saves">Cloud saves</a>
+  <a href="#/netplay" data-nav="netplay">Netplay</a>
+  <a href="#/profile" data-nav="acct" id="side-acct">You</a>
+</nav>
 
 <nav class="drawer" id="drawer" hidden>
   <a href="#/login" class="drawer-acct signin" id="drawer-acct" data-nav="acct">👤 Sign in</a>
@@ -80,6 +89,6 @@
   <a href="javascript:void 0" onclick="toggleHelp()">Shortcuts</a>
 </footer>
 
-<script src="assets/app.js?v=2.56"></script>
+<script src="assets/app.js?v=2.57"></script>
 </body>
 </html>

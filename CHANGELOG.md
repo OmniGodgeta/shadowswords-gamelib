@@ -2,6 +2,28 @@
 
 All notable changes to the RetroVerse website.
 
+## [2.22.22] — 2026-09-12 — Popular-games backdrop, shelves, sidebar, lounge chat
+
+### Added
+
+- **Play page backdrop** — a collage of famous titles across generations. New
+  `data/spotlight.json` (built from `SPOTLIGHT` keywords in `build.py`); the
+  hero text is pulled to the top (`hero-top`) and the lone "Play" kicker is gone.
+- **Home shelves** for **Movies** (Jellyfin posters) and **Music** (album wall).
+- **Desktop left rail** (`#side-nav`: Lounge / Library / Favorites / Cloud saves /
+  Netplay / You), shown ≥1024 px; mobile keeps the hamburger drawer.
+- **Lounge chat** — shared in-memory room (`POST/GET /chat`), polled every 2 s.
+  Meant to be reused for a floating party-chat window (see FEATURE-BACKLOG).
+- **Sports games get a generated sleeve** — a sport hue + a big ghost glyph
+  (🏒/🏀/🏈/⚽/⚾/🏎) for art-less NHL/NBA/NFL/FIFA titles.
+
+### Changed
+
+- **All tile badges removed** (pink "Play", cyan "⤓ offline", "Resume", "▶", …).
+- Home hero title now reads **"Come in, Grab a controller."**
+- Netplay voice: the site asks the app for the mic grant and retries once (fixes
+  "mic permission denied" in the Android app; app-side change needed too).
+
 ## [2.22.21] — 2026-09-12 — Header polish + console art without white boxes
 
 ### Changed

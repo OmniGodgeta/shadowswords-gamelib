@@ -127,6 +127,27 @@ h1, h2, h3 { letter-spacing: -.01em; }
 }
 
 /* mobile drawer */
+/* Desktop: a persistent left rail for the secondary sections (mobile keeps the
+   hamburger drawer). Aligned to the top of the first content section. */
+.side-nav { display: none; }
+@media (min-width: 1024px) {
+  .side-nav {
+    display: flex; flex-direction: column; gap: 2px;
+    position: fixed; left: 0; top: var(--bar-h); bottom: 0;
+    width: 188px; padding: 22px 12px 24px; overflow-y: auto;
+    border-right: 1px solid var(--line);
+    background: linear-gradient(180deg, rgba(9,9,20,.72), rgba(7,7,13,.4));
+    backdrop-filter: blur(8px); z-index: 30;
+  }
+  .side-nav a {
+    padding: 11px 14px; border-radius: 10px; color: var(--muted);
+    font-weight: 800; font-size: 13px; letter-spacing: .02em; text-decoration: none;
+    transition: color .12s, background .12s;
+  }
+  .side-nav a:hover { color: var(--cyan); background: rgba(34,224,255,.07); }
+  .side-nav a.active { color: #fff; background: rgba(34,224,255,.12); }
+  main, .foot { padding-left: 188px; }
+}
 .drawer {
   position: fixed; inset: var(--bar-h) 0 auto 0; z-index: 39;
   display: flex; flex-direction: column;
@@ -174,6 +195,9 @@ main { min-height: calc(100dvh - var(--bar-h) - 90px); }
   overflow: hidden;
 }
 .hero-art { position: absolute; inset: 0 0 0 20%; z-index: 0; }
+/* Play page — text pulled up to the top, the famous-titles collage behind it */
+.hero.hero-top { align-items: flex-start; min-height: min(50vh, 420px); padding-top: clamp(16px, 4vh, 40px); }
+.hero.hero-top .hero-art { inset: 0; }
 .hero-art img, .hero-art .collage { width: 100%; height: 100%; object-fit: cover; }
 .hero-art .collage {
   display: grid; gap: 4px;
@@ -291,6 +315,11 @@ main { min-height: calc(100dvh - var(--bar-h) - 90px); }
   text-transform: uppercase; color: rgba(255,255,255,.5);
 }
 .tile:hover .tile-art.noart .noart-bg.logo, .tile:focus-visible .tile-art.noart .noart-bg.logo { opacity: .2; }
+.tile-art.noart .noart-sport {
+  position: absolute; right: -4%; bottom: -10%; font-size: 70px; line-height: 1;
+  opacity: .24; filter: drop-shadow(0 4px 12px rgba(0,0,0,.5)); pointer-events: none;
+}
+.tile:hover .tile-art.noart .noart-sport, .tile:focus-visible .tile-art.noart .noart-sport { opacity: .4; }
 
 /* gameplay-clip preview on hover (Play lists) */
 .tile-prev {
@@ -1113,6 +1142,23 @@ body.lite .pad-row.listening .pr-chip { animation: none; border-style: dashed; }
 .lounge-card .lg-t { font-size: 22px; font-weight: 900; position: relative; margin-top: 8px; }
 .lounge-card .lg-s { color: var(--muted); position: relative; margin-top: 4px; }
 .lounge-card:hover { border-color: var(--cyan); box-shadow: var(--glow-cyan); }
+
+/* lounge chat */
+.chat-box { max-width: 720px; }
+.chat-log {
+  height: min(46vh, 360px); overflow-y: auto; padding: 12px 14px; margin-bottom: 10px;
+  background: var(--bg-1); border: 1px solid var(--line); border-radius: 12px;
+  display: flex; flex-direction: column; gap: 8px;
+}
+.chat-msg { font-size: 13.5px; line-height: 1.4; }
+.chat-who { font-weight: 800; color: var(--cyan); margin-right: 8px; }
+.chat-text { color: var(--text); overflow-wrap: anywhere; }
+.chat-row { display: flex; gap: 8px; }
+.chat-input {
+  flex: 1 1 auto; min-width: 0; padding: 11px 14px; border-radius: 10px;
+  background: var(--bg-2); border: 1px solid var(--line-2); color: var(--text); font-size: 14px;
+}
+.chat-input:focus { outline: none; border-color: var(--cyan); box-shadow: var(--glow-cyan); }
 
 /* watch party */
 .watch-stage {

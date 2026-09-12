@@ -20,7 +20,7 @@ const el = (tag, props = {}, ...kids) => {
 };
 const debounce = (fn, ms) => { let t; return (...a) => { clearTimeout(t); t = setTimeout(() => fn(...a), ms); }; };
 /* Overlays and toasts must mount inside the player shell while a game is up:
-   `.player` is the element goLandscape() puts in the Fullscreen API top layer,
+   `.player` is the element setLandscape() puts in the Fullscreen API top layer,
    and only that element's descendants render above it. A `document.body`
    overlay (z-index 400) is invisible behind a fullscreen game. */
 function uiRoot() {
@@ -173,13 +173,7 @@ function padLayoutPanel(sys) {
 function landNow() {
   try { return matchMedia("(orientation: landscape)").matches; } catch { return false; }
 }
-function syncLandLabel() {
-  const b = document.getElementById("land-btn");
-  if (b) b.textContent = landNow() ? "Portrait" : "Landscape";
-}
-try { matchMedia("(orientation: landscape)").addEventListener?.("change", syncLandLabel); } catch { /* */ }
-function goLandscape() {
-  const wantLandscape = !landNow();
+function setLandscape(wantLandscape) {
   if (IN_APP) {
     // The wrapper owns rotation (window.SSPlay): "1" = landscape, "0" = portrait.
     // It ignores a repeat of the state it already has, so send the opposite first
@@ -199,7 +193,6 @@ function goLandscape() {
     } catch { /* */ }
     try { if (wantLandscape) screen.orientation.lock("landscape").catch(() => {}); else screen.orientation.unlock?.(); } catch { /* */ }
   }
-  setTimeout(syncLandLabel, 150);
 }
 document.addEventListener("fullscreenchange", () => {
   document.documentElement.classList.toggle("ejs-fs", !!document.fullscreenElement);
@@ -440,11 +433,24 @@ function npAttachRemoteAudio() {
 }
 // Enable/disable the local mic. Used by the netplay sheet toggle and auto-run
 // on link if prefs().npVoice. Renegotiation is handled by onnegotiationneeded.
+// Inside the Android app the OS prompt only appears after the app is told to
+// request RECORD_AUDIO, so we signal first and retry getUserMedia once.
+async function npGetMic() {
+  const ask = () => navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } });
+  const app = window.SSNotify;
+  if (app) { try { app.postMessage(JSON.stringify({ mic: true, cid: CID, origin: location.origin, on: prefs().netplay !== false })); } catch { /* */ } }
+  try { return await ask(); }
+  catch (e) {
+    if (!app) throw e;
+    await new Promise((r) => setTimeout(r, 1800));
+    return await ask();
+  }
+}
 async function npSetVoice(on) {
   if (on) {
     if (NP.mic) return true;
     try {
-      NP.mic = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } });
+      NP.mic = await npGetMic();
     } catch (e) { toast("Mic permission denied"); npLog(`mic denied ${e?.name || e}`); return false; }
     NP.micTrack = NP.mic.getAudioTracks()[0] || null;
     if (NP.micTrack && NP.pc) {
@@ -1112,11 +1118,24 @@ async function collageArt(n = 20) {
   for (let i = picks.length - 1; i > 0; i--) { const j = (Math.random() * (i + 1)) | 0;[picks[i], picks[j]] = [picks[j], picks[i]]; }
   return picks.length ? collage(picks.slice(0, n)) : null;
 }
+// Play-page backdrop: a curated set of famous titles across generations
+// (data/spotlight.json from build.py); falls back to the random collage.
+async function spotlightArt(n = 24) {
+  try {
+    const rows = await fetch("data/spotlight.json").then((r) => r.json());
+    const imgs = rows.map((r) => (r && r[3]) ? artUrl(r[3]) : null).filter(Boolean);
+    if (imgs.length >= 6) {
+      for (let i = imgs.length - 1; i > 0; i--) { const j = (Math.random() * (i + 1)) | 0; [imgs[i], imgs[j]] = [imgs[j], imgs[i]]; }
+      return collage(imgs.slice(0, n));
+    }
+  } catch { /* */ }
+  return collageArt(n);
+}
 
-function hero({ kicker, title, desc, meta: metaLine, art, actions = [] }) {
+function hero({ kicker, title, desc, meta: metaLine, art, actions = [], mod }) {
   const artBox = el("div", { className: "hero-art" });
   if (art) artBox.append(art);
-  return el("section", { className: "hero" }, artBox,
+  return el("section", { className: "hero" + (mod ? " " + mod : "") }, artBox,
     el("div", { className: "hero-body" },
       kicker && el("p", { className: "hero-kicker", textContent: kicker }),
       el("h1", { className: "hero-title", textContent: title }),
@@ -1260,8 +1279,6 @@ function consoleTile(s, { play = false, offline = 0 } = {}) {
   if (s.photo) art.append(el("img", { className: "console-photo", src: s.photo, loading: "lazy", alt: s.name }));
   else if (s.logo) art.append(el("img", { className: "console-logo", src: s.logo, loading: "lazy", alt: s.name }));
   else art.append(el("div", { className: "ph", textContent: s.name }));
-  if (play && s.playable) art.append(el("span", { className: "badge", textContent: "Play" }));
-  if (offline > 0) art.append(el("span", { className: "badge offline", textContent: `⤓ ${offline} offline` }));
   return el("a", { className: "tile", href: play ? `#/play/${s.id}` : `#/s/${s.id}`,
       ariaLabel: `${s.name}, ${s.count.toLocaleString()} games${play && s.playable ? ", playable in browser" : ""}` },
     art,
@@ -1283,6 +1300,19 @@ const hue = (s) => {
   return Math.abs(h) % 360;
 };
 
+// Sports titles get a themed generated sleeve — a sport hue plus a big ghost
+// glyph — so an art-less NHL/NBA/NFL/FIFA tile still reads at a glance.
+const SPORTS = [
+  [/\b(nhl|hockey)\b/i, "🏒", 205],
+  [/\b(nba|basketball|ncaa)\b/i, "🏀", 28],
+  [/\b(nfl|madden)\b/i, "🏈", 95],
+  [/\b(fifa|soccer|mls|world cup)\b/i, "⚽", 145],
+  [/\b(mlb|baseball)\b/i, "⚾", 6],
+  [/\b(nascar|formula|grand prix|need for speed|racing)\b/i, "🏎", 330],
+  [/\b(boxing|wwe|wrestling)\b/i, "🥊", 350],
+  [/\b(tennis|golf|skate|surf|snowboard)\b/i, "🏆", 262],
+];
+
 // One game cover. Real box art when we have it; otherwise a generated "sleeve"
 // (console-tinted, the hardware photo or system wordmark ghosted behind the
 // title) so an art-less tile still reads as a shelved game case, not an empty
@@ -1293,15 +1323,17 @@ function coverArt({ img, name, sys, badge, fav, resolve, file, gid }) {
     art.append(el("img", { src: artUrl(img), loading: "lazy", alt: name }));
   } else {
     art.classList.add("noart");
-    art.style.setProperty("--h", hue(sys || name));
+    const sp = SPORTS.find(([re]) => re.test(name || ""));
+    art.style.setProperty("--h", sp ? sp[2] : hue(sys || name));
     const m = sys ? meta(sys) : null;
-    if (m && m.photo) art.append(el("img", { className: "noart-bg photo", src: m.photo, loading: "lazy", alt: "" }));
+    if (sp) art.append(el("div", { className: "noart-sport", textContent: sp[1] }));
+    else if (m && m.photo) art.append(el("img", { className: "noart-bg photo", src: m.photo, loading: "lazy", alt: "" }));
     else if (m && m.logo) art.append(el("img", { className: "noart-bg logo", src: m.logo, loading: "lazy", alt: "" }));
     art.append(el("div", { className: "noart-t", textContent: name }));
     if (m && m.name) art.append(el("div", { className: "noart-s", textContent: m.name }));
     if (resolve && sys && (file || gid)) resolve.push({ sys, file, gid, name, art });
   }
-  if (badge) art.append(el("span", { className: "badge", textContent: badge }));
+  // badges removed per request (no overlays on tile art)
   if (fav) art.append(heartBtn(fav));
   return art;
 }
@@ -1438,7 +1470,7 @@ async function routeHome() {
 
   const frag = document.createDocumentFragment();
   const heroCopy = {
-    title: "Drop in. Pick a cabinet.",
+    title: "Come in, Grab a controller.",
     desc: `${total.toLocaleString()} games on the floor — ${playable.length} of them run in the browser. Continue where you left off, or grab a pad.`,
     actions: [
       { label: "▶ Play now", href: "#/play", primary: true },
@@ -1483,6 +1515,11 @@ async function routeHome() {
 
   const mpAnchor = el("div");
   frag.append(mpAnchor);
+
+  const moviesAnchor = el("div");
+  frag.append(moviesAnchor);
+  const musicAnchor = el("div");
+  frag.append(musicAnchor);
 
   frag.append(el("section", { className: "shelf" },
     el("div", { className: "shelf-head" }, el("h2", { textContent: "The rest of the floor" })),
@@ -1574,6 +1611,41 @@ async function routeHome() {
       note: "Couch and netplay picks for two." }));
     hydrateCovers(resolve, { save: backfillRecent });
   });
+
+  homeMoviesShelf().then((s) => { if (!s || token !== state.render) { moviesAnchor.remove(); return; } moviesAnchor.replaceWith(s); });
+  homeMusicShelf().then((s) => { if (!s || token !== state.render) { musicAnchor.remove(); return; } musicAnchor.replaceWith(s); });
+}
+
+// Home shelves: a movie wall (Jellyfin posters) and the album wall.
+async function homeMoviesShelf() {
+  try {
+    const r = await fetch(`${JF}Items?IncludeItemTypes=Movie&Recursive=true&SortBy=Random&Limit=18&Fields=ProductionYear,OfficialRating&EnableImageTypes=Primary`);
+    if (!r.ok) return null;
+    const d = await r.json();
+    const items = d.Items || [];
+    if (!items.length) return null;
+    return shelf({ title: "Movies", count: d.TotalRecordCount || items.length, moreHref: "#/movies",
+      note: "From the Jellyfin library on the home server.",
+      tiles: items.slice(0, 18).map((it) => movieCard(it)) });
+  } catch { return null; }
+}
+async function homeMusicShelf() {
+  try {
+    const d = await mpData();
+    if (!d || !d.albums || !d.albums.length) return null;
+    const albums = d.albums.map((a, i) => [a, i]).filter(([a]) => a.art).slice(0, 18);
+    if (!albums.length) return null;
+    return shelf({ title: "Music", count: d.albums.length, moreHref: "#/music",
+      note: "The album wall — plays while you browse.",
+      tiles: albums.map(([a, i]) => {
+        const m = parseAlbum(a.name);
+        return el("a", { className: "tile wide", href: `#/music/${i}` },
+          el("div", { className: "tile-art" }, el("img", { src: musicArtUrl(a.name), loading: "lazy", alt: m.album })),
+          el("div", { className: "tile-cap" },
+            el("div", { className: "t", textContent: m.album }),
+            el("div", { className: "s", textContent: m.artist })));
+      }) });
+  } catch { return null; }
 }
 
 async function routeLounge() {
@@ -1594,7 +1666,51 @@ async function routeLounge() {
       el("a", { className: "lounge-card", href: "#/videos", dataset: { k: "videos" } },
         el("div", { className: "lg-k", textContent: "▶" }),
         el("div", { className: "lg-t", textContent: "Videos" }),
-        el("div", { className: "lg-s", textContent: "Latest uploads from the YouTube channel." })))));
+        el("div", { className: "lg-s", textContent: "Latest uploads from the YouTube channel." }))),
+    el("section", { className: "shelf", style: "padding-top:26px" },
+      el("div", { className: "shelf-head" }, el("h2", { textContent: "Lounge chat" })),
+      el("p", { className: "shelf-note hint", textContent: "Everyone on the tailnet sees this. (The same feed is meant to power a floating party chat — see FEATURE-BACKLOG.)" }),
+      loungeChat())));
+}
+
+// Shared lounge chat. Polls GET /chat; POST /chat to send. Kept deliberately
+// self-contained so it can be reused for a floating party-chat window later.
+function loungeChat() {
+  const list = el("div", { className: "chat-log" });
+  const input = el("input", { type: "text", placeholder: "Say something…", maxLength: 500, className: "chat-input" });
+  const send = el("button", { className: "btn btn-primary sm", textContent: "Send" });
+  const who = () => AUTH.user?.display || prefs().netplayName || "Guest";
+  let after = 0, timer = 0, alive = true;
+  const push = (m) => {
+    list.append(el("div", { className: "chat-msg" },
+      el("span", { className: "chat-who", textContent: m.who || "Guest" }),
+      el("span", { className: "chat-text", textContent: m.text })));
+    list.scrollTop = list.scrollHeight;
+  };
+  const poll = async () => {
+    if (!alive) return;
+    try {
+      const d = await fetch(`${API}/chat?after=${after}`, { cache: "no-store" }).then((r) => r.json());
+      for (const m of (d.msgs || [])) { after = Math.max(after, m.at); push(m); }
+    } catch { /* offline */ }
+    timer = setTimeout(poll, 2000);
+  };
+  const doSend = async () => {
+    const text = input.value.trim(); if (!text) return;
+    input.value = "";
+    try {
+      await fetch(`${API}/chat`, { method: "POST", headers: { "content-type": "application/json", ...authHdr() },
+        body: JSON.stringify({ text, who: who() }) });
+    } catch { /* */ }
+    poll();
+  };
+  send.onclick = doSend;
+  input.onkeydown = (e) => { if (e.key === "Enter") { e.preventDefault(); doSend(); } };
+  const box = el("div", { className: "chat-box" }, list, el("div", { className: "chat-row" }, input, send));
+  const obs = new MutationObserver(() => { if (!box.isConnected) { alive = false; clearTimeout(timer); obs.disconnect(); } });
+  obs.observe(document.body, { childList: true, subtree: true });
+  poll();
+  return box;
 }
 
 async function routeLibrary() {
@@ -1817,10 +1933,10 @@ async function routePlay() {
 
   const frag = document.createDocumentFragment();
   frag.append(hero({
-    kicker: "Play",
+    mod: "hero-top",
     title: "Play in your browser",
     desc: `${total.toLocaleString()} games across ${playable.length} systems, emulated right here. Pick a console below, or drop in a ROM from your device.`,
-    art: null,
+    art: await spotlightArt(24),
     actions: [
       { label: "Pick a ROM file", primary: true, onClick: () => $("#rom-input")?.click() },
       { label: "Browse all games", href: "#/browse" },
@@ -2182,11 +2298,7 @@ async function routePlayGame(sys, romParam, resume = false) {
       rwBtn, ffBtn,
       saveBtn, saveAsBtn, loadBtn,
       npBtn, syncBtn, invBtn, watchBtn,
-      ctrlBtn, noteBtn, flagBtn, padLayoutBtn,
-      el("button", { type: "button", className: "pbtn", id: "pad-btn", textContent: "Hide pad",
-        title: "Hide on-screen touch controls", onclick: () => toggleTouchPad() }),
-      el("button", { type: "button", className: "pbtn", id: "land-btn", textContent: landNow() ? "Portrait" : "Landscape",
-        title: "Switch between landscape and portrait", onclick: () => goLandscape() })),
+      ctrlBtn, noteBtn, flagBtn, padLayoutBtn),
     el("div", { className: "player-stage" },
       el("div", { id: "game" }), loadEl));
   if (IN_APP) {
@@ -2372,7 +2484,10 @@ async function routePlayGame(sys, romParam, resume = false) {
     ptStart = Date.now();
     ping(true);
     if (NP.role) npHookInput();   // re-wire input for a guest that joined mid-boot
-    goLandscape();
+    // Gameplay always starts landscape. The app owns rotation; the browser
+    // requests fullscreen/orientation where supported. There is deliberately
+    // no duplicate Portrait control in the top player menu.
+    setLandscape(true);
     applyPadPreset(sys);
     padLayoutBtn.hidden = false;
     padLayoutBtn.onclick = () => padLayoutPanel(sys);
@@ -2858,7 +2973,6 @@ function movieCard(it) {
   const src = jfImg(it);
   if (src) art.append(el("img", { src, loading: "lazy", alt: it.Name }));
   else art.append(el("div", { className: "ph", textContent: it.Name }));
-  art.append(el("span", { className: "badge", textContent: "▶" }));
   const a = el("a", { className: "tile wide", href: "javascript:void 0", onclick: () => movieDetail(it) }, art,
     el("div", { className: "tile-cap" },
       el("div", { className: "t", textContent: it.Name }),
@@ -4072,7 +4186,7 @@ function parseHash() {
 }
 const TOP_NAV = new Set(["home", "play", "lounge", "library"]);
 function setNav(name) {
-  $$(".bar-link, .drawer a").forEach((a) => a.classList.toggle("active", a.dataset.nav === name));
+  $$(".bar-link, .drawer a, .side-nav a").forEach((a) => a.classList.toggle("active", a.dataset.nav === name));
   const top = TOP_NAV.has(name);
   $("#bar-nav").hidden = !top;
   $("#back-btn").hidden = top;

@@ -948,6 +948,40 @@ def write_trending(game_index):
         print(f"trending snapshot: {len(out)} games")
 
 
+# famous titles spanning generations — the Play page backdrop is built from these
+SPOTLIGHT = [
+    "zelda", "mario kart", "super mario", "mario", "sonic", "god of war",
+    "gran turismo", "grand theft auto", "gta", "halo", "forza", "nhl", "fifa",
+    "final fantasy", "pokemon", "mortal kombat", "street fighter", "metal gear",
+    "metroid", "donkey kong", "crash bandicoot", "spyro", "need for speed",
+    "call of duty", "minecraft", "resident evil", "tony hawk", "tekken",
+    "super smash", "tomb raider", "castlevania", "mega man", "megaman",
+    "pac-man", "tetris", "kirby", "contra", "nba jam", "rayman", "bomberman",
+]
+
+
+def write_spotlight(all_games):
+    """data/spotlight.json — a curated set of famous titles (with cover art) that
+    span eras, used for the Play page's backdrop collage. [name, sys, gid, img]."""
+    out, seen = [], set()
+    pats = [re.compile(re.escape(k), re.I) for k in SPOTLIGHT]
+    for g in all_games:
+        name, sys, gid, img = g[0], g[1], g[2], g[3]
+        if not name or not img:
+            continue
+        key = re.sub(r"\s+", " ", name).strip().lower()
+        if key in seen:
+            continue
+        if any(p.search(name) for p in pats):
+            seen.add(key)
+            out.append([name, sys, gid, img])
+    out = out[:48]
+    if out:
+        (DATA_OUT / "spotlight.json").write_text(
+            json.dumps(out, ensure_ascii=False, separators=(",", ":")))
+        print(f"spotlight: {len(out)} popular titles")
+
+
 def main():
     if not ROMS.is_dir():
         sys.exit(f"no roms dir at {ROMS}")
@@ -1142,6 +1176,7 @@ def main():
           f" · art gallery: {len(art_gallery)}")
 
     write_discovery(all_games, newest)
+    write_spotlight(all_games)
     write_trending(game_index)
 
     print(f"\n{len(jobs)} images -> webp ...")

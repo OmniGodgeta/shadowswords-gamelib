@@ -58,6 +58,17 @@ Left to do (not started): true box-art for art-less **games** is the existing
 generated sleeve (`coverArt` → `.tile-art.noart`) — could be upgraded to a
 per-game procedural cover if it still looks flat.
 
+## Follow-up UI batch (2026-09-12)
+
+- The Play landing page now has the curated popular-games backdrop; home has
+  Movies and Music shelves; and desktop has a secondary left rail.
+- Lounge chat is a deliberately small shared `/chat` feed. A floating party
+  chat can reuse it later; do not add another transport for that feature.
+- Tile-art badges are gone. Art-less sports games use the themed generated
+  sleeves. In the in-app player, the floating pad control remains the one
+  place to hide/show the touch pad; the duplicate top-menu Pad/Portrait items
+  were removed and games explicitly enter landscape.
+
 ## Do not
 
 - Re-enable Tailscale Funnel (§4) or EmulatorJS `:8712` lockstep (§12).

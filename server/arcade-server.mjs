@@ -555,6 +555,9 @@ function watchMeta(id, w) {
 
 // ---- WebRTC netplay signalling (game traffic is peer-to-peer) ----
 const NP_SIG = new Map(); // id -> { host, sys, file, name, n, msgs, at }
+// Lounge chat — a single shared room, in memory. Recent messages only.
+const CHAT = [];          // { id, who, text, at, uid }
+const CHAT_MAX = 200;
 function pruneNp() {
   const cut = now() - 30 * 60 * 1000;
   for (const [id, r] of NP_SIG) if (r.at < cut) NP_SIG.delete(id);
@@ -1112,6 +1115,25 @@ const server = http.createServer(async (req, res) => {
       jsonRes(res, 200, { host: r.host, sys: r.sys, file: r.file, name: r.name,
         after: r.n, msgs: r.msgs.filter((m) => m.n > after) });
       return;
+    }
+
+    // ---- lounge chat (one shared room, in memory) ----
+    if (P === "/chat" && req.method === "POST") {
+      if (rateLimited(req, res, 60, 60000)) return;
+      let b = {};
+      try { b = JSON.parse((await readBody(req, 8192)).toString() || "{}"); } catch { /* */ }
+      const text = String(b.text || "").trim().slice(0, 500);
+      if (!text) { jsonRes(res, 400, { error: "empty message" }); return; }
+      const u = userByToken(req);
+      CHAT.push({ id: crypto.randomBytes(4).toString("hex"),
+        who: (u ? u.display : String(b.who || "Guest")).slice(0, 40),
+        text, at: Date.now(), uid: u ? u.id : null });
+      if (CHAT.length > CHAT_MAX) CHAT.splice(0, CHAT.length - CHAT_MAX);
+      jsonRes(res, 200, { ok: true }); return;
+    }
+    if (P === "/chat" && req.method === "GET") {
+      const after = +u0.searchParams.get("after") || 0;
+      jsonRes(res, 200, { msgs: CHAT.filter((m) => m.at > after) }); return;
     }
 
     // ---- watch party (before the write-token gate; frames are jpeg, not saves) ----
