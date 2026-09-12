@@ -4,6 +4,10 @@ Operational notes for anyone (human or agent) working on this site. Architecture
 lives in `README.md`; change history in `CHANGELOG.md`. This file is the stuff
 that will bite you if you don't know it.
 
+**Companion docs:** `AGENT-MEMORY.md` (session log + the *why* behind recent
+changes), `NETPLAY-UI-CONTRACT.md` (what netplay needs from the DOM), and
+`FEATURE-BACKLOG.md` (roadmap ownership between agents).
+
 ---
 
 ## 1. The version-bump ritual — DO THIS on every `app.js` / `style.css` change
@@ -235,6 +239,54 @@ Current APK: 1.6.3 (`v1.6.3` GitHub Release, `RetroVerse-1.6.3.apk`).
 - Verify release keystore signing (requires `android/key.properties`); debug-signed APKs cannot upgrade to release-signed or vice versa
 - Consider adding logcat diagnostics for updater failures (currently only in-memory ring buffer)
 - Test Netplay on actual tailnet: room creation, guest join, ICE connectivity, input sync
+  (Do this only after Tailscale on `shadow` is stable — see §14.)
+
+---
+
+## 14. Tailscale stability on `shadow` (2026-09-11) — READ BEFORE “FIXING” NETPLAY
+
+**Symptom agents mis-diagnose as netplay bugs:** phones lose
+`https://shadow-1.tail51f9d6.ts.net/`, WebRTC signaling drops, toast
+“Netplay disconnected”. Arcade + `/np/*` were fine; the tunnel was not.
+
+**Root causes found on this host:**
+
+1. **Broken WAN IPv6** — OS advertises IPv6 (`ipv6os=true`) but IPv6 routes
+   fail (`network is unreachable`). `tailscaled` kept trying IPv6 DERP
+   endpoints, flapped the Toronto relay (~30+/hour `no-derp-connection`
+   errors), and clients dropped.
+2. **Wi-Fi powersave** on `Helixx` / `wlp6s0` — brief disconnects make
+   Tailscale re-STUN and can bounce DERP.
+3. **Stale offline node** named `shadow` (8d+) vs live MagicDNS
+   `shadow-1`. App/site must keep using `shadow-1.tail51f9d6.ts.net`.
+
+**Hardening applied (do not revert without cause):**
+
+| Change | Where |
+|---|---|
+| `TS_DEBUG_DISABLE_IPV6=true` | `/etc/systemd/system/tailscaled.service.d/ipv4.conf` |
+| Wi-Fi powersave off | `nmcli connection modify Helixx 802-11-wireless.powersave 2` |
+| App probes `/health` every 30s + reload on recovery | `shadowswords` commit `4ca0655` |
+| `GET /health` → `{ok, uptime, timestamp}` | live `~/arcade-server.mjs` + repo `server/arcade-server.mjs` |
+
+After apply: 90s window showed **0** DERP flaps (was oscillating every ~minutes).
+Phone `s24-ultra-de-eric` stayed reachable; prefer same-Wi-Fi **direct**
+`10.0.0.x` path when home (`tailscale ping s24-ultra-de-eric`).
+
+**Checks before touching netplay JS again:**
+
+```bash
+systemctl is-active tailscaled arcade-server.service
+tailscale status | head
+tailscale netcheck | head -20
+journalctl -u tailscaled --since '1 hour ago' | rg -c 'no-derp-connection.: error'  # want ~0
+curl -sS https://shadow-1.tail51f9d6.ts.net/health
+curl -sS https://shadow-1.tail51f9d6.ts.net/np/health
+tailscale ping -c 3 s24-ultra-de-eric
+```
+
+Funnel stays **off** (§4). Don’t “fix” disconnects by re-enabling Funnel
+or EmulatorJS `:8712` lockstep.
 
 **File locations:**
 
@@ -269,3 +321,72 @@ adb install -r build/app/outputs/apk/debug/app-debug.apk
 - Both auto-restart on boot via systemd `--user` units
 
 All changes are live as of 2026-09-11T17:43 UTC.
+
+---
+
+## 15. Netplay UI layering + Player 2 input + state sync (2026-09-11) — READ BEFORE TOUCHING
+
+**Symptom:** netplay sheet / invites / toasts "do nothing" or only appear after
+quitting the game; Player 2 has no controls; host **Sync** toasts "Sync failed".
+
+**Root causes:**
+
+1. **Overlays behind a fullscreen game.** `goLandscape()` calls
+   `requestFullscreen()` on `.player`. Under the Fullscreen API only that
+   element's descendants render above it, so any `document.body` overlay
+   (`#help-overlay`, `#invite-overlay`, `#toast`, `#ctrl-panel`) is hidden
+   behind the canvas. **Fix:** mount UI via `uiRoot()` (`app.js`), which
+   returns `.player` while `window.__emuUp`, else `document.body`. Use it for
+   every overlay/toast append — do not append game UI to `document.body`.
+2. **Guest joined mid-boot.** `npHookInput()` used to bail if
+   `EJS_emulator.gameManager` wasn't ready yet, so a guest who joined while the
+   ROM was still loading never got its `simulateInput` wrapper → Player 2 dead.
+   **Fix:** `npHookInput()` now retries (up to ~20s) and is re-called from
+   `EJS_onGameStart`.
+3. **State sync too big for one datachannel message.** `resyncNetplay()` did a
+   single `dc.send(state)`, but savestates dwarf the SCTP max message size
+   (SNES ~0.4 MB, Genesis ~1 MB, NDS/PSX several MB) → `send` throws → “Sync
+   failed”. **Fix:** `npSendState()` sends `{t:"sc",n}` then 16 KB chunks;
+   `dc.onmessage` reassembles until `n` bytes, then `loadState`. Keep the legacy
+   single-message path (`!NP.rxLen`) working. Do **not** go back to one `send`.
+4. **ICE must include STUN.** We briefly ran host-only ICE (`NETPLAY_ICE = []`)
+   on the theory that public STUN caused lag; that was wrong and it broke
+   connectivity — browsers mDNS-obfuscate private IPs (100.x included) and those
+   `.local` names do not resolve across the tailnet, so host-only ICE has no
+   viable pair for a remote peer and the datachannel never opens ("Connecting as
+   Player 2…" for 10s+). **Keep STUN** (`NETPLAY_ICE` = Google + Cloudflare);
+   ICE still prefers a reachable direct host pair. If lag is a problem, add a
+   TURN relay on `shadow` rather than removing STUN.
+5. **Cores drift apart.** Two independent emulators sharing only inputs diverge
+   within seconds. **Fix:** the host is authoritative — `NP.syncT` auto-pushes
+   its state on link-up and every 6 s; the guest only applies. Toggle by editing
+   the interval in `dc.onopen`, not by making the guest send state. NOTE: this
+   only bounds drift; it does not eliminate it. Removing drift entirely needs a
+   host-authoritative video stream or true frame-locked lockstep (EmulatorJS
+   exposes `gameManager.getFrameNum()` + `Module.postMainLoop` if you go there).
+6. **Interop / diagnostics.** `npLog()` appends to `window.__npLog` /
+   `window.__npLast`; the Netplay sheet prints `diag role/pc/ice/dc/room/sent/recv`
+   and the last event. Link handlers: `onicecandidateerror`,
+   `oniceconnectionstatechange` (toast on `failed`), `onconnectionstatechange`
+   (host re-pushes state on `connected`). Guest join retries once. Keep these
+   when restyling — see `NETPLAY-UI-CONTRACT.md`.
+7. **Host-authoritative video is now the default (v2.22.9).** The host builds a
+   MediaStream with `EJS_emulator.collectScreenRecordingMediaTracks(canvas, 60)`
+   (canvas video + a tap of the game's WebAudio) and `addTrack`s it in
+   `npStartHostStream()` *before* the offer. The guest renders it in `#np-video`,
+   mutes its own core, and only forwards presses (`npHookInput` sends `{p:1}`
+   when `NP.video`). No state sync runs in this mode (`NP.syncT` gated on
+   `!NP.video`). It falls back to the input-echo + 6 s resync path if capture
+   fails or no track arrives. If you touch netplay, preserve `NP.video` plumbing
+   and the `#np-video` overlay (guest controls pad must stay above it).
+
+**Testing Player 2:** use a game with **simultaneous** 2P. DKC (SNES) is not
+one — 1-Player ignores controller 2, and "2 Player Team" only hands control to
+P2 via the in-game tag switch. Good picks: Super Mario Kart (battle), Bomberman,
+Street Fighter II, Mario Party.
+
+**Input mapping (unchanged, for reference):** host `myP=0`, guest `myP=1`; the
+wrapper ignores EJS's local player index and sends the press as `myP`, applying
+it to the same player number on both ends. **Sync is host→guest only** and is
+manual (the **Sync** button); the guest never sends state back.
+

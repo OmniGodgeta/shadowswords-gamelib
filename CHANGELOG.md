@@ -2,6 +2,217 @@
 
 All notable changes to the RetroVerse website.
 
+## [2.22.16] — 2026-09-11 — Offline UI, row notes, keyboard nav, presence, status
+
+### Added
+
+- **Offline UI.** The offline cache page now lists which consoles you've saved
+  ("Saved for offline" with per-console cached counts), playable console tiles
+  show a cyan "⤓ N offline" badge, and a console's Play page shows how many of
+  its games are already cached (button reads "✓ N saved offline").
+- **Shelf notes.** Home rows (Continue playing, Play now, Trending, Two-player
+  night, On the floor) carry a one-line explanation of why they're there.
+- **Keyboard navigation.** Arrow keys rove focus across game tiles (Enter opens
+  the focused tile); Arrow-Down from an empty page focuses the first tile. `/`
+  focuses search, `?` shows shortcuts (already present).
+- **Presence "Join room".** The home "On the floor" row now deep-links into a
+  live player's netplay room, not just their game.
+- **System status page** (`#/status`, linked from Settings): live checks against
+  the arcade server, netplay signalling and the ROM service.
+
+### Changed
+
+- The site music player is ducked to 12% while a home preview with its own audio
+  is playing, restored when you switch back to box art.
+
+## [2.22.15] — 2026-09-11 — Home header (per user): bigger logo, left sign-in, Preview
+
+### Changed
+
+- **Mobile logo enlarged:** `.brand .logo` is 46 px at ≤560 px and 40 px at
+  ≤420 px (was 30/26 px).
+- **Sign-in moved top-left:** `#acct-chip` now mounts in `.bar-left` instead of
+  `.bar-right`, so the account/sign-in pill is leftmost.
+- **Home starts on Preview:** the hero showcase always begins in **▶ Preview**
+  (videos); a clip that errors falls back to box art for that render only.
+
+## [2.22.14] — 2026-09-11 — Touch-pad presets, accessibility, settings, backup
+
+### Added
+
+- **Per-system touch-pad layout.** A new **Pad** button in the in-game bar opens
+  a panel to set the on-screen gamepad's size, opacity and height off the bottom,
+  with Small/Medium/Large shortcuts, live preview, and "save for this console" /
+  "use for all consoles". Stored on-device (`ssw:padPresets`) and applied via
+  CSS vars (`--pad-scale`, `--pad-opacity`, `--pad-bottom`).
+- **"Game sound on home previews" setting** (Settings → profile) now backs the
+  showcase mute button, so preview audio is a persisted preference.
+- **Export/Import now carries settings and pad presets** alongside favorites,
+  recent games and playtime.
+
+### Changed
+
+- **Accessibility:** `:focus-visible` outlines on links/buttons/inputs, and a
+  `prefers-reduced-motion` rule that flattens animations/transitions. Game tiles
+  gained `aria-label`s (name + "playable" hint).
+
+## [2.22.13] — 2026-09-11 — Shareable invite links + playable-only filter
+
+### Added
+
+- **Shareable netplay invite links.** "Copy invite link" (netplay sheet and the
+  invite picker) produces `…/?join=<room>#/play/<sys>/<file>`. Opening it routes
+  into the game and auto-joins the host's room, so invites work without the
+  person being online at the moment it's sent.
+- **"playable only" filter** on the Library and Browse console lists, so you can
+  hide the consoles that can't run in the browser.
+
+### Changed
+
+- `FEATURE-BACKLOG.md` records the split of the roadmap between the netplay agent
+  (voice chat, rollback netcode, role-aware reconnect, lobby polish, watch-party
+  transport, native push invite) and this session.
+
+## [2.22.12] — 2026-09-11 — Netplay prefs + "P2 connected" badge
+
+### Added
+
+- **Persisted netplay prefs** (`settings` → account + local), toggleable from the
+  Netplay sheet: **Auto-unmute P2's video** (`npAutoUnmute`) and **I usually
+  host** (`npHostByDefault`, which styles the primary action as primary vs
+  ghost).
+- **Live "P2 connected" badge** (`#np-live`, top-right): host shows
+  `● P2 connected` / `○ Waiting for P2`, guest shows `● Watching P1` /
+  `○ Connecting…`. Updates on link open/close and room create/join.
+
+## [2.22.11] — 2026-09-11 — In-game hamburger opens the control bar
+
+### Fixed
+
+- **The top-right hamburger in a game did nothing.** EmulatorJS draws its own
+  three-bar menu button there, but it only toggled EJS's bottom menu bar, which
+  sits underneath the on-screen touch controls — so taps appeared to do nothing.
+  In the app the button now toggles the in-game control bar (the same bar with
+  Netplay / Save / Landscape), and it is styled as a proper 38 px button that
+  fades while the bar is open. Desktop keeps EmulatorJS's default behaviour.
+
+## [2.22.10] — 2026-09-11 — Netplay sheet polish + emulator-load fallback
+
+### Changed
+
+- **Netplay sheet reorganised:** clear one-line status ("Linked — you are Player
+  1 · host…"), a **Leave netplay** button, "Sync screens" only in input-echo
+  mode (hidden when host video is streaming), and the raw diag line moved into a
+  collapsible **Diagnostics** disclosure. `resyncNetplay` now explains it isn't
+  needed in video mode.
+- **Emulator load failures are recoverable:** if the self-hosted `/emulatorjs/`
+  loader fails, it falls back to `cdn.emulatorjs.org`, and if that fails too it
+  shows a **Retry** button instead of the dead "CDN blocked?" label.
+
+## [2.22.9] — 2026-09-11 — Netplay: host-authoritative video (perfect sync)
+
+### Changed
+
+- **Netplay is now host-authoritative.** The host streams its canvas + game
+  audio over the existing WebRTC link (`EJS_emulator.collectScreenRecordingMediaTracks`),
+  and the guest displays that stream (`#np-video`) instead of relying on its own
+  drifting emulation. The guest only forwards button presses to the host; it no
+  longer applies inputs locally. This removes the desync entirely — the guest is
+  literally watching the host's screen.
+- Guest's own core is silenced (`setVolume(0)`) so only the host's audio plays;
+  the EJS touch pad still renders above the video, so the guest keeps controls.
+- Falls back to the old input-echo + 6 s state sync if capture fails or no video
+  track arrives.
+- `npStop()` stops the captured tracks and removes the video overlay.
+
+## [2.22.8] — 2026-09-11 — Netplay: restore STUN (fixes "won't connect")
+
+### Fixed
+
+- **Netplay could not establish a link** ("Connecting as Player 2…" 10s+, or no
+  sync). Host-only ICE (`NETPLAY_ICE = []`) left no viable candidate pair —
+  browsers mDNS-obfuscate private IPs including the tailnet 100.x ones, and
+  `.local` candidates don't resolve across the tailnet. `NETPLAY_ICE` is Google
+  + Cloudflare STUN again (ICE still prefers a reachable direct pair).
+- ICE candidate logging + `npSendState` skip reasons added to the diag log.
+
+## [2.22.7] — 2026-09-11 — In-game chrome layout, working landscape toggle, preview sound
+
+### Changed
+
+- **Reorganised the in-game top bar** into logical groups: exit/title, then
+  rewind + fast-forward, then the save buttons, then netplay/invite/sync/watch,
+  then controller/note/report, then the view buttons (Hide pad, landscape). The
+  in-app bar is now a single scrollable row instead of wrapping into several.
+- **The landscape button now works.** It toggles landscape ⇄ portrait and
+  relabels itself, instead of re-posting the landscape state the wrapper already
+  had (a no-op while a game was running). In the Android app it drives native
+  rotation via `window.SSPlay`; in a browser it toggles fullscreen.
+- **Netplay moved into the hideable top bar** (the floating gold Netplay button
+  is gone, per request). The pull-down handle that reveals the bar is 2× larger
+  and shows a chevron.
+- **Home showcase previews can play the game's own audio.** The rotating hero
+  clip unmutes (a "🔊 Sound / 🔇 Muted" toggle sits with the Preview / Box art
+  switch). It starts muted until the first tap so autoplay rules are respected.
+
+## [2.22.6] — 2026-09-11 — Netplay link diagnostics + join retry
+
+### Changed
+
+- Netplay records an in-memory event log (`npLog` → `window.__npLast`,
+  `window.__npLog`) and the Netplay sheet shows a one-line diag
+  (`role/pc/ice/dc/room/sent/recv`) plus the last event. Failures can now be
+  read straight off a phone.
+- Link handlers added: `onicecandidateerror`, `oniceconnectionstatechange`
+  (toast on `failed`), `onconnectionstatechange` (host re-pushes state on
+  `connected`). `npWaitLinked` fails fast on ICE failure and waits 25 s.
+- Guest join retries once before giving up.
+- Auto-resync interval 8 s → 6 s.
+
+## [2.22.5] — 2026-09-11 — Netplay UI above the game + P2 input + stable link
+
+### Fixed
+
+- **Netplay link died when starting a room.** `npStartPc()` hardcoded Google
+  STUN despite `NETPLAY_ICE = []` being the documented design ("host candidates
+  only — public STUN made ICE pick a CGNAT path"). It now uses `NETPLAY_ICE`, so
+  ICE stays on the tailnet (100.x / LAN) and stops the extra public-STUN UDP
+  churn that destabilised the link.
+- **Guest drifted out of sync after a few seconds.** The host now
+  auto-pushes its state on link-up and every 8s thereafter
+  (`NP.syncT`), so the guest is nudged back onto the host's screen. The host
+  remains authoritative; the guest only ever applies.
+- **Netplay "Sync failed".** `resyncNetplay()` sent the whole savestate in one
+  `dc.send`, but a state is far bigger than the WebRTC datachannel's max message
+  size (SNES ~0.4 MB, Genesis ~1 MB, NDS ~6 MB), so the send threw. The state is
+  now sent as a length header plus 16 KB chunks and reassembled on the guest.
+- Netplay sheet, invite picker, incoming-invite prompt, controller setup,
+  save-slot picker and toasts now mount inside the player shell instead of
+  `document.body`. `goLandscape()` puts `.player` in the Fullscreen API top
+  layer, where only that element's descendants render — so those overlays were
+  invisible behind the running game (you had to quit to see invites).
+- Netplay input hook now retries until `gameManager` exists and is re-applied
+  on `EJS_onGameStart`. A guest that joined while the ROM was still booting had
+  no hook installed, which left Player 2 with no controls at all.
+
+### Note
+
+- Donkey Kong Country (SNES) has **no simultaneous two-player mode** — in
+  single-player it ignores controller 2, and "2 Player Team" is an alternating
+  tag-team. It is not a valid P2-control test; use a real 2P game (e.g. Super
+  Mario Kart Battle, Bomberman, Street Fighter II).
+
+## [2.22.4] — 2026-09-11 — Host Tailscale harden + `/health`
+
+### Fixed
+
+- Arcade server exposes `GET /health` (`{ok,uptime,timestamp}`) so the Android
+  app's 30s recovery probe (shadowswords `4ca0655`) actually hits a live route.
+  Restart `arcade-server.service` after syncing `~/arcade-server.mjs`.
+- Documented Tailscale flap root cause on `shadow` (broken WAN IPv6 DERP +
+  Wi‑Fi powersave) and hardening in `AGENTS.md` §14. Netplay JS was not the
+  primary disconnect source.
+
 ## [2.22.3] — 2026-09-11 — Netplay health check
 
 ### Fixed

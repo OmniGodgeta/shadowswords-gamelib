@@ -19,10 +19,20 @@ const el = (tag, props = {}, ...kids) => {
   return n;
 };
 const debounce = (fn, ms) => { let t; return (...a) => { clearTimeout(t); t = setTimeout(() => fn(...a), ms); }; };
+/* Overlays and toasts must mount inside the player shell while a game is up:
+   `.player` is the element goLandscape() puts in the Fullscreen API top layer,
+   and only that element's descendants render above it. A `document.body`
+   overlay (z-index 400) is invisible behind a fullscreen game. */
+function uiRoot() {
+  const p = document.querySelector(".player");
+  return (window.__emuUp && p && p.isConnected) ? p : document.body;
+}
 let _toastT;
 function toast(msg) {
   let t = document.getElementById("toast");
-  if (!t) { t = el("div", { id: "toast" }); document.body.append(t); }
+  const root = uiRoot();
+  if (!t) t = el("div", { id: "toast" });
+  if (t.parentNode !== root) root.append(t);
   t.textContent = msg; t.classList.add("show");
   clearTimeout(_toastT); _toastT = setTimeout(() => t.classList.remove("show"), 3200);
 }
@@ -32,6 +42,26 @@ const TS = "https://shadow-1.tail51f9d6.ts.net";
 const SELF_HOSTED = location.hostname.endsWith(".ts.net");
 const IN_APP = /ShadowSwordsApp|RetroVerseApp/.test(navigator.userAgent);   // native wrapper intercepts _blank → phone browser
 if (IN_APP) document.documentElement.classList.add("in-app");
+// EmulatorJS draws a hamburger (three bars) in the top-right of the game, but its
+// only handler toggles EJS's own bottom menu bar, which sits under the touch
+// controls — so it looks like it does nothing. Repurpose it: tapping it toggles
+// our in-game control bar. Intercept in the capture phase so EJS's touchstart /
+// mousedown / click handlers never fire.
+if (IN_APP) {
+  let sswHambLast = 0;
+  const sswHamburger = (e) => {
+    const t = e.target;
+    if (!(t && t.closest && t.closest(".ejs_virtualGamepad_open"))) return;
+    e.preventDefault(); e.stopPropagation();
+    const now = Date.now();
+    if (now - sswHambLast < 350) return;
+    sswHambLast = now;
+    window.__sswChromeToggle && window.__sswChromeToggle();
+  };
+  for (const ev of ["pointerdown", "touchstart", "touchend", "mousedown", "mouseup", "click"]) {
+    document.addEventListener(ev, sswHamburger, true);
+  }
+}
 const extTarget = { target: "_blank", rel: "noopener" };      // keep the signal the app hooks on
 const ROM_BASE = SELF_HOSTED ? "/roms/" : TS + "/roms/";       // needs Funnel when off-tailnet
 const MUSIC_BASE = SELF_HOSTED ? "/music/" : TS + "/music/";
@@ -46,9 +76,15 @@ const STATE_BASE = SELF_HOSTED ? "/states/" : TS + "/states/";   // cloud save-s
 const API = SELF_HOSTED ? "" : TS;                               // dynamic endpoints (search, stats, twitch…)
 const VIDEO_BASE = SELF_HOSTED ? "/gamevideo/" : TS + "/gamevideo/"; // ES-DE game preview clips
 const NETPLAY_URL = TS + ":8712/";                                // EmulatorJS netplay signalling (tailnet)
-// Empty ICE = host candidates only (Tailscale 100.x / LAN). Public STUN made
-// ICE pick a CGNAT path and netplay felt like 200–400 ms of lag on the tailnet.
-const NETPLAY_ICE = [];
+// ICE: keep STUN. Host-only candidates look clean on the tailnet, but browsers
+// mDNS-obfuscate private IPs (100.x included) and those `.local` names don't
+// resolve across the tailnet, so host-only ICE silently fails to connect for a
+// remote peer. STUN gives srflx candidates; ICE still prefers a reachable direct
+// host pair when there is one.
+const NETPLAY_ICE = [
+  { urls: "stun:stun.l.google.com:19302" },
+  { urls: "stun:stun.cloudflare.com:3478" },
+];
 // stable numeric id per game — EmulatorJS netplay requires a number, and 4.2.3
 // hides the globe unless this is set. FNV-1a → 31-bit so it stays a real JS int.
 function gameIdNum(sys, file) {
@@ -74,11 +110,96 @@ function toggleTouchPad() {
   const b = document.getElementById("pad-btn");
   if (b) b.textContent = on ? "Show pad" : "Hide pad";
 }
+/* ---- per-system touch-pad layout -----------------------------------------
+   Size / opacity / vertical position of the on-screen gamepad, saved per
+   console (fighting games want it big; RPGs want it out of the way). Applied
+   as CSS variables consumed by style.css. */
+const PAD_DEFAULTS = { scale: 1, opacity: 1, bottom: 12 };
+function padStore() {
+  const s = LS.get("padPresets", null);
+  return (s && typeof s === "object") ? { def: s.def || {}, sys: s.sys || {} } : { def: {}, sys: {} };
+}
+function padPresetFor(sys) {
+  const s = padStore();
+  return { ...PAD_DEFAULTS, ...(s.def || {}), ...((s.sys || {})[sys] || {}) };
+}
+function applyPadVals(p) {
+  const r = document.documentElement.style;
+  r.setProperty("--pad-scale", String(p.scale));
+  r.setProperty("--pad-opacity", String(p.opacity));
+  r.setProperty("--pad-bottom", p.bottom + "px");
+}
+function applyPadPreset(sys) { applyPadVals(padPresetFor(sys)); }
+function savePadPreset(sys, patch, asDefault) {
+  const s = padStore();
+  if (asDefault) s.def = { ...(s.def || {}), ...patch };
+  else s.sys = { ...(s.sys || {}), [sys]: { ...((s.sys || {})[sys] || {}), ...patch } };
+  LS.set("padPresets", s);
+  applyPadPreset(sys);
+}
+function padLayoutPanel(sys) {
+  const o = el("div", { id: "help-overlay", onclick: (e) => { if (e.target.id === "help-overlay") o.remove(); } });
+  const cur = { ...padPresetFor(sys) };
+  const refs = [];
+  const sync = () => refs.forEach((f) => f());
+  const commit = () => applyPadVals(cur);
+  const slider = (key, label, min, max, step, fmt) => {
+    const inp = el("input", { type: "range", min: String(min), max: String(max), step: String(step), value: String(cur[key]) });
+    const out = el("span", { className: "hint", textContent: fmt(cur[key]) });
+    inp.oninput = () => { cur[key] = +inp.value; out.textContent = fmt(cur[key]); commit(); };
+    refs.push(() => { inp.value = String(cur[key]); out.textContent = fmt(cur[key]); });
+    return el("label", { style: "display:block;margin:12px 0" },
+      el("div", { style: "font-weight:700", textContent: label }), inp, out);
+  };
+  const preset = (label, scale, opacity) => el("button", { className: "btn btn-ghost", style: "margin-right:6px",
+    textContent: label, onclick: () => { cur.scale = scale; cur.opacity = opacity; commit(); sync(); } });
+  o.append(el("div", { className: "help-card" },
+    el("h3", { textContent: "Touch pad layout" }),
+    el("p", { className: "hint", textContent: `Size, opacity and height for ${sysName(sys)}. Saved on this device.` }),
+    el("div", { style: "margin:8px 0 4px" }, preset("Small", 0.8, 0.9), preset("Medium", 1, 1), preset("Large", 1.25, 1)),
+    slider("scale", "Size", 0.6, 1.6, 0.05, (v) => `${Math.round(v * 100)}%`),
+    slider("opacity", "Opacity", 0.3, 1, 0.05, (v) => `${Math.round(v * 100)}%`),
+    slider("bottom", "Height from bottom", 0, 120, 4, (v) => `${v}px`),
+    el("div", { style: "display:flex;gap:8px;flex-wrap:wrap;margin-top:12px" },
+      el("button", { className: "btn btn-primary", textContent: `Save for ${sysName(sys)}`,
+        onclick: () => { savePadPreset(sys, cur, false); toast(`Pad layout saved for ${sysName(sys)}`); o.remove(); } }),
+      el("button", { className: "btn btn-ghost", textContent: "Use for all consoles",
+        onclick: () => { savePadPreset(sys, cur, true); toast("Default pad layout saved"); o.remove(); } }),
+      el("button", { className: "btn btn-ghost", textContent: "Reset",
+        onclick: () => { Object.assign(cur, PAD_DEFAULTS); commit(); sync(); } }),
+      el("button", { className: "btn btn-ghost", textContent: "Close", onclick: () => o.remove() }))));
+  uiRoot().append(o);
+}
+function landNow() {
+  try { return matchMedia("(orientation: landscape)").matches; } catch { return false; }
+}
+function syncLandLabel() {
+  const b = document.getElementById("land-btn");
+  if (b) b.textContent = landNow() ? "Portrait" : "Landscape";
+}
+try { matchMedia("(orientation: landscape)").addEventListener?.("change", syncLandLabel); } catch { /* */ }
 function goLandscape() {
-  try { window.SSPlay && window.SSPlay.postMessage("1"); } catch { /* */ }
-  const node = document.querySelector(".player") || document.documentElement;
-  try { (node.requestFullscreen || node.webkitRequestFullscreen)?.call(node); } catch { /* */ }
-  try { screen.orientation.lock("landscape").catch(() => {}); } catch { /* */ }
+  const wantLandscape = !landNow();
+  if (IN_APP) {
+    // The wrapper owns rotation (window.SSPlay): "1" = landscape, "0" = portrait.
+    // It ignores a repeat of the state it already has, so send the opposite first
+    // to force a genuine change, then the target.
+    try {
+      window.SSPlay && window.SSPlay.postMessage("0");
+      if (wantLandscape) setTimeout(() => { try { window.SSPlay && window.SSPlay.postMessage("1"); } catch { /* */ } }, 60);
+    } catch { /* */ }
+  } else {
+    const fs = document.fullscreenElement || document.webkitFullscreenElement;
+    try {
+      if (fs) (document.exitFullscreen || document.webkitExitFullscreen)?.call(document);
+      else {
+        const node = document.querySelector(".player") || document.documentElement;
+        (node.requestFullscreen || node.webkitRequestFullscreen)?.call(node);
+      }
+    } catch { /* */ }
+    try { if (wantLandscape) screen.orientation.lock("landscape").catch(() => {}); else screen.orientation.unlock?.(); } catch { /* */ }
+  }
+  setTimeout(syncLandLabel, 150);
 }
 document.addEventListener("fullscreenchange", () => {
   document.documentElement.classList.toggle("ejs-fs", !!document.fullscreenElement);
@@ -108,21 +229,58 @@ function snapshotNetplay(sys, file, name) {
 }
 /* WebRTC netplay — replaces EmulatorJS's broken savestate lockstep.
    Host = player 1, guest = player 2. Inputs ride a datachannel on the tailnet. */
-const NP = { role: null, room: null, pc: null, dc: null, myP: 0, after: 0, pollT: 0, alive: false, pendingIce: [] };
+const NP = { role: null, room: null, pc: null, dc: null, myP: 0, after: 0, pollT: 0, alive: false, pendingIce: [], rxLen: 0, rxGot: 0, rxChunks: [], syncT: 0, sent: 0, recv: 0, video: false, hostStream: null };
 
+// Netplay diagnostics: kept in memory and shown in the Netplay sheet so a
+// failure can be read off a phone with no devtools.
+function npLog(msg) {
+  const line = `${new Date().toLocaleTimeString()} ${msg}`;
+  (window.__npLog ||= []).push(line);
+  if (window.__npLog.length > 200) window.__npLog.shift();
+  window.__npLast = line;
+  try { console.log("[netplay]", msg); } catch { /* */ }
+}
+
+// Small live badge so the host can see P2 actually linked (not just a toast).
+function npIndicator() {
+  let text = null;
+  if (NP.role === "host") text = NP.dc?.readyState === "open" ? "● P2 connected" : (NP.room ? "○ Waiting for P2" : null);
+  else if (NP.role === "guest") text = NP.dc?.readyState === "open" ? "● Watching P1" : "○ Connecting…";
+  let b = document.getElementById("np-live");
+  if (!text) { b?.remove(); return; }
+  if (!b) {
+    b = el("div", { id: "np-live", style: "position:fixed;right:max(8px,env(safe-area-inset-right));top:max(8px,env(safe-area-inset-top));z-index:1000;padding:4px 10px;border-radius:999px;font-size:11px;font-weight:800;letter-spacing:.04em;background:rgba(6,6,12,.82);border:1px solid var(--gold,#ffd23d);color:var(--gold,#ffd23d);pointer-events:none" });
+    uiRoot().append(b);
+  }
+  b.textContent = text;
+}
 function npCore(p, i, v) {
   const fn = window.EJS_emulator?.gameManager?.functions?.simulateInput;
   if (typeof fn === "function") fn(p, i, v);
 }
-function npHookInput() {
+function npHookInput(tries = 0) {
   const gm = window.EJS_emulator?.gameManager;
-  if (!gm || gm.__sswRtc) return;
+  // A guest that joins while the ROM is still booting has no gameManager yet;
+  // without retrying here its local input is never wired to player 2.
+  if (!gm || typeof gm.simulateInput !== "function") {
+    if (tries < 80) setTimeout(() => npHookInput(tries + 1), 250);
+    return;
+  }
+  if (gm.__sswRtc) return;
   gm.__sswRtc = true;
   const orig = gm.simulateInput.bind(gm);
   gm.simulateInput = (p, i, v) => {
     if (!NP.dc || NP.dc.readyState !== "open") return orig(p, i, v);
     if ([24, 25, 26, 27, 28, 29].includes(i)) return orig(p, i, v);
     const me = NP.myP;
+    if (NP.video) {
+      // Host-authoritative: only the host simulates. The host applies its own
+      // P1 presses locally; the guest forwards its presses to the host and
+      // applies nothing (it just renders the host's stream).
+      if (me === 0) npCore(0, i, v);
+      else { try { NP.dc.send(JSON.stringify({ t: "i", p: 1, i, v })); } catch { /* */ } }
+      return;
+    }
     npCore(me, i, v);
     try { NP.dc.send(JSON.stringify({ t: "i", p: me, i, v })); } catch { /* */ }
   };
@@ -131,18 +289,50 @@ function npBindDc(dc) {
   NP.dc = dc;
   dc.onopen = () => {
     window.__inNetplay = true;
+    npLog(`dc open role=${NP.role}`);
+    npIndicator();
     npHookInput();
     toast(NP.role === "host" ? "P2 can join — you are Player 1" : "Linked — you are Player 2");
+    // The host is the reference. Push its screen to the guest once on link-up,
+    // then keep nudging it back in step: without a shared frame clock the two
+    // cores drift apart after a few seconds. The guest only ever applies.
+    if (NP.role === "host" && !NP.video) {
+      clearInterval(NP.syncT);
+      NP.syncT = setInterval(() => { if (NP.dc && NP.dc.readyState === "open") npSendState(); }, 6000);
+      setTimeout(() => { if (NP.dc && NP.dc.readyState === "open") npSendState(); }, 1200);
+    }
   };
-  dc.onclose = () => { window.__inNetplay = false; if (NP.alive) toast("Netplay disconnected"); };
+  dc.onclose = () => {
+    window.__inNetplay = false;
+    npLog("dc closed");
+    clearInterval(NP.syncT); NP.syncT = 0;
+    npIndicator();
+    if (NP.alive) toast("Netplay disconnected");
+  };
   dc.onmessage = (e) => {
     if (typeof e.data !== "string") {
+      // Savestate bytes. A state can be far larger than the datachannel's max
+      // message size (SNES ~0.4 MB, Genesis ~1 MB, NDS ~6 MB), so the sender
+      // chunks it — reassemble here before loading.
       const gm = window.EJS_emulator?.gameManager;
-      if (gm?.loadState) try { gm.loadState(new Uint8Array(e.data)); } catch { /* */ }
+      if (!NP.rxLen) {                        // legacy single-message state
+        if (gm?.loadState) try { gm.loadState(new Uint8Array(e.data)); NP.recv++; } catch { /* */ }
+        return;
+      }
+      NP.rxChunks.push(new Uint8Array(e.data));
+      NP.rxGot += e.data.byteLength;
+      if (NP.rxGot >= NP.rxLen) {
+        const total = new Uint8Array(NP.rxGot);
+        let o = 0;
+        for (const c of NP.rxChunks) { total.set(c, o); o += c.length; }
+        NP.rxChunks = []; NP.rxGot = 0; NP.rxLen = 0;
+        if (gm?.loadState) try { gm.loadState(total); NP.recv++; npLog(`state applied ${total.length}B`); } catch { /* */ }
+      }
       return;
     }
     let m; try { m = JSON.parse(e.data); } catch { return; }
     if (m.t === "i") npCore(m.p, m.i, m.v);
+    else if (m.t === "sc") { NP.rxLen = m.n | 0; NP.rxGot = 0; NP.rxChunks = []; }
   };
 }
 async function npSendSig(payload) {
@@ -155,10 +345,73 @@ function npSendLocalSdp() {
   if (!d) return;
   npSendSig({ sdp: { type: d.type, sdp: d.sdp } });
 }
+// Host-authoritative video. EmulatorJS can build a MediaStream of the canvas +
+// a tap of the game's WebAudio; add both tracks to the peer connection so the
+// guest sees and hears the host's game (perfect sync, guest lag ≈ 1 RTT).
+function npStartHostStream() {
+  NP.video = false;
+  try {
+    const canvas = document.querySelector("#game canvas");
+    if (!canvas) { npLog("host stream: no canvas"); return; }
+    const emu = window.EJS_emulator;
+    let stream = null;
+    if (emu && typeof emu.collectScreenRecordingMediaTracks === "function") {
+      stream = emu.collectScreenRecordingMediaTracks(canvas, 60);
+    }
+    if (!stream || !stream.getTracks().length) {
+      stream = typeof canvas.captureStream === "function" ? canvas.captureStream(60) : null;
+    }
+    if (!stream || !stream.getTracks().length) { npLog("host stream: capture failed"); return; }
+    for (const t of stream.getTracks()) NP.pc.addTrack(t, stream);
+    NP.hostStream = stream;
+    NP.video = true;
+    npLog(`host stream on (${stream.getVideoTracks().length}v/${stream.getAudioTracks().length}a)`);
+  } catch (e) { npLog(`host stream error ${e?.message || e}`); }
+}
+// Guest side: show the host's stream over the (now irrelevant) local canvas and
+// mute the local core so only the host's audio plays. The EJS touch pad still
+// renders above the video, so the guest keeps its controls.
+function npShowHostVideo(stream) {
+  NP.video = true;
+  clearInterval(NP.syncT); NP.syncT = 0;
+  let v = document.getElementById("np-video");
+  if (!v) {
+    v = el("video", { id: "np-video", autoplay: true, playsInline: true, muted: true,
+      style: "position:absolute;inset:0;width:100%;height:100%;object-fit:contain;background:#000;z-index:1" });
+    v.setAttribute("playsinline", "");
+    const stage = document.querySelector(".player-stage") || document.querySelector(".player") || document.body;
+    stage.append(v);
+    v.onclick = () => { v.muted = false; v.play?.().catch(() => {}); };
+  }
+  v.srcObject = stream;
+  const autoUnmute = prefs().npAutoUnmute !== false;
+  v.play?.().then(() => { if (autoUnmute) v.muted = false; toast(autoUnmute ? "You are Player 2 — playing on P1's screen" : "Player 2 — tap the screen to unmute"); })
+    .catch(() => { v.muted = true; v.play?.().catch(() => {}); toast("Tap the screen to unmute"); });
+  try { window.EJS_emulator?.setVolume?.(0); } catch { /* */ }
+  const cv = document.querySelector("#game canvas");
+  if (cv) cv.style.visibility = "hidden";   // the video covers it anyway
+}
 function npStartPc(isHost) {
-  // STUN is only for candidate gathering; on the tailnet ICE still prefers 100.x
-  NP.pc = new RTCPeerConnection({ iceServers: [{ urls: "stun:stun.l.google.com:19302" }] });
-  NP.pc.onicecandidate = (e) => { if (e.candidate) npSendSig({ ice: e.candidate.toJSON?.() || e.candidate }); };
+  NP.pc = new RTCPeerConnection({ iceServers: NETPLAY_ICE });
+  NP.pc.onicecandidate = (e) => {
+    if (!e.candidate) { npLog("ice gathering complete"); return; }
+    const c = e.candidate;
+    npLog(`ice cand ${c.type || "?"} ${c.protocol || ""} ${c.address || ""}`);
+    npSendSig({ ice: c.toJSON?.() || c });
+  };
+  NP.pc.onicecandidateerror = (e) => npLog(`ice candidate error ${e.errorCode || "?"} ${e.url || ""}`);
+  NP.pc.oniceconnectionstatechange = () => {
+    npLog(`ice ${NP.pc.iceConnectionState}`);
+    if (NP.pc.iceConnectionState === "failed") toast("Netplay link failed — try again");
+  };
+  NP.pc.onconnectionstatechange = () => {
+    npLog(`pc ${NP.pc.connectionState}`);
+    if (NP.pc.connectionState === "connected" && NP.role === "host" && !NP.video) setTimeout(() => npSendState(), 300);
+  };
+  NP.pc.ontrack = (e) => {
+    npLog(`track ${e.track.kind}`);
+    if (NP.role === "guest" && e.streams && e.streams[0]) npShowHostVideo(e.streams[0]);
+  };
   const sendSdpSoon = () => {
     if (NP.pc.iceGatheringState === "complete") npSendLocalSdp();
     else {
@@ -169,6 +422,7 @@ function npStartPc(isHost) {
     }
   };
   if (isHost) {
+    npStartHostStream();     // canvas + tapped game audio, added before the offer
     const dc = NP.pc.createDataChannel("np", { ordered: true });
     npBindDc(dc);
     NP.pc.createOffer().then((o) => NP.pc.setLocalDescription(o)).then(sendSdpSoon);
@@ -217,14 +471,16 @@ async function npHost({ sys, file, name }) {
   window.__npRoom = d.id;
   npStartPc(true);
   npPoll();
+  npIndicator();
   return d.id;
 }
-function npWaitLinked(ms = 18000) {
+function npWaitLinked(ms = 25000) {
   return new Promise((resolve, reject) => {
     if (NP.dc && NP.dc.readyState === "open") return resolve();
     const t0 = Date.now();
     const iv = setInterval(() => {
       if (NP.dc && NP.dc.readyState === "open") { clearInterval(iv); resolve(); }
+      else if (NP.pc && NP.pc.connectionState === "failed") { clearInterval(iv); reject(new Error("ice failed")); }
       else if (Date.now() - t0 > ms) { clearInterval(iv); reject(new Error("timeout")); }
     }, 200);
   });
@@ -235,21 +491,33 @@ async function npJoin(room) {
   npStop();
   NP.room = room; NP.role = "guest"; NP.myP = 1; NP.after = 0; NP.alive = true;
   window.__npRoom = room;
+  npLog(`join room ${room}`);
   npStartPc(false);
   npPoll();
+  npIndicator();
   toast("Connecting as Player 2…");
   await npWaitLinked();
+  npLog("linked");
 }
 function npStop() {
   NP.alive = false; clearTimeout(NP.pollT);
+  clearInterval(NP.syncT); NP.syncT = 0;
   try { NP.dc && NP.dc.close(); } catch { /* */ }
   try { NP.pc && NP.pc.close(); } catch { /* */ }
+  try { NP.hostStream?.getTracks().forEach((t) => t.stop()); } catch { /* */ }
+  NP.hostStream = null; NP.video = false;
+  document.getElementById("np-video")?.remove();
+  npIndicator();
+  const cv = document.querySelector("#game canvas");
+  if (cv) cv.style.visibility = "";
   NP.dc = NP.pc = NP.room = NP.role = null; NP.myP = 0; NP.pendingIce = [];
   window.__inNetplay = false; window.__npRoom = null;
 }
 async function autoJoinNetplay(wantRoom) {
   if (!wantRoom) { toast("Host hasn't created a room yet — they need to tap Netplay first"); return; }
-  try { await npJoin(wantRoom); }
+  try { await npJoin(wantRoom); return; } catch { /* retry once */ }
+  npLog("join failed — retrying");
+  try { toast("Link failed — retrying as Player 2…"); await npJoin(wantRoom); }
   catch { toast("Couldn't link — host should tap Netplay, then Invite again"); }
 }
 function acceptInvite(inv) {
@@ -262,15 +530,34 @@ function acceptInvite(inv) {
   if (location.hash === playHref) autoJoinNetplay(room);
   else location.hash = playHref;
 }
+// A link that opens the game and auto-joins the host's room (?join=<room> is
+// consumed by the router, then the play route picks up ssw:joinNp).
+function npInviteLink(sys, file, room) {
+  const path = (location.pathname || "/").replace(/\?.*$/, "");
+  const hash = `#/play/${encodeURIComponent(sys)}/${String(file || "").split("/").map(encodeURIComponent).join("/")}`;
+  return `${location.origin}${path}?join=${encodeURIComponent(room || "")}${hash}`;
+}
+async function copyInviteLink(sys, file, room) {
+  const link = npInviteLink(sys, file, room || window.__npRoom || NP.room);
+  try { await navigator.clipboard.writeText(link); toast("Invite link copied — send it to your friend"); }
+  catch { toast(link); }
+}
 function openNetplaySheet(sys, file, name) {
   const o = el("div", { id: "help-overlay", onclick: (e) => { if (e.target.id === "help-overlay") o.remove(); } });
   const linked = NP.dc && NP.dc.readyState === "open";
+  const role = NP.role === "host" ? "Player 1 · host" : NP.role === "guest" ? "Player 2 · guest" : null;
   const status = linked
-    ? (NP.role === "host" ? "Linked — you are Player 1." : "Linked — you are Player 2.")
-    : (NP.room ? "Room is up. Invite Player 2 — they must tap Join room." : "Create a room, then invite someone online.");
+    ? `Linked — you are ${role}.` + (NP.video
+        ? (NP.role === "host" ? " P2 is watching your screen." : " You're watching P1's screen.")
+        : " Sharing inputs (best-effort sync).")
+    : (NP.room ? "Room is up — Player 2 taps Join room from the invite." : "Create a room, then invite someone online.");
   const kids = [el("h3", { textContent: "Netplay" }), el("p", { className: "hint", textContent: status })];
+
+  if (!linked && NP.role === "host" && NP.video) {
+    kids.push(el("p", { className: "hint", style: "font-size:11px;opacity:.7", textContent: "Streaming is on — waiting for P2 to reconnect." }));
+  }
   if (NP.role !== "guest") {
-    kids.push(el("button", { className: "btn btn-primary", style: "width:100%;margin:8px 0",
+    kids.push(el("button", { className: prefs().npHostByDefault !== false ? "btn btn-primary" : "btn btn-ghost", style: "width:100%;margin:10px 0 6px",
       textContent: NP.room ? "Invite Player 2" : "Create room",
       onclick: async () => {
         o.remove();
@@ -278,29 +565,71 @@ function openNetplaySheet(sys, file, name) {
         try {
           if (!NP.room) { await npHost({ sys, file, name }); toast("Room created — you are Player 1"); }
           const sb = document.getElementById("np-sync-btn");
-          if (sb) { sb.hidden = false; sb.onclick = resyncNetplay; }
+          if (sb && !NP.video) { sb.hidden = false; sb.onclick = resyncNetplay; }
           ping(false);
           invitePicker({ sys, file, name, watch: window.__watchId });
         } catch { toast("Couldn't create a room"); }
       } }));
   }
-  if (NP.role === "host") {
+  if (NP.role === "host" && !NP.video) {
     kids.push(el("button", { className: "btn btn-ghost", style: "width:100%;margin:6px 0", textContent: "Sync screens",
       onclick: () => { o.remove(); resyncNetplay(); } }));
   }
-  kids.push(el("button", { className: "btn btn-ghost", style: "width:100%;margin:6px 0", textContent: "Close", onclick: () => o.remove() }));
+  if (NP.room && NP.role !== "guest") {
+    kids.push(el("button", { className: "btn btn-ghost", style: "width:100%;margin:6px 0", textContent: "🔗 Copy invite link",
+      title: "Share a link that opens this game and auto-joins the room",
+      onclick: () => copyInviteLink(sys, file, NP.room) }));
+  }
+  if (NP.role && (linked || NP.room)) {
+    kids.push(el("button", { className: "btn btn-ghost", style: "width:100%;margin:6px 0;color:var(--pink,#ff5fa2)",
+      textContent: "Leave netplay", title: "Disconnect and stop sharing",
+      onclick: () => { npStop(); o.remove(); toast("Left netplay"); } }));
+  }
+
+  const prefRow = (label, key) => {
+    const inp = el("input", { type: "checkbox", checked: prefs()[key] !== false });
+    inp.onchange = () => { setPref(key, inp.checked); npLog(`${key}=${inp.checked}`); };
+    return el("label", { style: "display:flex;gap:8px;align-items:center;margin:6px 0;font-size:12px;cursor:pointer" }, inp, label);
+  };
+  kids.push(el("div", { style: "margin-top:10px;padding-top:10px;border-top:1px solid var(--line,#232330)" },
+    prefRow("Auto-unmute P2's video", "npAutoUnmute"),
+    prefRow("I usually host", "npHostByDefault")));
+
+  const diag = el("details", { style: "margin-top:12px" },
+    el("summary", { className: "hint", style: "cursor:pointer", textContent: "Diagnostics" }),
+    el("p", { className: "hint", style: "font-size:11px;opacity:.8;margin:8px 0 2px",
+      textContent: `role=${NP.role || "-"} mode=${NP.video ? "host-video" : "input-echo"} pc=${NP.pc?.connectionState || "-"} ice=${NP.pc?.iceConnectionState || "-"} dc=${NP.dc?.readyState || "-"} room=${NP.room || "-"} sent=${NP.sent} recv=${NP.recv}` }));
+  if (window.__npLast) diag.append(el("p", { className: "hint", style: "font-size:11px;opacity:.6", textContent: "last: " + window.__npLast }));
+  kids.push(diag);
+  kids.push(el("button", { className: "btn btn-ghost", style: "width:100%;margin:8px 0 0", textContent: "Close", onclick: () => o.remove() }));
   o.append(el("div", { className: "help-card" }, ...kids));
-  document.body.append(o);
+  uiRoot().append(o);
 }
 function resyncNetplay() {
+  if (NP.video) { toast("Not needed — P2 mirrors your screen"); return; }
   if (NP.role !== "host") { toast("Only the host can sync"); return; }
+  if (!NP.dc || NP.dc.readyState !== "open") { toast("Netplay isn't linked yet"); return; }
+  if (npSendState()) toast("Sent your screen to P2");
+  else toast("Sync failed");
+}
+// Send the host's current savestate, chunked to stay under the datachannel's
+// max message size (a single dc.send of a >256 KB state throws).
+function npSendState() {
   const gm = window.EJS_emulator?.gameManager;
-  if (!gm?.getState || !NP.dc || NP.dc.readyState !== "open") { toast("Netplay isn't linked yet"); return; }
+  if (NP.role !== "host") return false;
+  if (!gm?.getState) { npLog("sync skip: no getState"); return false; }
+  if (!NP.dc || NP.dc.readyState !== "open") { npLog("sync skip: dc not open"); return false; }
   try {
     const st = gm.getState();
-    NP.dc.send(st.buffer ? st.buffer : st);
-    toast("Sent your screen to P2");
-  } catch { toast("Sync failed"); }
+    const buf = st instanceof Uint8Array ? st : new Uint8Array(st);
+    if (!buf.length) { npLog("sync skip: empty state"); return false; }
+    const CH = 16384;
+    NP.dc.send(JSON.stringify({ t: "sc", n: buf.length }));
+    for (let o = 0; o < buf.length; o += CH) NP.dc.send(buf.subarray(o, o + CH));
+    NP.sent++;
+    npLog(`state sent ${buf.length}B`);
+    return true;
+  } catch (e) { npLog(`state send error ${e?.message || e}`); return false; }
 }
 function maybeResumeSession() {
   const s = LS.get("lastSession", null);
@@ -430,8 +759,8 @@ function pushRecent(sys, file, name, img) {
 /* ---- accounts + preferences -------------------------------------- */
 const PREF_DEFAULTS = {
   lite: false, autoResume: false, musicShuffle: false, videoFilter: "pixel",
-  region: "", playingToasts: true, confirmOverwrite: false,
-  netplay: true, netplayName: "",
+  region: "", playingToasts: true, confirmOverwrite: false, previewSound: true,
+  netplay: true, netplayName: "", npAutoUnmute: true, npHostByDefault: true,
 };
 const AUTH = { token: LS.get("auth", null), user: null };
 const authHdr = () => AUTH.token ? { "x-ssw-auth": AUTH.token } : {};
@@ -558,9 +887,18 @@ function heroShowcase(vids, { title, desc, actions }) {
   const stage = el("div", { className: "hero-art sc-stage" });
   const chip = el("div", { className: "sc-chip", hidden: true });
   const toggle = el("div", { className: "sc-toggle" });
-  let mode = IN_APP ? "video" : LS.get("scMode", "video");
+  let mode = "video";                       // home always starts on Preview
   let i = (Math.random() * vids.length) | 0;
   let timer = 0;
+  let sound = prefs().previewSound !== false;
+  // lower the site music player while a preview with its own audio is playing
+  let duckPrev = null;
+  const duck = (on) => {
+    const ai = MP.ai;
+    if (!ai) return;
+    if (on) { if (duckPrev == null) duckPrev = ai.volume; ai.volume = Math.min(duckPrev, 0.12); }
+    else if (duckPrev != null) { ai.volume = duckPrev; duckPrev = null; }
+  };
   const link = (v) => v.play
     ? `#/play/${v.sys}/${v.file.split("/").map(encodeURIComponent).join("/")}`
     : (v.gid ? `#/g/${v.sys}/${v.gid}` : `#/s/${v.sys}`);
@@ -571,12 +909,21 @@ function heroShowcase(vids, { title, desc, actions }) {
     const src = VIDEO_BASE + encodeURIComponent(v.sys) + "/" + encodeURIComponent(v.vid);
     const vd = el("video", { className: "sc-v", src, autoplay: true, loop: false,
       playsInline: true, preload: "metadata", poster: v.img ? artUrl(v.img) : null });
-    vd.muted = true; vd.defaultMuted = true;
+    vd.muted = !sound; vd.defaultMuted = !sound; vd.volume = sound ? 0.65 : 0;
     vd.onended = next;
-    vd.onerror = () => setMode("art");
+    vd.onerror = () => setMode("art", false);   // don't let a bad clip lock us to art
     timer = setTimeout(next, 34000);
     stage.replaceChildren(vd);
-    vd.play?.().catch(() => {});
+    // Autoplay with sound stays blocked until the page has a user gesture: start
+    // muted and unmute on the first tap so the clip's game audio comes through.
+    vd.play?.().catch(() => {
+      vd.muted = true;
+      vd.play?.().catch(() => {});
+      if (sound) {
+        const unlock = () => { vd.muted = false; vd.volume = 0.65; vd.play?.().catch(() => {}); };
+        document.addEventListener("pointerdown", unlock, { once: true });
+      }
+    });
     chip.replaceChildren(
       el("div", { className: "sc-chip-name", textContent: v.name }),
       el("div", { className: "sc-chip-sub", textContent: [sysName(v.sys), v.year].filter(Boolean).join(" · ") }),
@@ -604,16 +951,27 @@ function heroShowcase(vids, { title, desc, actions }) {
     }
     stage.replaceChildren(strip);
   };
-  const setMode = (m) => {
-    mode = m; LS.set("scMode", m);
+  const setMode = (m, persist = true) => {
+    mode = m; if (persist) LS.set("scMode", m);
     sec.dataset.mode = m;
     stage.querySelector("video")?.pause();
-    toggle.querySelectorAll("button").forEach((b) => b.classList.toggle("on", b.dataset.m === m));
+    toggle.querySelectorAll("button[data-m]").forEach((b) => b.classList.toggle("on", b.dataset.m === m));
+    duck(m === "video" && sound);
     (m === "video" ? showVideo : showArt)();
   };
+  const soundBtn = el("button", { className: "sc-tg sc-snd", title: "Game sound on previews",
+    textContent: sound ? "🔊 Sound" : "🔇 Muted",
+    onclick: () => {
+      sound = !sound; setPref("previewSound", sound);
+      soundBtn.textContent = sound ? "🔊 Sound" : "🔇 Muted";
+      const vd = stage.querySelector("video");
+      if (vd) { vd.muted = !sound; vd.volume = sound ? 0.65 : 0; if (sound) vd.play?.().catch(() => {}); }
+      duck(sound && sec.dataset.mode === "video");
+    } });
   toggle.append(
     el("button", { className: "sc-tg", dataset: { m: "video" }, textContent: "▶ Preview", onclick: () => setMode("video") }),
-    el("button", { className: "sc-tg", dataset: { m: "art" }, textContent: "▦ Box art", onclick: () => setMode("art") }));
+    el("button", { className: "sc-tg", dataset: { m: "art" }, textContent: "▦ Box art", onclick: () => setMode("art") }),
+    soundBtn);
 
   const body = el("div", { className: "hero-body" },
     el("p", { className: "hero-kicker", textContent: "retroverse" }),
@@ -631,7 +989,7 @@ function heroShowcase(vids, { title, desc, actions }) {
   return sec;
 }
 
-function shelf({ title, count, moreHref, tiles }) {
+function shelf({ title, count, moreHref, tiles, note }) {
   const track = el("div", { className: "shelf-track" }, ...tiles);
   [...track.children].forEach((t, i) => t.style && t.style.setProperty("--i", Math.min(i, 16)));
   const scroll = (d) => track.scrollBy({ left: d * track.clientWidth * 0.85, behavior: "smooth" });
@@ -640,18 +998,21 @@ function shelf({ title, count, moreHref, tiles }) {
       el("h2", { textContent: title }),
       count != null && el("span", { className: "count", textContent: count.toLocaleString() }),
       moreHref && el("a", { href: moreHref, textContent: "See all ›" })),
+    note && el("p", { className: "shelf-note hint", textContent: note }),
     track,
     el("button", { className: "shelf-nav prev", ariaLabel: "left", textContent: "‹", onclick: () => scroll(-1) }),
     el("button", { className: "shelf-nav next", ariaLabel: "right", textContent: "›", onclick: () => scroll(1) }));
 }
 
-function consoleTile(s, { play = false } = {}) {
+function consoleTile(s, { play = false, offline = 0 } = {}) {
   const art = el("div", { className: "tile-art console" });
   if (s.photo) art.append(el("img", { className: "console-photo", src: s.photo, loading: "lazy", alt: s.name }));
   else if (s.logo) art.append(el("img", { className: "console-logo", src: s.logo, loading: "lazy", alt: s.name }));
   else art.append(el("div", { className: "ph", textContent: s.name }));
   if (play && s.playable) art.append(el("span", { className: "badge", textContent: "Play" }));
-  return el("a", { className: "tile", href: play ? `#/play/${s.id}` : `#/s/${s.id}` },
+  if (offline > 0) art.append(el("span", { className: "badge offline", textContent: `⤓ ${offline} offline` }));
+  return el("a", { className: "tile", href: play ? `#/play/${s.id}` : `#/s/${s.id}`,
+      ariaLabel: `${s.name}, ${s.count.toLocaleString()} games${play && s.playable ? ", playable in browser" : ""}` },
     art,
     el("div", { className: "tile-cap" },
       el("div", { className: "t", textContent: s.name }),
@@ -742,7 +1103,7 @@ function gameTile(g, { play = false, previews = null } = {}) {
     img: g.img, name: g.name, sys: g._sys,
     badge: play ? "Play" : null, fav: g.id ? g : null,
   });
-  const tile = el("a", { className: "tile wide", href },
+  const tile = el("a", { className: "tile wide", href, ariaLabel: `${g.name}${play ? " — playable" : ""}` },
     art,
     el("div", { className: "tile-cap" },
       el("div", { className: "t", textContent: g.name }),
@@ -846,6 +1207,7 @@ async function routeHome() {
   const recent = recentList();
   if (recent.length) frag.append(shelf({
     title: "Continue playing", count: recent.length,
+    note: "Pick up where you left off — cloud saves load automatically.",
     tiles: recent.map((r) => {
       const art = coverArt({ img: r.img, name: r.name, sys: r.sys, badge: "Resume", file: r.file, resolve });
       return el("a", { className: "tile wide",
@@ -861,6 +1223,7 @@ async function routeHome() {
 
   frag.append(shelf({
     title: "Play now", count: playable.length, moreHref: "#/play",
+    note: "Consoles that run right here in the browser.",
     tiles: playable.slice(0, 24).map((s) => consoleTile(s, { play: true })),
   }));
 
@@ -896,6 +1259,7 @@ async function routeHome() {
       el("div", { className: "shelf-head" },
         el("h2", { textContent: "On the floor" }),
         el("span", { className: "count", textContent: `${live.length} playing` })),
+      el("p", { className: "shelf-note hint", textContent: "People on the tailnet right now — join their room or start the same game." }),
       el("div", { className: "wrap", style: "padding-bottom:8px" },
         el("div", { className: "live-row" }, ...live.map((x) => {
           const playHref = x.sys && x.file
@@ -905,7 +1269,11 @@ async function routeHome() {
             el("div", { className: "live-game", textContent: x.game }),
             el("div", { className: "live-sys", textContent: x.sys ? sysName(x.sys) : ""}),
             el("div", { className: "live-acts" },
-              el("a", { className: "btn btn-primary sm", href: playHref, textContent: x.netplay ? "Join" : "Play too" }),
+              el("a", { className: "btn btn-primary sm", href: playHref,
+                onclick: x.netplay && x.room
+                  ? () => { LS.set("joinNp", { sys: x.sys, file: x.file, room: x.room, t: Date.now() }); }
+                  : null,
+                textContent: x.netplay ? "Join room" : "Play too" }),
               x.watch && el("a", { className: "btn btn-ghost sm", href: `#/watch/${x.watch}`, textContent: "Watch" })));
         })))));
   }).catch(() => {});
@@ -921,6 +1289,7 @@ async function routeHome() {
     }
     if (trend.length < 4) { trendAnchor.remove(); return; }
     trendAnchor.replaceWith(shelf({ title: "Trending", count: trend.length,
+      note: "What's getting played on the server right now.",
       tiles: trend.map((p) => {
         const gm = !p.snap && (state.cache[p.sys] || []).find((x) => x.file === p.file);
         const art = coverArt({ img: p.img || (gm && gm.img), name: p.name, sys: p.sys, badge: "Play",
@@ -950,7 +1319,8 @@ async function routeHome() {
           el("div", { className: "s", textContent: `${sysName(p.sys)} · ${p.tag}` }))));
     }
     if (!tiles.length) { mpAnchor.remove(); return; }
-    mpAnchor.replaceWith(shelf({ title: "Two-player night", count: tiles.length, moreHref: "#/netplay", tiles }));
+    mpAnchor.replaceWith(shelf({ title: "Two-player night", count: tiles.length, moreHref: "#/netplay", tiles,
+      note: "Couch and netplay picks for two." }));
     hydrateCovers(resolve, { save: backfillRecent });
   });
 }
@@ -982,14 +1352,17 @@ async function routeLibrary() {
   await getSystems().catch(() => {});
   document.title = "Library — RetroVerse";
   const q = el("input", { type: "search", placeholder: "Filter consoles…" });
+  const playOnly = el("label", { className: "chk" }, el("input", { type: "checkbox" }), " playable only");
   const grid = el("div", { className: "tile-grid" });
   const draw = () => {
     const t = q.value.trim().toLowerCase();
+    const po = playOnly.querySelector("input").checked;
     grid.replaceChildren(...state.sys.systems
-      .filter((s) => !t || s.name.toLowerCase().includes(t) || s.id.includes(t))
+      .filter((s) => (!t || s.name.toLowerCase().includes(t) || s.id.includes(t)) && (!po || s.playable))
       .map((s) => consoleTile(s)));
   };
   q.oninput = debounce(draw, 120);
+  playOnly.querySelector("input").onchange = draw;
   view.replaceChildren(el("div", { className: "wrap", style: "padding-top:22px" },
     el("div", { className: "shelf-head", style: "padding:0 0 12px" },
       el("h1", { textContent: "Library" }),
@@ -1043,19 +1416,22 @@ async function routeBrowse() {
   ++state.render;
   await getSystems().catch(() => {});
   const q = el("input", { type: "search", placeholder: "Filter consoles…" });
+  const playOnly = el("label", { className: "chk" }, el("input", { type: "checkbox" }), " playable only");
   const grid = el("div", { className: "tile-grid" });
   const draw = () => {
     const t = q.value.trim().toLowerCase();
+    const po = playOnly.querySelector("input").checked;
     grid.replaceChildren(...state.sys.systems
-      .filter((s) => !t || s.name.toLowerCase().includes(t) || s.id.includes(t))
+      .filter((s) => (!t || s.name.toLowerCase().includes(t) || s.id.includes(t)) && (!po || s.playable))
       .map((s) => consoleTile(s)));
   };
   q.oninput = debounce(draw, 120);
+  playOnly.querySelector("input").onchange = draw;
   view.replaceChildren(el("div", { className: "wrap" },
     el("section", { className: "shelf", style: "padding:24px 0 0" },
       el("div", { className: "shelf-head" }, el("h2", { textContent: "All consoles" }),
         el("span", { className: "count", textContent: `${state.sys.systems.length}` })),
-      el("div", { className: "grid-tools", style: "padding:0" }, q),
+      el("div", { className: "grid-tools", style: "padding:0" }, q, playOnly),
       grid)));
   draw();
 }
@@ -1173,6 +1549,7 @@ async function routePlay() {
   if (token !== state.render) return;
   const playable = state.sys.systems.filter((s) => s.playable).sort((a, b) => b.count - a.count);
   const total = playable.reduce((n, s) => n + s.count, 0);
+  const bySys = await romCacheBySys().catch(() => ({}));
 
   const frag = document.createDocumentFragment();
   frag.append(hero({
@@ -1191,7 +1568,7 @@ async function routePlay() {
     el("div", { className: "shelf-head" }, el("h2", { textContent: "Playable consoles" }),
       el("span", { className: "count", textContent: `${playable.length}` })),
     el("div", { className: "tile-grid", style: "padding:0" },
-      ...playable.map((s) => consoleTile(s, { play: true })))));
+      ...playable.map((s) => consoleTile(s, { play: true, offline: bySys[s.id] || 0 })))));
   view.replaceChildren(frag);
 }
 
@@ -1239,6 +1616,7 @@ async function routePlaySystem(id) {
     "atari2600", "atari5200", "atari7800", "atarilynx", "wonderswan", "wonderswancolor",
     "ngp", "ngpc", "virtualboy", "colecovision", "sega32x"]);
   const canOffline = CART_SYS.has(id) && games.length <= 600 && !meta(id).bios;
+  const cachedN = (await romCacheBySys().catch(() => ({})))[id] || 0;
 
   const frag = document.createDocumentFragment();
   frag.append(hero({
@@ -1247,7 +1625,8 @@ async function routePlaySystem(id) {
     art: sysArt(m),
     actions: [
       { label: "🎲 Random game", primary: true, onClick: () => surpriseMe(id) },
-      canOffline ? { label: "⬇ Save all for offline", onClick: () => offlineDownload(id, games) } : null,
+      canOffline ? { label: cachedN ? `✓ ${cachedN} saved offline` : "⬇ Save all for offline", onClick: () => offlineDownload(id, games) } : null,
+      cachedN ? { label: "Manage offline", href: "#/cache" } : null,
       { label: "Or upload a ROM", onClick: () => $("#rom-input")?.click() },
     ].filter(Boolean),
   }));
@@ -1316,6 +1695,13 @@ async function romCacheEntries() {
 async function romCacheStats() {
   const e = await romCacheEntries().catch(() => []);
   return { count: e.length, bytes: e.reduce((n, x) => n + (x.size || 0), 0) };
+}
+// how many cached ROMs each console has, for the offline UI
+async function romCacheBySys() {
+  const e = await romCacheEntries().catch(() => []);
+  const m = {};
+  for (const x of e) { const s = String(x.key).split("/")[0]; m[s] = (m[s] || 0) + 1; }
+  return m;
 }
 async function romCacheClear() {
   const os = await idbTx("romcache", "readwrite");
@@ -1439,7 +1825,7 @@ async function offlineDownload(sys, games) {
       stat, bar,
       el("button", { className: "btn btn-ghost", style: "margin-top:12px", textContent: "Stop",
         onclick: () => { cancel = true; o.remove(); toast(`Saved ${done} games offline`); } })));
-  document.body.append(o);
+  uiRoot().append(o);
   await warmOfflineData(sys);
   const list = games.filter((g) => !/\.(chd|iso|cue|pbp|bin)$/i.test(g.file));
   for (const g of list) {
@@ -1497,7 +1883,7 @@ function reportGame(sys, file, name) {
           } catch { toast("Couldn't send the report"); }
         } })),
       el("button", { className: "btn btn-ghost", style: "margin-top:8px", textContent: "Cancel", onclick: () => o.remove() })));
-  document.body.append(o);
+  uiRoot().append(o);
 }
 const tokenHdr = () => { const t = LS.get("token", ""); return t ? { "x-ssw-token": t } : {}; };
 
@@ -1522,17 +1908,21 @@ async function routePlayGame(sys, romParam, resume = false) {
   const syncBtn = el("button", { className: "pbtn", id: "np-sync-btn", textContent: "Sync", title: "Force both players onto this screen (host only)", hidden: true });
   const invBtn = el("button", { className: "pbtn", id: "inv-btn", textContent: "Invite", title: "Invite someone who's online", hidden: true });
   const flagBtn = el("button", { className: "pbtn", id: "flag-btn", textContent: "⚑", title: "Report a problem with this game" });
+  const padLayoutBtn = el("button", { className: "pbtn", id: "pad-layout-btn", textContent: "Pad", title: "Touch pad size, opacity and position", hidden: true });
   if (sys !== "upload") flagBtn.onclick = () => reportGame(sys, file, romName);
   else flagBtn.hidden = true;
   const shell = el("div", { className: "player" + (IN_APP ? " in-app-player" : "") },
     el("div", { className: "player-bar" },
       el("button", { type: "button", className: "exit", textContent: "‹ Exit", onclick: (e) => { e.preventDefault(); exitPlayer(); } }),
       el("div", { className: "title", id: "player-title", textContent: "Loading…" }),
-      saveBtn, saveAsBtn, loadBtn, rwBtn, ffBtn, ctrlBtn, npBtn, syncBtn, invBtn, watchBtn, noteBtn, flagBtn,
+      rwBtn, ffBtn,
+      saveBtn, saveAsBtn, loadBtn,
+      npBtn, syncBtn, invBtn, watchBtn,
+      ctrlBtn, noteBtn, flagBtn, padLayoutBtn,
       el("button", { type: "button", className: "pbtn", id: "pad-btn", textContent: "Hide pad",
         title: "Hide on-screen touch controls", onclick: () => toggleTouchPad() }),
-      el("button", { type: "button", className: "pbtn", id: "land-btn", textContent: "Landscape",
-        title: "Rotate to landscape / fullscreen", onclick: () => goLandscape() })),
+      el("button", { type: "button", className: "pbtn", id: "land-btn", textContent: landNow() ? "Portrait" : "Landscape",
+        title: "Switch between landscape and portrait", onclick: () => goLandscape() })),
     el("div", { className: "player-stage" },
       el("div", { id: "game" }), loadEl));
   if (IN_APP) {
@@ -1543,6 +1933,10 @@ async function routePlayGame(sys, romParam, resume = false) {
       clearTimeout(hideT);
       hideT = setTimeout(hideChrome, 5000);
     };
+    window.__sswChromeToggle = () => {
+      if (shell.classList.contains("show-chrome")) { clearTimeout(hideT); hideChrome(); }
+      else showChrome();
+    };
     shell.append(
       el("button", { type: "button", className: "fab-exit", textContent: "‹", title: "Exit game",
         onclick: (e) => { e.preventDefault(); e.stopPropagation(); exitPlayer(); } }),
@@ -1551,9 +1945,7 @@ async function routePlayGame(sys, romParam, resume = false) {
       el("button", { type: "button", className: "fab-pad", title: "Hide or show touch controls",
         onclick: (e) => { e.preventDefault(); e.stopPropagation(); toggleTouchPad(); } }),
       el("button", { type: "button", className: "fab-ctrl", textContent: "🎮", title: "Controller setup",
-        onclick: (e) => { e.preventDefault(); e.stopPropagation(); controlsPanel(core); } }),
-      el("button", { type: "button", className: "fab-np", textContent: "Netplay", title: "Create a room or invite Player 2",
-        onclick: (e) => { e.preventDefault(); e.stopPropagation(); openNetplaySheet(sys, file, romName); } }));
+        onclick: (e) => { e.preventDefault(); e.stopPropagation(); controlsPanel(core); } }));
   }
   document.body.append(shell);
   view.replaceChildren();
@@ -1677,7 +2069,7 @@ async function routePlayGame(sys, romParam, resume = false) {
             onclick: async () => { await fetch(slotUrl(s.slot), { method: "DELETE", headers: { ...tokenHdr(), ...authHdr() } }); o.remove(); toast("Slot deleted"); } }))))
           : el("p", { className: "hint", textContent: "No saves for this game yet." }),
         el("button", { className: "btn btn-ghost", style: "margin-top:10px", textContent: "Cancel", onclick: () => o.remove() })));
-    document.body.append(o);
+    uiRoot().append(o);
   };
 
   // silent cloud auto-save (no toast) — on a timer and on exit, to "auto"
@@ -1715,7 +2107,11 @@ async function routePlayGame(sys, romParam, resume = false) {
     $("#player-load")?.remove();
     ptStart = Date.now();
     ping(true);
+    if (NP.role) npHookInput();   // re-wire input for a guest that joined mid-boot
     goLandscape();
+    applyPadPreset(sys);
+    padLayoutBtn.hidden = false;
+    padLayoutBtn.onclick = () => padLayoutPanel(sys);
     rememberSession({ sys, file, name: romName });
     window.__npSnapT = setInterval(() => snapshotNetplay(sys, file, romName), 4000);
     try { window.SSPlay && window.SSPlay.postMessage("1"); } catch { /* */ }
@@ -1784,7 +2180,7 @@ async function routePlayGame(sys, romParam, resume = false) {
             el("h3", { textContent: "Before you play" }),
             ...tips.map((t) => el("p", { textContent: t })),
             el("button", { className: "btn btn-ghost", textContent: "Got it", onclick: () => o.remove() })));
-        document.body.append(o);
+        uiRoot().append(o);
       };
     }
     window.__playSys = sys; window.__playFile = file;
@@ -1828,9 +2224,23 @@ async function routePlayGame(sys, romParam, resume = false) {
   };
   window.__emuFlush = flushPlaytime;
 
-  const s = el("script", { src: ejsBase + "loader.js" });
-  s.onerror = () => { const l = $("#player-load"); if (l) l.textContent = "Emulator failed to load (CDN blocked?)."; };
-  document.body.append(s);
+  // Load EmulatorJS. If the self-hosted copy fails (server unreachable), fall
+  // back to the public CDN; if that also fails, offer a retry instead of a
+  // dead "CDN blocked?" label.
+  const loadEjs = (base, isFallback) => {
+    window.EJS_pathtodata = base;
+    const s = el("script", { src: base + "loader.js" });
+    s.onerror = () => {
+      if (!isFallback) { npLog?.("ejs: local loader failed, trying CDN"); loadEjs("https://cdn.emulatorjs.org/stable/data/", true); return; }
+      const l = $("#player-load");
+      if (l) l.replaceChildren(
+        el("div", { textContent: "Emulator failed to load — the server or CDN is unreachable." }),
+        el("button", { className: "btn btn-primary", style: "margin-top:12px", textContent: "Retry",
+          onclick: () => location.reload() }));
+    };
+    document.body.append(s);
+  };
+  loadEjs(ejsBase, false);
 }
 function emuCleanup() {
   document.documentElement.classList.remove("playing");
@@ -1892,7 +2302,7 @@ function showInvite(inv) {
           onclick: () => { ackInvite(inv.id); o.remove(); location.hash = `#/watch/${inv.watch}`; } }),
         el("button", { className: "btn btn-ghost", textContent: "Not now",
           onclick: () => { ackInvite(inv.id); o.remove(); } }))));
-  document.body.append(o);
+  uiRoot().append(o);
 }
 async function invitePicker({ sys, file, name, watch }) {
   if (!NP.room) {
@@ -1922,8 +2332,11 @@ async function invitePicker({ sys, file, name, watch }) {
     el("h3", { textContent: "Invite someone" }),
     el("p", { className: "hint", textContent: "Anyone online can jump into this game." }),
     ...list,
+    el("button", { className: "btn btn-ghost", style: "display:block;width:100%;margin:6px 0", textContent: "🔗 Copy invite link",
+      title: "Share a link that opens this game and auto-joins the room",
+      onclick: () => copyInviteLink(sys, file, NP.room) }),
     el("button", { className: "btn btn-ghost", style: "margin-top:8px", textContent: "Cancel", onclick: () => o.remove() })));
-  document.body.append(o);
+  uiRoot().append(o);
 }
 function presenceTick() {
   if (!SELF_HOSTED && !API) return;
@@ -2127,7 +2540,7 @@ function controlsPanel(core) {
     el("div", { className: "cc-head" }, el("h3", { textContent: "Controller setup" }),
       el("button", { className: "cc-x", ariaLabel: "Close", textContent: "✕", onclick: close })),
     el("div", { className: "cc-body" }, svgWrap, mapWrap), hint));
-  document.body.append(panel);
+  uiRoot().append(panel);
   addEventListener("keydown", kd, true); addEventListener("keyup", ku, true); addEventListener("keydown", esc, true);
   render();
   poll();
@@ -2188,7 +2601,7 @@ async function movieDetail(it) {
         full.Overview && el("p", { className: "mv-ov", textContent: full.Overview }),
         el("a", { className: "btn btn-primary", href: jfOpen(full.Id), ...extTarget,
           textContent: IN_APP ? "Play in Jellyfin" : "Play in Jellyfin ↗" }))));
-  document.body.append(o);
+  uiRoot().append(o);
 }
 
 async function routeMovies() {
@@ -2762,6 +3175,29 @@ function refGrid(box, items, shown = PAGE) {
   hydrateCovers(resolve);
 }
 
+async function routeStatus() {
+  ++state.render;
+  document.title = "Status — RetroVerse";
+  const body = el("div", { className: "set-list" });
+  const row = (label, val, ok) => el("div", { className: "set-row" },
+    el("div", {}, el("div", { textContent: label })),
+    el("span", { style: ok === false ? "color:var(--pink);font-weight:700" : (ok ? "color:var(--cyan);font-weight:700" : ""), textContent: val }));
+  const check = async (label, url, pick) => {
+    try {
+      const r = await fetch(url, { cache: "no-store" });
+      const d = await r.json().catch(() => ({}));
+      body.append(row(label, r.ok ? pick(d) : `HTTP ${r.status}`, r.ok));
+    } catch { body.append(row(label, "unreachable", false)); }
+  };
+  view.replaceChildren(el("section", { className: "pane center" },
+    el("div", { className: "big-emoji", textContent: "📡" }),
+    el("h1", { textContent: "System status" }),
+    el("p", { className: "hint", textContent: "Live checks against the home server." }),
+    body));
+  await check("Arcade server", `${API}/health`, (d) => `up ${Math.round(d.uptime || 0)}s`);
+  await check("Netplay signalling", `${API}/np/health`, (d) => d.ok ? "ok" : "down");
+  await check("ROM service", `${API}/roms/health`, () => "ok");
+}
 async function routeStats() {
   ++state.render; spinner();
   await getSystems().catch(() => {});
@@ -2874,7 +3310,7 @@ function favTile(f) {
   const href = play
     ? `#/play/${f.sys}/${f.file.split("/").map(encodeURIComponent).join("/")}`
     : `#/g/${f.sys}/${f.id}`;
-  return el("a", { className: "tile wide", href }, art,
+  return el("a", { className: "tile wide", href, ariaLabel: f.name }, art,
     el("div", { className: "tile-cap" },
       el("div", { className: "t", textContent: f.name }),
       el("div", { className: "s", textContent: sysName(f.sys) })));
@@ -2946,7 +3382,7 @@ async function routeSaves() {
 async function routeCache() {
   ++state.render;
   document.title = "Offline & cache — RetroVerse";
-  const [st, ejs] = await Promise.all([romCacheStats(), ejsCacheStats()]);
+  const [st, ejs, bySys] = await Promise.all([romCacheStats(), ejsCacheStats(), romCacheBySys().catch(() => ({}))]);
   const pct = Math.min(100, st.bytes / ROM_CACHE_CAP * 100);
   const bar = el("div", { className: "dl-bar" }, el("i", { style: `width:${pct.toFixed(1)}%` }));
   const clearBtn = el("button", { className: "btn btn-ghost", textContent: "Clear ROM cache" });
@@ -2965,6 +3401,16 @@ async function routeCache() {
     el("p", { className: "hint", style: "margin:0 0 6px", textContent: `${st.count} ROM${st.count === 1 ? "" : "s"} cached · ${fmtBytes(st.bytes)} used` }),
     bar,
     el("div", { style: "margin-top:16px;display:flex;gap:10px;justify-content:center;flex-wrap:wrap" }, clearBtn),
+
+    section("Saved for offline", (() => {
+      const rows = Object.entries(bySys).sort((a, b) => b[1] - a[1]).slice(0, 24)
+        .map(([sid, n]) => el("a", { className: "set-row set-link", href: `#/play/${sid}` },
+          el("div", {}, el("div", { textContent: sysName(sid) }),
+            el("div", { className: "hint", textContent: `${n} game${n === 1 ? "" : "s"} cached` })),
+          el("span", { className: "set-chev", textContent: "›" })));
+      return rows.length ? el("div", { className: "set-list" }, ...rows)
+        : el("p", { className: "hint", style: "margin:0", textContent: "Nothing yet — open a playable console and tap “Save all for offline”." });
+    })()),
 
     section("Play offline", el("div", {},
       el("p", { className: "hint", style: "margin:0 0 6px" },
@@ -3071,6 +3517,7 @@ function settingsCard() {
             el("div", { className: "hint", textContent: "Shown to the other player when you host or join a room" })));
       })(),
       toggle("musicShuffle", "Shuffle albums by default", "Start an album shuffled when you hit Play"),
+      toggle("previewSound", "Game sound on home previews", "Play each showcase clip's own audio"),
       toggle("lite", "Lite mode", "Drop the scanlines, glow and animations"),
       toggle("playingToasts", "Show “people playing now” popups", ""),
       toggle("confirmOverwrite", "Confirm before overwriting a cloud save", ""),
@@ -3079,6 +3526,10 @@ function settingsCard() {
       el("a", { className: "set-row set-link", href: "#/cache" },
         el("div", {}, el("div", { textContent: "Offline & cache" }),
           el("div", { className: "hint", textContent: "Install the app, manage the ROM & emulator cache" })),
+        el("span", { className: "set-chev", textContent: "›" })),
+      el("a", { className: "set-row set-link", href: "#/status" },
+        el("div", {}, el("div", { textContent: "System status" }),
+          el("div", { className: "hint", textContent: "Server, netplay and ROM service health" })),
         el("span", { className: "set-chev", textContent: "›" }))),
     signedIn()
       ? el("div", { className: "hint", style: "margin-top:8px", textContent: "Settings are saved to your account and sync across devices." })
@@ -3247,14 +3698,18 @@ async function routeProfile() {
       if (Array.isArray(d.recent)) LS.set("recent", d.recent);
       if (d.playtime) LS.set("playtime", d.playtime);
       if (d.netplay) LS.set("netplay", d.netplay);
+      if (d.settings && typeof d.settings === "object") LS.set("settings", d.settings);
+      if (d.padPresets && typeof d.padPresets === "object") LS.set("padPresets", d.padPresets);
       toast("Imported — reloading"); setTimeout(() => location.reload(), 800);
     } catch { toast("That's not a valid export file"); }
   };
   frag.append(el("div", { className: "wrap", style: "padding:8px var(--pad) 40px;display:flex;gap:10px;flex-wrap:wrap" },
     el("a", { className: "btn btn-ghost", href: "#/cache", textContent: "Manage offline cache" }),
-    el("button", { className: "btn btn-ghost", textContent: "Export favorites & data", onclick: () => {
+    el("button", { className: "btn btn-ghost", textContent: "Export data", onclick: () => {
       const blob = new Blob([JSON.stringify({ favs: favList(), recent: recentList(),
-        playtime: LS.get("playtime", {}), exported: new Date().toISOString() }, null, 2)], { type: "application/json" });
+        playtime: LS.get("playtime", {}), settings: LS.get("settings", {}),
+        padPresets: LS.get("padPresets", null), netplay: LS.get("netplay", null),
+        exported: new Date().toISOString() }, null, 2)], { type: "application/json" });
       const a = el("a", { href: URL.createObjectURL(blob), download: "retroverse-profile.json" });
       document.body.append(a); a.click(); a.remove();
     } }),
@@ -3356,6 +3811,14 @@ async function router() {
     return;
   }
   if (!window.__emuUp && (!a || a === "play") && !b && maybeResumeSession()) return;
+  // ?join=<room> deep-link — a shared invite opens the game and auto-joins.
+  if (!window.__emuUp) {
+    const _join = new URLSearchParams(location.search).get("join");
+    if (_join && a === "play" && b && parts.length > 2) {
+      LS.set("joinNp", { sys: b, file: parts.slice(2).join("/"), room: _join, t: Date.now() });
+      try { history.replaceState(null, "", location.pathname + location.hash); } catch { /* */ }
+    }
+  }
   if (a !== "q") $("#bar-search").hidden = true;
   window.scrollTo(0, 0);
   document.title = "RetroVerse";
@@ -3374,6 +3837,7 @@ async function router() {
   if (a === "saves") { setNav(null); return routeSaves(); }
   if (a === "cache") { setNav(null); return routeCache(); }
   if (a === "profile") { setNav(null); return routeProfile(); }
+  if (a === "status") { setNav(null); return routeStatus(); }
   if (a === "login") { setNav(null); return routeLogin(); }
   if (a === "stats") { setNav(null); return routeStats(); }
   if (a === "admin") { setNav(null); return routeAdmin(); }
@@ -3457,7 +3921,7 @@ function renderAcctChip() {
   let c = $("#acct-chip");
   if (!c) {
     c = el("a", { id: "acct-chip", href: "#/profile", title: AUTH.user ? "Profile" : "Sign in" });
-    ($("#bar-right") || $("#bar")).prepend(c);
+    ($(".bar-left") || $("#bar")).prepend(c);   // sign-in lives top-left
   }
   c.replaceChildren(el("span", { className: "ac-av", textContent: AUTH.user ? AUTH.user.avatar : "👤" }),
     el("span", { className: "ac-name", textContent: AUTH.user ? AUTH.user.display : "Sign in" }));
@@ -3487,6 +3951,24 @@ let _kchord = 0;
 addEventListener("keydown", (e) => {
   if (window.__emuUp && e.key === "Escape") { e.preventDefault(); exitPlayer(); return; }
   if (/^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName) || window.__emuUp || e.metaKey || e.ctrlKey || e.altKey) return;
+  // roving focus across tiles: arrows move, Enter opens (Tab still works natively)
+  if (["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", "Enter"].includes(e.key)) {
+    const tiles = [...document.querySelectorAll("a.tile")].filter((t) => t.offsetParent !== null);
+    if (!tiles.length) return;
+    const i = tiles.indexOf(document.activeElement);
+    if (e.key === "Enter") { if (i >= 0) { e.preventDefault(); document.activeElement.click?.(); } return; }
+    if (i < 0) {
+      if (e.key === "ArrowDown" && document.activeElement === document.body) { e.preventDefault(); tiles[0].focus(); }
+      return;
+    }
+    const perRow = Math.max(1, tiles.filter((t) => Math.abs(t.offsetTop - tiles[i].offsetTop) < 4).length);
+    const step = e.key === "ArrowLeft" ? -1 : e.key === "ArrowRight" ? 1 : e.key === "ArrowUp" ? -perRow : perRow;
+    e.preventDefault();
+    const n = Math.min(tiles.length - 1, Math.max(0, i + step));
+    tiles[n].focus();
+    tiles[n].scrollIntoView({ block: "nearest", inline: "nearest" });
+    return;
+  }
   const now = Date.now();
   if (_kchord && now - _kchord < 900) {
     _kchord = 0;
@@ -3508,7 +3990,7 @@ function toggleHelp() {
       ...HELP.map(([k, d]) => el("div", { className: "help-row" },
         el("kbd", { textContent: k }), el("span", { textContent: d }))),
       el("button", { className: "btn btn-ghost", textContent: "Close", onclick: () => o.remove() })));
-  document.body.append(o);
+  uiRoot().append(o);
 }
 
 /* ---- Twitch LIVE badge -------------------------------------- */
@@ -3645,7 +4127,7 @@ if ("serviceWorker" in navigator) {
         setTimeout(doReload, 300);
         setTimeout(doReload, 2500);
       };
-      document.body.append(t);
+      uiRoot().append(t);
     };
 
     // idempotent — prompts whenever a new worker is installed and waiting

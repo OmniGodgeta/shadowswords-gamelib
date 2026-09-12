@@ -1074,6 +1074,12 @@ const server = http.createServer(async (req, res) => {
     const am = P.match(/^\/admin\/([a-z]+)$/);
     if (am) { if (rateLimited(req, res, 60, 60000)) return; admin(req, res, am[1], u0); return; }
 
+    // ---- health check (for app recovery probe) ----
+    if (P === "/health" && req.method === "GET") {
+      jsonRes(res, 200, { ok: true, uptime: Math.floor(process.uptime()), timestamp: now() });
+      return;
+    }
+
     // ---- WebRTC netplay signalling ----
     if (P === "/np/health" && req.method === "GET") { jsonRes(res, 200, { ok: true }); return; }
     if (P === "/np/room" && req.method === "POST") {

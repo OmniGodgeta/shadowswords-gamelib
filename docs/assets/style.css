@@ -110,11 +110,11 @@ h1, h2, h3 { letter-spacing: -.01em; }
 @media (max-width: 700px) { #acct-chip .ac-name { display: none; } #acct-chip { padding: 6px; } }
 @media (max-width: 560px) {
   #acct-chip { display: flex; padding: 6px; } /* icon only — Sign in / profile */
-  .brand .logo { height: 30px; }
+  .brand .logo { height: 46px; }
   .bar { gap: 4px; padding: 0 8px; }
   .bar-btn { width: 34px; height: 34px; font-size: 17px; }
 }
-@media (max-width: 420px) { .brand .logo { height: 26px; } }
+@media (max-width: 420px) { .brand .logo { height: 40px; } }
 .bar-search {
   position: absolute; inset: 0; z-index: 2; display: flex; align-items: center;
   padding: 0 clamp(10px, 3vw, 24px); background: var(--bg);
@@ -337,6 +337,8 @@ body.lite .shelf-track > .tile, body.lite .tile-grid > .tile { animation: none; 
   font-size: 10px; font-weight: 900; letter-spacing: .08em; text-transform: uppercase;
   background: var(--pink); color: #fff; box-shadow: var(--glow-pink);
 }
+.tile-art .badge.offline { top: auto; bottom: 8px; background: var(--cyan); color: #041018; box-shadow: var(--glow-cyan); }
+.shelf-note { margin: -4px 0 12px; font-size: 12px; }
 .tile-cap { padding: 9px 4px 2px; }
 .tile-cap .t {
   font-size: 13px; font-weight: 700; line-height: 1.25;
@@ -481,7 +483,7 @@ body.lite .shelf-track > .tile, body.lite .tile-grid > .tile { animation: none; 
 }
 .player-bar .exit:hover { box-shadow: var(--glow-pink); }
 .player-bar .exit:disabled { opacity: .6; cursor: default; }
-.player-bar .title { font-weight: 700; font-size: 13px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.player-bar .title { font-weight: 700; font-size: 13px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
 .player-stage { flex: 1; position: relative; min-height: 0; }
 .player-stage #game { width: 100%; height: 100%; }
 .player-load { position: absolute; inset: 0; display: grid; place-items: center; color: var(--cyan); font-size: 13px; letter-spacing: .12em; text-transform: uppercase; text-align: center; padding: 20px; }
@@ -990,6 +992,8 @@ body.lite .pad-row.listening .pr-chip { animation: none; border-style: dashed; }
   letter-spacing: .03em; color: var(--muted); transition: color .12s, background .12s, box-shadow .12s;
 }
 .sc-tg.on { color: #04121b; background: var(--cyan); box-shadow: var(--glow-cyan); }
+.sc-tg.sc-snd { color: var(--gold); }
+.sc-tg.sc-snd:hover { box-shadow: 0 0 12px rgba(255,210,61,.35); }
 
 /* art-gallery mode: the hero collapses to just its text and an era-ordered
    filmstrip becomes a full-width band beneath it */
@@ -1144,16 +1148,18 @@ body.lite .pad-row.listening .pr-chip { animation: none; border-style: dashed; }
 .ejs_virtualGamepad_parent {
   transform: none !important;
   filter: none !important;
-  bottom: 12px !important;
+  bottom: var(--pad-bottom, 12px) !important;
+  opacity: var(--pad-opacity, 1) !important;
 }
 .ejs_virtualGamepad_left,
 .ejs_virtualGamepad_right {
   width: 168px !important;
   height: 160px !important;
   bottom: 28px !important;
+  transform: scale(var(--pad-scale, 1)) !important;
 }
-.ejs_virtualGamepad_left { left: 8px !important; }
-.ejs_virtualGamepad_right { right: 8px !important; }
+.ejs_virtualGamepad_left { left: 8px !important; transform-origin: bottom left !important; }
+.ejs_virtualGamepad_right { right: 8px !important; transform-origin: bottom right !important; }
 .ejs_virtualGamepad_button {
   width: 48px !important;
   height: 48px !important;
@@ -1237,7 +1243,10 @@ html.in-app.playing .drawer { display: none !important; }
   position: absolute; top: 0; left: 0; right: 0; z-index: 5;
   transform: translateY(-110%);
   transition: transform .18s ease;
+  flex-wrap: nowrap; overflow-x: auto; overflow-y: hidden;
+  scrollbar-width: none;
 }
+.player.in-app-player .player-bar::-webkit-scrollbar { display: none; }
 .player.in-app-player.show-chrome .player-bar { transform: none; }
 .player.in-app-player .fab-exit {
   position: absolute; top: max(8px, env(safe-area-inset-top)); left: max(8px, env(safe-area-inset-left));
@@ -1247,9 +1256,23 @@ html.in-app.playing .drawer { display: none !important; }
 }
 .player.in-app-player .chrome-peek {
   position: absolute; top: 0; left: 50%; transform: translateX(-50%);
-  z-index: 7; width: 56px; height: 16px; border-radius: 0 0 10px 10px;
-  background: rgba(255,255,255,.18); border: 0;
+  z-index: 7; width: 112px; height: 32px; border-radius: 0 0 14px 14px;
+  background: rgba(255,255,255,.24); border: 0;
+  color: rgba(255,255,255,.9); font-size: 15px; line-height: 1;
+  display: grid; place-items: center;
 }
+.player.in-app-player .chrome-peek::after { content: "▾"; margin-top: 5px; }
+/* EmulatorJS's own top-right hamburger, repurposed by app.js to open the control
+   bar — make it a real tappable button, and fade it while the bar is down. */
+.player.in-app-player .ejs_virtualGamepad_open {
+  width: 38px !important; height: 38px !important;
+  top: max(6px, env(safe-area-inset-top)) !important;
+  right: max(6px, env(safe-area-inset-right)) !important;
+  padding: 9px !important; border-radius: 10px;
+  background: rgba(6,6,12,.72); border: 1px solid rgba(255,255,255,.28);
+  color: #fff; opacity: .9 !important; z-index: 1000 !important;
+}
+.player.in-app-player.show-chrome .ejs_virtualGamepad_open { opacity: 0 !important; pointer-events: none; }
 .player.in-app-player .fab-pad {
   position: absolute;
   top: auto; right: auto;
@@ -1288,3 +1311,18 @@ html.in-app .cc-body { grid-template-columns: 1fr; overflow: auto; }
 html.in-app .pad-row { grid-template-columns: 1fr 96px 88px; min-height: 44px; }
 html.in-app .pr-chip { min-height: 40px; font-size: 13px; }
 #invite-overlay { position: fixed; inset: 0; z-index: 400; display: grid; place-items: center; background: rgba(7,7,13,.8); backdrop-filter: blur(4px); }
+
+/* ---- accessibility ------------------------------------------------------- */
+a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible, [tabindex]:focus-visible {
+  outline: 2px solid var(--cyan);
+  outline-offset: 2px;
+  border-radius: 6px;
+}
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: .001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: .001ms !important;
+    scroll-behavior: auto !important;
+  }
+}
