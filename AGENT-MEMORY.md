@@ -10,6 +10,9 @@ this. (Netplay internals: `NETPLAY-UI-CONTRACT.md`. Roadmap split:
 
 ## Session 2026-09-12 — final handoff recovery
 
+- **Desktop navigation:** removed the left rail entirely. Favorites and Cloud
+  saves belong under Profile; Netplay is reached from Play/in-game. Keep the
+  hamburger drawer intact for its mobile navigation.
 - **Mobile drawer:** SVG taps are stopped before the document-level outside-click
   handler runs. `toggleDrawer()` owns its hidden state and keeps
   `#menu-btn[aria-expanded]` correct; drawer links and genuine outside taps

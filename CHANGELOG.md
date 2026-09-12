@@ -2,6 +2,13 @@
 
 All notable changes to the RetroVerse website.
 
+## [2.22.26] — 2026-09-12 — Simplify desktop navigation
+
+### Changed
+
+- Removed the redundant desktop left rail. Favorites and Cloud saves remain in
+  Profile, while Netplay remains available from Play and in-game.
+
 ## [2.22.25] — 2026-09-12 — Reliable mobile menu
 
 ### Fixed

@@ -127,27 +127,6 @@ h1, h2, h3 { letter-spacing: -.01em; }
 }
 
 /* mobile drawer */
-/* Desktop: a persistent left rail for the secondary sections (mobile keeps the
-   hamburger drawer). Aligned to the top of the first content section. */
-.side-nav { display: none; }
-@media (min-width: 1024px) {
-  .side-nav {
-    display: flex; flex-direction: column; gap: 2px;
-    position: fixed; left: 0; top: var(--bar-h); bottom: 0;
-    width: 188px; padding: 22px 12px 24px; overflow-y: auto;
-    border-right: 1px solid var(--line);
-    background: linear-gradient(180deg, rgba(9,9,20,.72), rgba(7,7,13,.4));
-    backdrop-filter: blur(8px); z-index: 30;
-  }
-  .side-nav a {
-    padding: 11px 14px; border-radius: 10px; color: var(--muted);
-    font-weight: 800; font-size: 13px; letter-spacing: .02em; text-decoration: none;
-    transition: color .12s, background .12s;
-  }
-  .side-nav a:hover { color: var(--cyan); background: rgba(34,224,255,.07); }
-  .side-nav a.active { color: #fff; background: rgba(34,224,255,.12); }
-  main, .foot { padding-left: 188px; }
-}
 .drawer {
   position: fixed; inset: var(--bar-h) 0 auto 0; z-index: 39;
   display: flex; flex-direction: column;
