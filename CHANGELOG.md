@@ -2,6 +2,13 @@
 
 All notable changes to the RetroVerse website.
 
+## [2.22.30] — 2026-09-12 — Use active tailnet hostname
+
+### Fixed
+
+- Restored the active `retroverse.tail51f9d6.ts.net` origin for API, login,
+  ROM, music, save, and netplay requests.
+
 ## [2.22.29] — 2026-09-12 — Restore the original tailnet origin
 
 ### Fixed
