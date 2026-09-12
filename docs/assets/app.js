@@ -2276,8 +2276,6 @@ async function routePlayGame(sys, romParam, resume = false) {
   window.__emuUp = true;
   document.documentElement.classList.add("playing");
   if (MP.ai && !MP.ai.paused) { MP.ai.pause(); toast("Music paused for the game"); }
-  await getSystems().catch(() => {});
-
   const loadEl = el("div", { className: "player-load", id: "player-load" }, "Booting emulator…");
   const saveBtn = el("button", { className: "pbtn", id: "cloud-save", textContent: "☁ Save", title: "Save state (right-click / long-press to name a slot)", hidden: true });
   const saveAsBtn = el("button", { className: "pbtn", id: "cloud-save-as", textContent: "＋", title: "Save to a named slot", hidden: true });
@@ -2351,7 +2349,8 @@ async function routePlayGame(sys, romParam, resume = false) {
       });
       loadEl.replaceChildren("Booting emulator…");
     }
-  } catch {
+  } catch (e) {
+    console.error("RetroVerse emulator boot failed", { sys, file, error: e });
     loadEl.textContent = "Couldn't load that ROM — go back and try another.";
     return;
   }

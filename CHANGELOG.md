@@ -2,6 +2,13 @@
 
 All notable changes to the RetroVerse website.
 
+## [2.22.32] — 2026-09-12 — Expose emulator load diagnostics
+
+### Fixed
+
+- Emulator boot failures now log the system, file, and underlying error instead
+  of silently collapsing every failure into the same generic message.
+
 ## [2.22.31] — 2026-09-12 — Load game metadata before boot
 
 ### Fixed
