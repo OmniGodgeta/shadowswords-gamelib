@@ -1673,9 +1673,9 @@ async function routeLounge() {
       loungeChat())));
 }
 
-// Shared lounge chat. Polls GET /chat; POST /chat to send. Kept deliberately
-// self-contained so it can be reused for a floating party-chat window later.
-function loungeChat() {
+// Shared lounge chat. Polls GET /chat; POST /chat to send. The same widget is
+// used by the Lounge page and the optional floating party-chat window.
+function chatWidget() {
   const list = el("div", { className: "chat-log" });
   const input = el("input", { type: "text", placeholder: "Say something…", maxLength: 500, className: "chat-input" });
   const send = el("button", { className: "btn btn-primary sm", textContent: "Send" });
@@ -1711,6 +1711,25 @@ function loungeChat() {
   obs.observe(document.body, { childList: true, subtree: true });
   poll();
   return box;
+}
+const loungeChat = () => chatWidget();
+
+let partyChatPanel = null;
+function closePartyChat() {
+  partyChatPanel?.remove(); partyChatPanel = null;
+  const fab = $("#party-chat-fab");
+  if (fab) fab.setAttribute("aria-expanded", "false");
+}
+function openPartyChat() {
+  if (partyChatPanel?.isConnected) { closePartyChat(); return; }
+  const close = el("button", { type: "button", className: "party-chat-close", textContent: "×", ariaLabel: "Close party chat", title: "Close" });
+  close.onclick = closePartyChat;
+  partyChatPanel = el("section", { className: "party-chat", role: "dialog", ariaLabel: "Party chat" },
+    el("div", { className: "party-chat-head" }, el("strong", { textContent: "Party chat" }), close),
+    chatWidget());
+  document.body.append(partyChatPanel);
+  $("#party-chat-fab")?.setAttribute("aria-expanded", "true");
+  partyChatPanel.querySelector("input")?.focus();
 }
 
 async function routeLibrary() {
@@ -4264,6 +4283,7 @@ window.addEventListener("hashchange", router);
 $("#back-btn").onclick = () => (history.length > 1 ? history.back() : (location.hash = "#/"));
 const drawer = $("#drawer");
 $("#menu-btn").onclick = () => { drawer.hidden = !drawer.hidden; };
+$("#party-chat-fab").onclick = openPartyChat;
 drawer.addEventListener("click", (e) => { if (e.target.tagName === "A") drawer.hidden = true; });
 document.addEventListener("click", (e) => {
   if (!drawer.hidden && !drawer.contains(e.target) && e.target.id !== "menu-btn") drawer.hidden = true;

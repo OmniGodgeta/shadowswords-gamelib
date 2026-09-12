@@ -2,6 +2,14 @@
 
 All notable changes to the RetroVerse website.
 
+## [2.22.23] — 2026-09-12 — Floating party chat
+
+### Added
+
+- **Floating party chat** — the Lounge chat now opens from a persistent Chat
+  button while browsing. It uses the existing `/chat` feed and automatically
+  stays out of the way while a game is running.
+
 ## [2.22.22] — 2026-09-12 — Popular-games backdrop, shelves, sidebar, lounge chat
 
 ### Added
