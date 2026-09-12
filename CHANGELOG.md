@@ -2,6 +2,16 @@
 
 All notable changes to the RetroVerse website.
 
+## [2.22.20] — 2026-09-12 — Native netplay invites (app bridge)
+
+### Added
+
+- The site hands its presence id + origin to the Android app via a new `SSNotify`
+  JS channel (`notifyApp()` on load / prefs / auth). The app polls
+  `/play/invites` natively while backgrounded and posts a notification that
+  deep-links into the join URL. See `../Work/shadowswords` (MainActivity
+  `startInviteWatch` + `openInvite`).
+
 ## [2.22.19] — 2026-09-11 — Push-to-talk + WebRTC watch party
 
 ### Added

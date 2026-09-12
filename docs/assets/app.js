@@ -890,6 +890,15 @@ const CID = (() => {
     return c;
   } catch { return "anon"; }
 })();
+// In the Android app, hand our presence id to the native side so it can watch
+// for netplay invites natively while the WebView is backgrounded/throttled.
+function notifyApp() {
+  if (!window.SSNotify) return;
+  try { window.SSNotify.postMessage(JSON.stringify({ cid: CID, origin: location.origin, on: prefs().netplay !== false })); } catch { /* */ }
+}
+addEventListener("ssw-prefs", notifyApp);
+addEventListener("ssw-auth", notifyApp);
+addEventListener("load", () => setTimeout(notifyApp, 800));
 const ROM_CACHE_CAP = 1610612736;                                 // 1.5 GiB IndexedDB budget
 const ROM_CACHE_MAX_ITEM = 805306368;                             // don't cache a single file bigger than 768 MiB
 const YT_CHANNEL = "https://www.youtube.com/@shadowswordsttv";

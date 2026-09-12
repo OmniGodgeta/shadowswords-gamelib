@@ -399,6 +399,11 @@ quitting the game; Player 2 has no controls; host **Sync** toasts "Sync failed".
     canvas + game audio, watcher `wnpStartWatch()` plays it; `/watch` entries
     carry a `room` field. The JPEG still-frame path is the fallback — keep it, or
     a watcher on a browser without the stream sees nothing.
+11. **Native netplay invites (v2.22.20).** `notifyApp()` posts `{cid, origin, on}`
+    to the app's `SSNotify` channel (load / `ssw-prefs` / `ssw-auth`). The app
+    polls `/play/invites` natively while backgrounded and deep-links the join
+    URL back. If you rename the channel or the payload keys, update
+    `shadowswords/lib/main.dart` and `MainActivity.kt` together.
 
 **Testing Player 2:** use a game with **simultaneous** 2P. DKC (SNES) is not
 one — 1-Player ignores controller 2, and "2 Player Team" only hands control to
