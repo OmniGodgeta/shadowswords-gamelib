@@ -99,6 +99,9 @@ this. (Netplay internals: `NETPLAY-UI-CONTRACT.md`. Roadmap split:
   `openNetplaySheet()` calling the locally scoped `ping()` function. The
   presence ping is now exposed as `window.__playPing`, and invite failures
   include diagnostics.
+- Version `2.87` hardens SDP handling for reconnects, adds a ready handshake,
+  and exposes peer/ICE state in timeout diagnostics. Stale offers are ignored
+  according to host/guest role.
 
 ---
 

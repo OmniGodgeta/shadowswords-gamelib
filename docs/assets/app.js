@@ -287,6 +287,7 @@ function npBindDc(dc) {
     npIndicator();
     _npReconnect = 0;
     NP.meReady = false; NP.peerReady = false;
+    try { dc.send(JSON.stringify({ t: "ready", r: true, role: NP.role })); NP.meReady = true; } catch (e) { npLog(`ready send failed: ${e?.message || e}`); }
     npHookInput();
     toast(NP.role === "host" ? "P2 can join — you are Player 1" : "Linked — you are Player 2");
     // The host is the reference. Push its screen to the guest once on link-up,
@@ -327,6 +328,7 @@ function npBindDc(dc) {
     npIndicator();
     if (NP.alive) { toast("Netplay disconnected"); npScheduleReconnect(); }
   };
+  dc.onerror = (e) => npLog(`dc error ${e?.error?.message || e?.message || "unknown"}`);
   dc.onmessage = (e) => {
     if (typeof e.data !== "string") {
       // Savestate bytes. A state can be far larger than the datachannel's max
@@ -513,10 +515,13 @@ function npStartPc(isHost) {
   NP.pc.oniceconnectionstatechange = () => {
     npLog(`ice ${NP.pc.iceConnectionState}`);
     if (NP.pc.iceConnectionState === "failed") toast("Netplay link failed — try again");
+    if (NP.pc.iceConnectionState === "disconnected") toast("Netplay connection interrupted — reconnecting");
   };
   NP.pc.onconnectionstatechange = () => {
     npLog(`pc ${NP.pc.connectionState}`);
+    npIndicator();
     if (NP.pc.connectionState === "connected" && NP.role === "host" && !NP.video) setTimeout(() => npSendState(), 300);
+    if (NP.pc.connectionState === "failed") npLog("peer connection failed; check both devices are on the Tailnet");
   };
   NP.pc.ontrack = (e) => {
     npLog(`track ${e.track.kind}`);
@@ -551,12 +556,26 @@ async function npHandleSig(m) {
   const pl = m.payload;
   if (pl.sdp) {
     const desc = pl.sdp;
-    if (NP.pc.signalingState === "stable" && desc.type === "answer") return;
+    const state = NP.pc.signalingState;
+    if (desc.type === "offer" && NP.role !== "guest") {
+      npLog(`ignored offer for ${NP.role || "unknown"}`);
+      return;
+    }
+    if (desc.type === "answer" && (NP.role !== "host" || state !== "have-local-offer")) {
+      npLog(`ignored stale answer state=${state}`);
+      return;
+    }
+    if (desc.type === "offer" && state !== "stable") {
+      npLog(`ignored stale offer state=${state}`);
+      return;
+    }
+    npLog(`apply ${desc.type} state=${state}`);
     await NP.pc.setRemoteDescription(desc);
     if (desc.type === "offer") {
       const ans = await NP.pc.createAnswer();
       await NP.pc.setLocalDescription(ans);
       npSendLocalSdp();
+      npLog("answer sent");
     }
   }
   if (pl.ice) {
@@ -564,11 +583,15 @@ async function npHandleSig(m) {
       NP.pendingIce.push(pl.ice);
       return;
     }
-    await NP.pc.addIceCandidate(pl.ice);
+    try { await NP.pc.addIceCandidate(pl.ice); }
+    catch (e) { npLog(`ice candidate rejected: ${e?.message || e}`); }
   }
   if (NP.pc.remoteDescription && NP.pendingIce.length) {
     const pending = NP.pendingIce.splice(0);
-    for (const ice of pending) await NP.pc.addIceCandidate(ice);
+    for (const ice of pending) {
+      try { await NP.pc.addIceCandidate(ice); }
+      catch (e) { npLog(`queued ice rejected: ${e?.message || e}`); }
+    }
   }
 }
 function npPoll() {
@@ -649,7 +672,11 @@ function npWaitLinked(ms = 25000) {
     const iv = setInterval(() => {
       if (NP.dc && NP.dc.readyState === "open") { clearInterval(iv); resolve(); }
       else if (NP.pc && NP.pc.connectionState === "failed") { clearInterval(iv); reject(new Error("ice failed")); }
-      else if (Date.now() - t0 > ms) { clearInterval(iv); reject(new Error("timeout")); }
+      else if (Date.now() - t0 > ms) {
+        clearInterval(iv);
+        npLog(`link timeout pc=${NP.pc?.connectionState || "-"} ice=${NP.pc?.iceConnectionState || "-"} dc=${NP.dc?.readyState || "-"}`);
+        reject(new Error(`timeout (pc ${NP.pc?.connectionState || "unknown"}, ICE ${NP.pc?.iceConnectionState || "unknown"})`));
+      }
     }, 200);
   });
 }
@@ -665,7 +692,7 @@ async function npJoin(room) {
   NP.room = room; NP.role = "guest"; NP.myP = 1; NP.after = 0; NP.alive = true;
   window.__npRoom = room;
   rememberSession({ room, np: true, role: "guest" });
-  npLog(`join room ${room}`);
+  npLog(`join room ${room} signals=${info.after || 0}`);
   npStartPc(false);
   npPoll();
   npIndicator();

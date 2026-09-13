@@ -1,5 +1,13 @@
 # Changelog
 
+## 2.87
+- Hardened invite netplay signaling against stale SDP offers and answers from
+  reconnects by enforcing host/guest signaling roles and states.
+- Added explicit data-channel ready handshakes and detailed peer/ICE timeout
+  diagnostics.
+- ICE candidate failures are now logged individually instead of aborting the
+  rest of the signaling exchange.
+
 ## 2.86
 - Fixed Netplay room creation failing with `ping is not defined`: the play
   presence ping is now exposed for controls outside the emulator-start scope.
