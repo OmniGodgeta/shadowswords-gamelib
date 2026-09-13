@@ -823,13 +823,14 @@ function playStats(req, res) {
     .map(({ sys, file, name, n, issues }) => ({ sys, file, name, n, issues }));
   const cutoff = now() - 90000;
   const live = Object.values(s.sessions).filter((x) => x.at > cutoff);
+  const roomLive = (room) => !room || (NP_SIG.has(room) && NP_SIG.get(room).at > cutoff);
   const playing = live.filter((x) => x.game);
   const pack = (x) => ({
     cid: x.cid || null, uid: x.uid || null,
     who: x.who || "Someone",
     game: x.game || null,
     sys: x.sys || null, file: x.file || null,
-    watch: x.watch || null, netplay: !!x.netplay, room: x.room || null, idle: !x.game,
+    watch: x.watch || null, netplay: !!x.netplay && roomLive(x.room), room: roomLive(x.room) ? (x.room || null) : null, idle: !x.game,
   });
   jsonRes(res, 200, { top, trending, reported, playingNow: playing.length,
     nowPlaying: playing.map(pack).slice(0, 16),
@@ -1084,7 +1085,7 @@ const server = http.createServer(async (req, res) => {
     }
 
     // ---- WebRTC netplay signalling ----
-    if (P === "/np/health" && req.method === "GET") { jsonRes(res, 200, { ok: true }); return; }
+    if (P === "/np/health" && req.method === "GET") { jsonRes(res, 200, { ok: true, rooms: NP_SIG.size }); return; }
     if (P === "/np/room" && req.method === "POST") {
       if (rateLimited(req, res, 30, 60000)) return;
       let b = {};
@@ -1112,6 +1113,7 @@ const server = http.createServer(async (req, res) => {
       const after = +u0.searchParams.get("after") || 0;
       const r = NP_SIG.get(room);
       if (!r) { jsonRes(res, 404, { error: "no room" }); return; }
+      if (r.at < now() - 30 * 60 * 1000) { NP_SIG.delete(room); jsonRes(res, 404, { error: "room expired" }); return; }
       jsonRes(res, 200, { host: r.host, sys: r.sys, file: r.file, name: r.name,
         after: r.n, msgs: r.msgs.filter((m) => m.n > after) });
       return;

@@ -2,6 +2,22 @@
 
 All notable changes to the RetroVerse website.
 
+## [2.22.34] — 2026-09-12 — Room fallback and connection diagnostics
+
+### Added
+
+- **Manual room join:** Play/Netplay accepts a room code when an automatic
+  invite or presence card is unavailable.
+- **Room lifecycle status:** active-room counts and clearer waiting/connected
+  states make Player 1 and Player 2 roles visible.
+- **Cloud-save diagnostics:** the status page checks cloud-save access and
+  failed uploads explain authentication, size, or server errors.
+
+### Fixed
+
+- Expired netplay rooms are removed from presence results and rejected when
+  requested directly, preventing stale Join buttons.
+
 ## [2.22.33] — 2026-09-12 — Play lobby and reliable cloud saves
 
 ### Added

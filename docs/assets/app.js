@@ -234,6 +234,12 @@ function npIndicator() {
   }
   b.textContent = text;
 }
+function npRoomStatus() {
+  if (!NP.room) return "No room";
+  if (NP.role === "host" && NP.dc?.readyState === "open") return "Connected · Player 1";
+  if (NP.role === "guest" && NP.dc?.readyState === "open") return "Connected · Player 2";
+  return NP.role === "host" ? "Waiting for Player 2" : "Connecting to room";
+}
 function npCore(p, i, v) {
   const fn = window.EJS_emulator?.gameManager?.functions?.simulateInput;
   if (typeof fn === "function") fn(p, i, v);
@@ -1992,12 +1998,31 @@ async function routeNetplay() {
     el("li", { textContent: "You and a friend both open the same game on the tailnet." }),
     el("li", { textContent: "Click Netplay in the top bar (or the globe in the emulator menu)." }),
     el("li", { textContent: "One person creates a room; the other hits Join. Same ROM, same core — that's it." }));
+  const roomInput = el("input", { className: "chat-input", placeholder: "Paste a room code", inputMode: "text", spellcheck: false });
+  const roomStatus = el("p", { className: "hint", textContent: "Room codes expire when the host has been away for 30 minutes." });
+  const joinRoom = async () => {
+    const room = roomInput.value.trim();
+    if (!/^[0-9a-f]{4,32}$/i.test(room)) { roomStatus.textContent = "Enter a valid room code."; roomStatus.style.color = "var(--pink)"; return; }
+    try {
+      const d = await fetch(`${API}/np/sig?room=${encodeURIComponent(room)}`, { cache: "no-store" }).then((r) => {
+        if (!r.ok) throw new Error("Room expired or unavailable");
+        return r.json();
+      });
+      if (!d.sys || !d.file) throw new Error("Room has no game");
+      LS.set("joinNp", { sys: d.sys, file: d.file, room, t: Date.now() });
+      location.hash = `#/play/${d.sys}/${d.file.split("/").map(encodeURIComponent).join("/")}`;
+    } catch (e) { roomStatus.textContent = e.message; roomStatus.style.color = "var(--pink)"; }
+  };
+  roomInput.onkeydown = (e) => { if (e.key === "Enter") joinRoom(); };
   view.replaceChildren(el("section", { className: "pane", style: "max-width:720px;margin:0 auto;padding:28px var(--pad) 60px" },
     el("div", { className: "big-emoji", textContent: "🌐" }),
     el("h1", { textContent: "Play with a friend" }),
     el("p", { textContent: "Netplay is peer-to-peer on the tailnet. Host taps Netplay (Player 1), then Invite. Guest taps Join room and is Player 2. No savestate freeze on every input." }),
     status, steps,
     el("p", { className: "hint", textContent: "Works great for NES, SNES, Genesis, GB/GBA, and most 2D systems. Heavier cores (N64, PSX, NDS) are laggy unless you're on a fast local link." }),
+    el("h2", { textContent: "Join with a room code", style: "margin-top:24px" }),
+    el("div", { className: "chat-row" }, roomInput, el("button", { className: "btn btn-primary", textContent: "Join", onclick: joinRoom })),
+    roomStatus,
     el("div", { style: "display:flex;gap:10px;flex-wrap:wrap;margin-top:18px" },
       el("a", { className: "btn btn-primary", href: "#/play", textContent: "Pick a game" }),
       el("a", { className: "btn btn-ghost", href: "#/profile", textContent: "Netplay name & settings" }))));
@@ -2416,6 +2441,8 @@ async function routePlayGame(sys, romParam, resume = false) {
   const slotUrl = (slot) => key + "?s=" + encodeURIComponent(slot || "auto") + (AUTH.token ? "&a=" + encodeURIComponent(AUTH.token) : "");
   const wantResume = resume || prefs().autoResume;
   let hasCloudSave = false;
+  let lastSaveAt = 0;
+  let lastSaveError = "";
   if (key && wantResume) {
     try { hasCloudSave = (await fetch(slotUrl("auto"), { method: "HEAD", headers: authHdr() })).ok; } catch { /* offline */ }
   }
@@ -2428,8 +2455,15 @@ async function routePlayGame(sys, romParam, resume = false) {
       headers: { "content-type": "application/octet-stream", ...tokenHdr(), ...authHdr() },
       body: gm.getState(),
     });
-    if (!response.ok) throw new Error(`save upload returned ${response.status}`);
+    if (!response.ok) {
+      lastSaveError = response.status === 401 ? "Sign in or update your access token"
+        : response.status === 413 ? "Save state is too large"
+          : `Server returned HTTP ${response.status}`;
+      throw new Error(lastSaveError);
+    }
     hasCloudSave = true;
+    lastSaveAt = Date.now();
+    lastSaveError = "";
       const canvas = document.querySelector("#game canvas");
       if (canvas && canvas.toBlob) {
         canvas.toBlob((blob) => {
@@ -2439,16 +2473,22 @@ async function routePlayGame(sys, romParam, resume = false) {
         }, "image/jpeg", 0.72);
       }
       return true;
-    } catch { return false; }
+    } catch (e) {
+      lastSaveError = e.message || "Server unreachable";
+      return false;
+    }
   };
+  const saveFailure = () => lastSaveError
+    ? `Cloud save failed — ${lastSaveError}. Check Settings → Access token or /#/status.`
+    : "Cloud save failed — check /#/status.";
   const cloudSave = async () => {
     if (prefs().confirmOverwrite && hasCloudSave && !confirm("Overwrite your “auto” cloud save?")) return;
-    toast(await putSlot("auto") ? "Saved to the server ☁" : "Cloud save failed");
+    toast(await putSlot("auto") ? `Saved to the server ☁${lastSaveAt ? ` · ${new Date(lastSaveAt).toLocaleTimeString()}` : ""}` : saveFailure());
   };
   const cloudSaveAs = async () => {
     const name = (prompt("Name this save slot (e.g. “before boss”):", "") || "").trim().replace(/[^a-z0-9_ -]/gi, "").slice(0, 24);
     if (!name || name === "auto") return;
-    toast(await putSlot(name) ? `Saved to “${name}” ☁` : "Cloud save failed");
+    toast(await putSlot(name) ? `Saved to “${name}” ☁` : saveFailure());
   };
   const cloudLoad = async (slot) => {
     const gm = window.EJS_emulator?.gameManager;
@@ -3618,9 +3658,9 @@ async function routeStatus() {
   const row = (label, val, ok) => el("div", { className: "set-row" },
     el("div", {}, el("div", { textContent: label })),
     el("span", { style: ok === false ? "color:var(--pink);font-weight:700" : (ok ? "color:var(--cyan);font-weight:700" : ""), textContent: val }));
-  const check = async (label, url, pick) => {
+  const check = async (label, url, pick, headers) => {
     try {
-      const r = await fetch(url, { cache: "no-store" });
+      const r = await fetch(url, { cache: "no-store", headers });
       const d = await r.json().catch(() => ({}));
       body.append(row(label, r.ok ? pick(d) : `HTTP ${r.status}`, r.ok));
     } catch { body.append(row(label, "unreachable", false)); }
@@ -3631,8 +3671,9 @@ async function routeStatus() {
     el("p", { className: "hint", textContent: "Live checks against the home server." }),
     body));
   await check("Arcade server", `${API}/health`, (d) => `up ${Math.round(d.uptime || 0)}s`);
-  await check("Netplay signalling", `${API}/np/health`, (d) => d.ok ? "ok" : "down");
+  await check("Netplay signalling", `${API}/np/health`, (d) => d.ok ? `ok · ${d.rooms || 0} active rooms` : "down");
   await check("ROM service", `${API}/roms/health`, () => "ok");
+  await check("Cloud saves", `${STATE_BASE}list`, (d) => `${Array.isArray(d) ? d.length : 0} saved games`, authHdr());
 }
 async function routeStats() {
   ++state.render; spinner();
