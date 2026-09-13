@@ -206,7 +206,7 @@ function snapshotNetplay(sys, file, name) {
 }
 /* WebRTC netplay — replaces EmulatorJS's broken savestate lockstep.
    Host = player 1, guest = player 2. Inputs ride a datachannel on the tailnet. */
-const NP = { role: null, room: null, pc: null, dc: null, myP: 0, after: 0, pollT: 0, pollFails: 0, alive: false, pendingIce: [], rxId: null, rxLen: 0, rxGot: 0, rxChunks: [], txBusy: false, syncT: 0, sent: 0, recv: 0, inputsSent: 0, inputsApplied: 0, video: false, hostStream: null, mic: null, micTrack: null, micSender: null, remoteAudio: null, pingT: 0, rtt: 0, meReady: false, peerReady: false, micMuted: false };
+const NP = { role: null, peerRole: null, room: null, pc: null, dc: null, myP: 0, after: 0, pollT: 0, pollFails: 0, reconnectT: 0, alive: false, pendingIce: [], rxId: null, rxLen: 0, rxGot: 0, rxChunks: [], txBusy: false, syncPromise: null, lastSyncError: "", syncT: 0, sent: 0, recv: 0, inputsSent: 0, inputsApplied: 0, video: false, hostStream: null, mic: null, micTrack: null, micSender: null, remoteAudio: null, pingT: 0, rtt: 0, meReady: false, peerReady: false, micMuted: false };
 
 // Netplay diagnostics: kept in memory and shown in the Netplay sheet so a
 // failure can be read off a phone with no devtools.
@@ -226,7 +226,7 @@ function npIndicator() {
   if (sync) sync.hidden = !(open && NP.role === "host" && !NP.video);
   const ping = (open && NP.rtt) ? ` · ${NP.rtt} ms` : "";
   const ready = (open && NP.peerReady) ? " ✓ ready" : "";
-  if (NP.role === "host") text = open ? `● P2 connected${ping}${ready}` : (NP.room ? "○ Waiting for P2" : null);
+  if (NP.role === "host") text = open ? `● Player 1 · P2 connected${ping}${ready}` : (NP.room ? "○ Player 1 · waiting for P2" : null);
   else if (NP.role === "guest") text = open ? `● Playing as P2${ping}${ready}` : "○ Connecting as P2…";
   let b = document.getElementById("np-live");
   if (!text) { b?.remove(); return; }
@@ -293,7 +293,7 @@ function npBindDc(dc) {
     NP.meReady = false; NP.peerReady = false;
     try { dc.send(JSON.stringify({ t: "ready", r: true, role: NP.role })); NP.meReady = true; } catch (e) { npLog(`ready send failed: ${e?.message || e}`); }
     npHookInput();
-    toast(NP.role === "host" ? "P2 can join — you are Player 1" : "Linked — you are Player 2");
+    toast(NP.role === "host" ? "Player 1 linked — Player 2 is connected" : "Linked — you are Player 2");
     // The host is the reference. Push its screen to the guest once on link-up,
     // then keep nudging it back in step: without a shared frame clock the two
     // cores drift apart after a few seconds. The guest only ever applies.
@@ -371,7 +371,16 @@ function npBindDc(dc) {
     }
     else if (m.t === "ping") { try { NP.dc.send(JSON.stringify({ t: "pong", ts: m.ts })); } catch { /* */ } }
     else if (m.t === "pong") { NP.rtt = Math.max(0, Date.now() - m.ts); }
-    else if (m.t === "ready") { NP.peerReady = !!m.r; npIndicator(); }
+    else if (m.t === "ready") {
+      NP.peerRole = m.role || null;
+      if (NP.peerRole === NP.role) {
+        npLog(`role conflict: local=${NP.role} peer=${NP.peerRole}`);
+        toast("Netplay role conflict — leave and rejoin from the invite");
+        try { NP.dc.close(); } catch { /* */ }
+        return;
+      }
+      NP.peerReady = !!m.r; npIndicator();
+    }
   };
 }
 async function npSendSig(payload) {
@@ -674,7 +683,8 @@ function npScheduleReconnect() {
     if (_npReconnect >= 4) { toast("Netplay lost — tap Netplay to rejoin"); return; }
     _npReconnect++;
     const room = NP.room;
-    setTimeout(async () => {
+    NP.reconnectT = setTimeout(async () => {
+      NP.reconnectT = 0;
       if (!NP.alive || NP.role !== "guest") return;
       if (NP.dc && NP.dc.readyState === "open") { _npReconnect = 0; return; }
       npLog(`guest reconnect ${_npReconnect}`);
@@ -710,10 +720,15 @@ function npWaitLinked(ms = 25000) {
 async function npJoin(room) {
   if (!room) throw new Error("no room");
   if (NP.room === room && NP.dc && NP.dc.readyState === "open") return;
-  const check = await fetch(`${API}/np/sig?room=${encodeURIComponent(room)}`, { cache: "no-store" });
+  const check = await fetch(`${API}/np/sig?room=${encodeURIComponent(room)}&cid=${encodeURIComponent(CID)}`, { cache: "no-store" });
   let info = null;
   try { info = await check.json(); } catch { /* handled below */ }
   if (!check.ok || !info?.sys || !info?.file) throw new Error(info?.error || `Room unavailable (HTTP ${check.status})`);
+  if (info.host === CID) {
+    npLog("join refused: this client owns the room as host");
+    try { localStorage.removeItem("joinNp"); } catch { /* */ }
+    throw new Error("This device is already Player 1 for that room");
+  }
   npStop();
   npForgetHost();   // we are the guest now — don't re-host on next load
   NP.room = room; NP.role = "guest"; NP.myP = 1; NP.after = 0; NP.alive = true;
@@ -750,7 +765,7 @@ window.__sswBackgroundNetplay = () => {
   rememberSession({ room: NP.room || window.__npRoom, np: !!NP.room, role: NP.role || null });
 };
 function npStop() {
-  NP.alive = false; clearTimeout(NP.pollT);
+  NP.alive = false; clearTimeout(NP.pollT); clearTimeout(NP.reconnectT); NP.pollT = 0; NP.reconnectT = 0;
   clearInterval(NP.syncT); NP.syncT = 0;
   try { NP.dc && NP.dc.close(); } catch { /* */ }
   try { NP.pc && NP.pc.close(); } catch { /* */ }
@@ -763,11 +778,20 @@ function npStop() {
   document.getElementById("np-video")?.remove();
   document.getElementById("np-remote-audio")?.remove();
   document.getElementById("np-ptt")?.remove();
-  npIndicator();
   const cv = document.querySelector("#game canvas");
   if (cv) cv.style.visibility = "";
-  NP.dc = NP.pc = NP.room = NP.role = null; NP.myP = 0; NP.pendingIce = []; NP.rxId = null; NP.rxLen = 0; NP.rxGot = 0; NP.rxChunks = []; NP.txBusy = false; NP.pollFails = 0;
+  NP.dc = NP.pc = NP.room = NP.role = null; NP.peerRole = null; NP.myP = 0; NP.pendingIce = []; NP.rxId = null; NP.rxLen = 0; NP.rxGot = 0; NP.rxChunks = []; NP.txBusy = false; NP.syncPromise = null; NP.lastSyncError = ""; NP.pollFails = 0;
   window.__inNetplay = false; window.__npRoom = null;
+  npIndicator();
+}
+function npLeave() {
+  npStop();
+  npForgetHost();
+  try { localStorage.removeItem("ssw:joinNp"); } catch { /* */ }
+  try {
+    const s = LS.get("lastSession", null);
+    if (s?.np) LS.set("lastSession", { ...s, np: false, role: null, room: null, t: Date.now() });
+  } catch { /* */ }
 }
 // ---- watch-party over WebRTC (additive; the JPEG stream stays as fallback) ----
 const WNP = { room: null, pc: null, stream: null, after: 0, pollT: 0, alive: false, pendingIce: [] };
@@ -989,7 +1013,7 @@ function openNetplaySheet(sys, file, name) {
   if (NP.role && (linked || NP.room)) {
     kids.push(el("button", { className: "btn btn-ghost", style: "width:100%;margin:6px 0;color:var(--pink,#ff5fa2)",
       textContent: "Leave netplay", title: "Disconnect and stop sharing",
-      onclick: () => { npStop(); npForgetHost(); o.remove(); toast("Left netplay"); } }));
+      onclick: () => { npLeave(); o.remove(); toast("Left netplay"); } }));
   }
 
   const prefRow = (label, key) => {
@@ -1005,7 +1029,7 @@ function openNetplaySheet(sys, file, name) {
   const diag = el("details", { style: "margin-top:12px" },
     el("summary", { className: "hint", style: "cursor:pointer", textContent: "Diagnostics" }),
     el("p", { className: "hint", style: "font-size:11px;opacity:.8;margin:8px 0 2px",
-      textContent: `role=${NP.role || "-"} mode=${NP.video ? "player-stream" : "input-echo"} pc=${NP.pc?.connectionState || "-"} ice=${NP.pc?.iceConnectionState || "-"} dc=${NP.dc?.readyState || "-"} room=${NP.room || "-"} rtt=${NP.rtt || "-"}ms states=${NP.sent}/${NP.recv} inputs=${NP.inputsSent}/${NP.inputsApplied}` }));
+      textContent: `role=${NP.role || "-"} peer=${NP.peerRole || "-"} mode=${NP.video ? "player-stream" : "input-echo"} pc=${NP.pc?.connectionState || "-"} ice=${NP.pc?.iceConnectionState || "-"} dc=${NP.dc?.readyState || "-"} room=${NP.room || "-"} rtt=${NP.rtt || "-"}ms states=${NP.sent}/${NP.recv} inputs=${NP.inputsSent}/${NP.inputsApplied} sync=${NP.lastSyncError || "ok"}` }));
   if (window.__npLast) diag.append(el("p", { className: "hint", style: "font-size:11px;opacity:.6", textContent: "last: " + window.__npLast }));
   kids.push(diag);
   kids.push(el("button", { className: "btn btn-ghost", style: "width:100%;margin:8px 0 0", textContent: "Close", onclick: () => o.remove() }));
@@ -1016,23 +1040,31 @@ async function resyncNetplay() {
   if (NP.video) { toast("Not needed — P2 mirrors your screen"); return; }
   if (NP.role !== "host") { toast("Only the host can sync"); return; }
   if (!NP.dc || NP.dc.readyState !== "open") { toast("Netplay isn't linked yet"); return; }
-  if (await npSendState()) toast("Sent your screen to P2");
-  else toast("Sync failed — open Diagnostics for the reason");
+  if (await npSendState(true)) toast("Sent your screen to P2");
+  else toast(`Sync failed — ${NP.lastSyncError || "open Diagnostics for the reason"}`);
 }
 // Send the host's current savestate, chunked to stay under the datachannel's
 // max message size. Backpressure prevents large states from overflowing the
 // WebRTC queue and an id prevents overlapping transfers from being applied.
-async function npSendState() {
+async function npSendState(manual = false) {
   const gm = window.EJS_emulator?.gameManager;
-  if (NP.role !== "host") return false;
-  if (!gm?.getState) { npLog("sync skip: no getState"); return false; }
-  if (!NP.dc || NP.dc.readyState !== "open") { npLog("sync skip: dc not open"); return false; }
-  if (NP.txBusy) { npLog("sync skip: previous state is still sending"); return false; }
+  const fail = (reason) => { NP.lastSyncError = reason; npLog(`sync skip: ${reason}`); return false; };
+  if (NP.role !== "host") return fail("only Player 1 can sync");
+  if (!gm?.getState) return fail("emulator state export is unavailable");
+  if (!NP.dc || NP.dc.readyState !== "open") return fail("data channel is not open");
+  if (NP.txBusy) {
+    if (!manual || !NP.syncPromise) return fail("previous state is still sending");
+    npLog("manual sync waiting for automatic sync");
+    try { await NP.syncPromise; } catch { /* the original transfer logged its reason */ }
+    if (!NP.dc || NP.dc.readyState !== "open") return fail("data channel closed while waiting");
+    if (NP.txBusy) return fail("previous state is still sending");
+  }
   NP.txBusy = true;
-  try {
+  const transfer = (async () => {
+    try {
     const st = gm.getState();
     const buf = st instanceof Uint8Array ? st : new Uint8Array(st);
-    if (!buf.length) { npLog("sync skip: empty state"); return false; }
+    if (!buf.length) return fail("emulator returned an empty state");
     const id = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
     const CH = 16384;
     NP.dc.send(JSON.stringify({ t: "sc", id, n: buf.length }));
@@ -1043,11 +1075,15 @@ async function npSendState() {
       }
       NP.dc.send(buf.subarray(o, Math.min(o + CH, buf.length)));
     }
-    NP.sent++;
+    NP.sent++; NP.lastSyncError = "";
     npLog(`state sent ${buf.length}B id=${id}`);
     return true;
-  } catch (e) { npLog(`state send error: ${e?.message || e}`); return false; }
-  finally { NP.txBusy = false; }
+    } catch (e) { return fail(`state transfer failed: ${e?.message || e}`); }
+    finally { NP.txBusy = false; }
+  })();
+  NP.syncPromise = transfer;
+  try { return await transfer; }
+  finally { if (NP.syncPromise === transfer) NP.syncPromise = null; }
 }
 function maybeResumeSession() {
   const s = LS.get("lastSession", null);
@@ -2560,28 +2596,27 @@ async function romCacheEvict(need) {
 async function fetchRom(key, url, onProgress) {
   const hit = await idbGetIn("romcache", key).catch(() => null);
   if (hit && hit.blob) {
-    idbPutIn("romcache", key, { ...hit, t: Date.now() }).catch(() => {});
-    onProgress && onProgress(hit.size, hit.size, true);
-    return URL.createObjectURL(hit.blob);
+    const cachedSize = Number(hit.size) || hit.blob.size;
+    if (cachedSize > 0 && hit.blob.size === cachedSize) {
+      idbPutIn("romcache", key, { ...hit, size: cachedSize, t: Date.now() }).catch(() => {});
+      onProgress && onProgress(cachedSize, cachedSize, true);
+      return URL.createObjectURL(hit.blob);
+    }
+    // A cancelled or interrupted download must never be handed to EmulatorJS.
+    // Remove it so the next launch gets a complete ROM from the server.
+    await idbDelIn("romcache", key).catch(() => {});
   }
   const resp = await fetch(url);
   if (!resp.ok) throw new Error("HTTP " + resp.status);
   const total = +resp.headers.get("content-length") || 0;
-  let blob;
-  if (resp.body && resp.body.getReader) {
-    const reader = resp.body.getReader();
-    const chunks = []; let got = 0;
-    for (;;) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      chunks.push(value); got += value.length;
-      onProgress && onProgress(got, total, false);
-    }
-    blob = new Blob(chunks);
-  } else {
-    blob = await resp.blob();
-    onProgress && onProgress(blob.size, blob.size, false);
+  // Reading the stream manually has intermittently stalled before the final
+  // chunk on larger N64 ROMs. Let Fetch assemble the body, then reject any
+  // truncated response before it can be cached or booted.
+  const blob = await resp.blob();
+  if (!blob.size || (total && blob.size !== total)) {
+    throw new Error(`Incomplete ROM download (${blob.size} / ${total || "unknown"} bytes)`);
   }
+  onProgress && onProgress(blob.size, total || blob.size, false);
   if (blob.size <= ROM_CACHE_MAX_ITEM) {
     try { await romCacheEvict(blob.size); await idbPutIn("romcache", key, { blob, size: blob.size, t: Date.now() }); } catch { /* quota */ }
   }
@@ -2785,12 +2820,15 @@ async function routePlayGame(sys, romParam, resume = false) {
     loadState: true, screenshot: true, cheat: true, gamepad: true, netplay: false,
     exitEmulation: true };
   const vf = prefs().videoFilter;
+  const requestedWebgl = new URLSearchParams(location.search).get("ejs-webgl");
   window.EJS_defaultOptions = Object.assign(
     { rewindEnabled: "enabled" },
     // Some desktop GPU/WebGL2 combinations render mupen64plus_next with
     // corrupted tiles or never finish core initialization. Android's
     // WebView path is known-good, so keep its WebGL2 default unchanged.
-    sys === "n64" && !IN_APP ? { webgl2Enabled: "disabled" } : {},
+    sys === "n64" && !IN_APP
+      ? { webgl2Enabled: requestedWebgl === "enabled" ? "enabled" : "disabled" }
+      : {},
     vf === "crt" ? { shader: "crt-aperture.glslp" }
       : vf === "smooth" ? { shader: "bicubic.glslp" } : {});
   window.EJS_color = "#1fe6ff";
@@ -2929,12 +2967,36 @@ async function routePlayGame(sys, romParam, resume = false) {
     }
   };
 
+  let bootTimer = 0;
+  const bootFailure = (reason) => {
+    if (!window.__emuUp || !loadEl.isConnected) return;
+    clearTimeout(bootTimer);
+    console.error("RetroVerse emulator did not start", { sys, file, reason });
+    const retry = el("button", { className: "btn btn-primary", style: "margin-top:12px",
+      textContent: sys === "n64" && !IN_APP && requestedWebgl !== "enabled"
+        ? "Retry N64 with WebGL2" : "Retry emulator",
+      onclick: async () => {
+        retry.disabled = true;
+        retry.textContent = "Retrying…";
+        await idbDelIn("romcache", cacheKey).catch(() => {});
+        const q = new URLSearchParams(location.search);
+        if (sys === "n64" && !IN_APP && requestedWebgl !== "enabled") q.set("ejs-webgl", "enabled");
+        const query = q.toString();
+        location.replace(location.pathname + (query ? "?" + query : "") + location.hash);
+      } });
+    loadEl.replaceChildren(
+      el("div", { textContent: reason || "The emulator did not finish starting." }),
+      el("div", { className: "hint", style: "margin-top:8px", textContent: "The ROM downloaded successfully, but the graphics core did not initialize." }),
+      retry);
+  };
   window.EJS_ready = () => {
     const emu = window.EJS_emulator;
     if (!emu) return;
+    if (emu.failedToStart) { bootFailure("EmulatorJS reported a startup failure."); return; }
     emu.on("exit", () => { if (window.__emuUp) exitPlayer(); });
   };
   window.EJS_onGameStart = () => {
+    clearTimeout(bootTimer);
     $("#player-load")?.remove();
     _playbackPad.fast = false;
     _playbackPad.slow = false;
@@ -3111,6 +3173,7 @@ async function routePlayGame(sys, romParam, resume = false) {
     };
     document.body.append(s);
   };
+  bootTimer = setTimeout(() => bootFailure("The emulator timed out while starting."), 90000);
   loadEjs(ejsBase, false);
 }
 function emuCleanup() {

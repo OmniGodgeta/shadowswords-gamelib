@@ -6,6 +6,18 @@ agent can pick up context without re-deriving it. Read `AGENTS.md` first, then
 this. (Netplay internals: `NETPLAY-UI-CONTRACT.md`. Roadmap split:
 `FEATURE-BACKLOG.md`.)
 
+## Session 2026-09-13 — N64 launch hardening and netplay cleanup
+
+- Cache version `2.93` validates complete ROM bodies before caching or booting.
+  Interrupted or truncated cached ROMs are deleted and downloaded again.
+- Emulator startup now has a bounded watchdog with a visible retry action;
+  desktop N64 retries with WebGL2 when the normal legacy-WebGL path does not
+  initialize.
+- `/np/sig` exposes the active guest CID so clients can reject accidentally
+  joining their own host room. Ready handshakes reject same-role peers.
+- Diagnostics now include peer role and sync failure reason. Explicit Leave
+  cancels reconnect timers and clears guest/host recovery state.
+
 ## Session 2026-09-13 — auth diagnostics
 
 - The live `/auth/login` and `/auth/register` endpoints are healthy and

@@ -1,5 +1,16 @@
 # Changelog
 
+## 2.93
+- N64 ROM launches now reject incomplete downloads and remove truncated cached
+  ROMs before retrying, preventing intermittent black screens from home-screen
+  Play now links.
+- N64 startup failures now stop showing an indefinite loading screen and offer
+  a desktop WebGL2 retry path.
+- Netplay role diagnostics now verify the server-authoritative host, identify
+  peer roles, and prevent same-role connections.
+- Manual sync failures now show their actual reason, and explicit Leave clears
+  reconnect timers, recovery hints, and stale P2 badges.
+
 ## 2.92
 - Normal invited guests are now clearly labeled as **Playing as P2** instead
   of being confused with watch-only spectators.

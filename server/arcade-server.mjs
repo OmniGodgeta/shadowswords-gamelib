@@ -1138,7 +1138,7 @@ const server = http.createServer(async (req, res) => {
         : cid && r.host
           ? r.msgs.filter((m) => m.from === r.host && m.n > after)
           : r.msgs.filter((m) => m.n > after);
-      jsonRes(res, 200, { host: r.host, sys: r.sys, file: r.file, name: r.name,
+      jsonRes(res, 200, { host: r.host, guest: r.guest, sys: r.sys, file: r.file, name: r.name,
         after: r.n, msgs });
       return;
     }
