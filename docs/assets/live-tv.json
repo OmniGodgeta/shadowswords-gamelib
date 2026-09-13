@@ -1,0 +1,6 @@
+[
+  {"number":"01","name":"NASA TV","url":"https://ntv1.akamaized.net/hls/live/2035655/NASA-TV1-HLS/master.m3u8","note":"Public science and space channel"},
+  {"number":"02","name":"Bloomberg Television","url":"https://bloomberg.com/media-manifest/manifest.m3u8","note":"Public business news stream"},
+  {"number":"03","name":"France 24 English","url":"https://static.france24.com/live/F24_EN_LO_HLS/live_web.m3u8","note":"International news"},
+  {"number":"04","name":"DW English","url":"https://dwamdstream103.akamaized.net/hls/live/2015525/dwenglish/index.m3u8","note":"International news"}
+]

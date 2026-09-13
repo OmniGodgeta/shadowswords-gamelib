@@ -1,5 +1,10 @@
 # Changelog
 
+## 2.72
+- Added Live TV channel cards to Home, Lounge, and the dedicated TV view, with Android VLC handoff.
+- Added music volume control, track favorites, and music request actions.
+- Closed the Android navigation drawer when scrolling and tightened media filter controls.
+
 All notable changes to the RetroVerse website.
 
 ## [2.22.35] — 2026-09-12 — Recovery saves and background reconnect

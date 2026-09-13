@@ -1566,6 +1566,8 @@ async function routeHome() {
   frag.append(moviesAnchor);
   const musicAnchor = el("div");
   frag.append(musicAnchor);
+  const tvAnchor = el("div");
+  frag.append(tvAnchor);
 
   frag.append(el("section", { className: "shelf" },
     el("div", { className: "shelf-head" }, el("h2", { textContent: "The rest of the floor" })),
@@ -1640,6 +1642,7 @@ async function routeHome() {
 
   homeMoviesShelf().then((s) => { if (!s || token !== state.render) { moviesAnchor.remove(); return; } moviesAnchor.replaceWith(s); });
   homeMusicShelf().then((s) => { if (!s || token !== state.render) { musicAnchor.remove(); return; } musicAnchor.replaceWith(s); });
+  liveTvShelf().then((s) => { if (!s || token !== state.render) { tvAnchor.remove(); return; } tvAnchor.replaceWith(s); });
 }
 
 // Home shelves: a movie wall (Jellyfin posters) and the album wall.
@@ -1673,6 +1676,27 @@ async function homeMusicShelf() {
       }) });
   } catch { return null; }
 }
+async function liveTvShelf() {
+  const channels = await fetch("assets/live-tv.json", { cache: "no-store" }).then((r) => r.json()).catch(() => []);
+  if (!channels.length) return null;
+  return shelf({ title: "Live TV", count: channels.length, moreHref: "#/tv",
+    note: "Live channels open in VLC in the Android app.",
+    tiles: channels.map((c) => tvCard(c)) });
+}
+function tvCard(c) {
+  return el("a", { className: "tile wide tv-card", href: "#/tv", onclick: (e) => { e.preventDefault(); openTvChannel(c); } },
+    el("div", { className: "tile-art tv-art" },
+      el("strong", { className: "tv-number", textContent: c.number || "TV" }),
+      el("span", { className: "tv-channel-name", textContent: c.name })),
+    el("div", { className: "tile-cap" },
+      el("div", { className: "t", textContent: c.name }),
+      el("div", { className: "s", textContent: `Channel ${c.number || "—"}` })));
+}
+function openTvChannel(c) {
+  if (IN_APP && window.SSTV) { window.SSTV.postMessage(JSON.stringify(c)); return; }
+  const w = window.open(c.url, "_blank", "noopener");
+  if (!w) toast("Allow pop-ups to open live TV");
+}
 
 async function routeLounge() {
   ++state.render;
@@ -1692,11 +1716,24 @@ async function routeLounge() {
       el("a", { className: "lounge-card", href: "#/videos", dataset: { k: "videos" } },
         el("div", { className: "lg-k", textContent: "▶" }),
         el("div", { className: "lg-t", textContent: "Videos" }),
-        el("div", { className: "lg-s", textContent: "Latest uploads from the YouTube channel." }))),
+        el("div", { className: "lg-s", textContent: "Latest uploads from the YouTube channel." })),
+      el("a", { className: "lounge-card", href: "#/tv", dataset: { k: "tv" } },
+        el("div", { className: "lg-k", textContent: "📺" }),
+        el("div", { className: "lg-t", textContent: "Live TV" }),
+        el("div", { className: "lg-s", textContent: "News and public channels through VLC." }))),
     el("section", { className: "shelf", style: "padding-top:26px" },
       el("div", { className: "shelf-head" }, el("h2", { textContent: "Lounge chat" })),
       el("p", { className: "shelf-note hint", textContent: "Everyone on the tailnet sees this. (The same feed is meant to power a floating party chat — see FEATURE-BACKLOG.)" }),
       loungeChat())));
+}
+async function routeTv() {
+  const channels = await fetch("assets/live-tv.json", { cache: "no-store" }).then((r) => r.json()).catch(() => []);
+  document.title = "Live TV — RetroVerse";
+  view.replaceChildren(el("div", { className: "wrap" },
+    el("section", { className: "shelf", style: "padding:22px 0 8px" },
+      el("div", { className: "shelf-head" }, el("h1", { textContent: "Live TV" })),
+      el("p", { className: "hint", textContent: "Choose a channel. Android sends streams to VLC when it is installed; browsers use the stream directly." })),
+    el("div", { className: "tile-grid", style: "padding:0" }, ...channels.map(tvCard))));
 }
 
 // Shared lounge chat. Polls GET /chat; POST /chat to send. The same widget is
@@ -3252,6 +3289,9 @@ function shuffleInPlace(a) { for (let i = a.length - 1; i > 0; i--) { const j = 
 const MS = (!IN_APP && "mediaSession" in navigator) ? navigator.mediaSession : null;
 const MP = { data: null, ai: null, order: [], pos: -1, ctxAlb: -1, alb: -1, tr: -1,
   shuffle: false, repeat: "off", ctx: null, an: null, src: null, _viz: 0 };
+const MUSIC_FAVS = "ssw:music-favorites";
+const musicFavs = () => LS.get(MUSIC_FAVS, []);
+const toggleMusicFav = (key) => { const f = musicFavs(), i = f.indexOf(key); i >= 0 ? f.splice(i, 1) : f.push(key); LS.set(MUSIC_FAVS, f); };
 const musicArtUrl = (name) => MUSIC_BASE + "art/" + encodeURIComponent(name);
 const mpCur = () => MP.order[MP.pos] || null;
 const allTrackRefs = () => MP.data.albums.flatMap((a, alb) => a.tracks.map((_, tr) => ({ alb, tr })));
@@ -3282,6 +3322,10 @@ function mpBar() {
     el("button", { className: "mp-b mp-sh", id: "mp-shuffle", textContent: "🔀", title: "Shuffle", onclick: mpToggleShuffle }),
     el("button", { className: "mp-b mp-rp", id: "mp-repeat", textContent: "🔁", title: "Repeat", onclick: mpCycleRepeat }),
     el("button", { className: "mp-b", id: "mp-close", textContent: "✕", title: "Stop", onclick: mpStop }));
+  b.append(el("label", { className: "mp-volume", title: "Volume" },
+    el("span", { textContent: "🔊" }),
+    el("input", { id: "mp-volume", type: "range", min: "0", max: "1", step: "0.01", value: "1",
+      oninput: (e) => { if (MP.ai) MP.ai.volume = +e.target.value; } })));
   document.body.append(b);
   return b;
 }
@@ -3544,12 +3588,13 @@ async function routeMusic(albumIdx) {
     },
       el("span", { className: "num", textContent: String(i + 1).padStart(2, "0") }),
       el("span", { textContent: t.title }),
-      el("span", { className: "tk-play", textContent: "▶" }))));
+      el("span", { className: "tk-play", textContent: musicFavs().includes(`${idx}:${i}`) ? "♥" : "▶",
+        onclick: (e) => { e.stopPropagation(); toggleMusicFav(`${idx}:${i}`); e.currentTarget.textContent = musicFavs().includes(`${idx}:${i}`) ? "♥" : "▶"; } }))));
 
   const viz = el("canvas", { className: "viz" });
 
   // searchable album list (with artist / album split)
-  const albSearch = el("input", { type: "search", className: "alb-search", placeholder: "Filter albums…" });
+  const albSearch = el("input", { type: "search", className: "alb-search", placeholder: "Search albums or tracks…" });
   const albumList = el("div", { className: "album-list" });
   const drawAlbums = () => {
     const q = albSearch.value.trim().toLowerCase();
@@ -3579,7 +3624,14 @@ async function routeMusic(albumIdx) {
     el("h3", { style: "margin:2px 0 8px", textContent: am.album }),
     el("div", { className: "alb-actions" },
       el("button", { className: "btn btn-primary sm", textContent: "▶ Play", onclick: () => mpQueueAlbum(idx, prefs().musicShuffle === true) }),
-      el("button", { className: "btn btn-ghost sm", textContent: "🔀 Shuffle album", onclick: () => mpQueueAlbum(idx, true) }))));
+      el("button", { className: "btn btn-ghost sm", textContent: "🔀 Shuffle album", onclick: () => mpQueueAlbum(idx, true) }),
+      el("button", { className: "btn btn-ghost sm", textContent: "✉ Request music", onclick: async () => {
+      const title = prompt("Artist or song to request:");
+      if (!title) return;
+      await fetch(`${API}/request`, { method: "POST", headers: { "content-type": "application/json", ...tokenHdr() },
+        body: JSON.stringify({ title: `Music: ${title}`, note: "Requested from Music", who: AUTH.user?.display || "visitor" }) });
+      toast("Music request sent");
+      } }))));
 
   const queuePanel = el("div", { className: "queue-panel", hidden: MP.pos < 0 },
     el("div", { className: "queue-head" }, el("h4", { textContent: "Up next" }),
@@ -4394,6 +4446,7 @@ async function router() {
   if (a === "netplay") { setNav("play"); return routeNetplay(); }
   if (a === "watch" && b) { setNav("play"); return routeWatch(b); }
   if (a === "lounge") { setNav("lounge"); return routeLounge(); }
+  if (a === "tv") { setNav("lounge"); return routeTv(); }
   if (a === "library") { setNav("library"); return routeLibrary(); }
   if (a === "favorites") { setNav(null); return routeFavorites(); }
   if (a === "saves") { setNav(null); return routeSaves(); }
@@ -4441,6 +4494,7 @@ drawer.addEventListener("click", (e) => { if (e.target.closest("a")) toggleDrawe
 document.addEventListener("click", (e) => {
   if (!drawer.hidden && !drawer.contains(e.target) && !e.target.closest("#menu-btn")) toggleDrawer(false);
 });
+addEventListener("scroll", () => { if (!drawer.hidden) toggleDrawer(false); }, { passive: true });
 const sf = $("#bar-search"), qi = $("#q");
 function openGameSearch() { sf.hidden = false; qi.focus(); }
 $("#search-btn").onclick = () => {

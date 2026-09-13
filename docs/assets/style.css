@@ -452,6 +452,12 @@ body.lite .shelf-track > .tile, body.lite .tile-grid > .tile { animation: none; 
 .track .tk-play { flex: 0 0 auto; color: var(--cyan); opacity: 0; font-size: 11px; }
 .track:hover .tk-play { opacity: 1; }
 .track.playing .num::before { content: "▶ "; }
+.mp-volume { display:flex; align-items:center; gap:5px; color:var(--muted); font-size:12px; }
+.mp-volume input { width:78px; accent-color:var(--cyan); }
+.tv-art { display:grid; place-items:center; gap:4px; background:radial-gradient(circle at 50% 30%,rgba(34,224,255,.22),transparent 55%),var(--bg-2); }
+.tv-number { color:var(--cyan); font-size:22px; letter-spacing:.08em; }
+.tv-channel-name { color:var(--muted); font-size:11px; text-align:center; padding:0 8px; }
+.grid-tools input, .grid-tools select { font-size:12px; padding:7px 9px; }
 
 /* ---- music: album column + album head + queue ---- */
 .album-col { display: flex; flex-direction: column; gap: 8px; position: sticky; top: 74px; max-height: calc(100dvh - 150px); }
