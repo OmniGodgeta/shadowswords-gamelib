@@ -276,6 +276,12 @@ function npBindDc(dc) {
   dc.onopen = () => {
     window.__inNetplay = true;
     npLog(`dc open role=${NP.role}`);
+    const session = LS.get("lastSession", {}) || {};
+    rememberSession({ room: NP.room, np: true, role: NP.role, sys: session.sys || window.__playSys, file: session.file || window.__playFile });
+    if (window.__emuAutoSave && window.__emuAutoSaveT) {
+      clearInterval(window.__emuAutoSaveT);
+      window.__emuAutoSaveT = setInterval(window.__emuAutoSave, 8000);
+    }
     npIndicator();
     _npReconnect = 0;
     NP.meReady = false; NP.peerReady = false;
@@ -312,6 +318,10 @@ function npBindDc(dc) {
     npLog("dc closed");
     clearInterval(NP.syncT); NP.syncT = 0;
     clearInterval(NP.pingT); NP.pingT = 0;
+    if (window.__emuAutoSave && window.__emuUp) {
+      clearInterval(window.__emuAutoSaveT);
+      window.__emuAutoSaveT = setInterval(window.__emuAutoSave, 15000);
+    }
     npIndicator();
     if (NP.alive) { toast("Netplay disconnected"); npScheduleReconnect(); }
   };
@@ -568,6 +578,7 @@ async function npHost({ sys, file, name, reuse }) {
   // Remember we are the host so a reload/background re-hosts instead of
   // becoming Player 2. Cleared on an explicit leave (see npForgetHost).
   LS.set("hostNp", { room: d.id, sys, file, t: Date.now() });
+  rememberSession({ sys, file, name, room: d.id, np: true, role: "host" });
   npStartPc(true);
   npPoll();
   npIndicator();
@@ -619,6 +630,7 @@ async function npJoin(room) {
   npForgetHost();   // we are the guest now — don't re-host on next load
   NP.room = room; NP.role = "guest"; NP.myP = 1; NP.after = 0; NP.alive = true;
   window.__npRoom = room;
+  rememberSession({ room, np: true, role: "guest" });
   npLog(`join room ${room}`);
   npStartPc(false);
   npPoll();
@@ -627,6 +639,22 @@ async function npJoin(room) {
   await npWaitLinked();
   npLog("linked");
 }
+function npResumeAfterBackground() {
+  if (!window.__emuUp || !NP.room) return;
+  if (NP.dc?.readyState === "open") {
+    if (NP.role === "host" && !NP.video) npSendState();
+    return;
+  }
+  npLog("resume: reconnecting");
+  npScheduleReconnect();
+}
+window.__sswResumeNetplay = npResumeAfterBackground;
+window.__sswBackgroundNetplay = () => {
+  if (!window.__emuUp) return;
+  window.__emuAutoSave?.();
+  window.__emuFlush?.();
+  rememberSession({ room: NP.room || window.__npRoom, np: !!NP.room, role: NP.role || null });
+};
 function npStop() {
   NP.alive = false; clearTimeout(NP.pollT);
   clearInterval(NP.syncT); NP.syncT = 0;
@@ -874,7 +902,11 @@ function maybeResumeSession() {
   if (Date.now() - (s.t || 0) > 15 * 60 * 1000) return false;
   const h = (location.hash || "").replace(/^#\/?/, "");
   if (h && h !== "play") return false;
-  LS.set("joinNp", { sys: s.sys, file: s.file, room: s.room || null, t: Date.now() });
+  if (s.role === "guest" && s.room) {
+    LS.set("joinNp", { sys: s.sys, file: s.file, room: s.room, t: Date.now() });
+  } else {
+    LS.set("joinNp", null);
+  }
   location.replace("#/play/" + encodeURIComponent(s.sys) + "/" + String(s.file).split("/").map(encodeURIComponent).join("/"));
   return true;
 }
@@ -1004,7 +1036,7 @@ function pushRecent(sys, file, name, img) {
 
 /* ---- accounts + preferences -------------------------------------- */
 const PREF_DEFAULTS = {
-  lite: false, autoResume: false, musicShuffle: false, videoFilter: "pixel",
+  lite: false, autoResume: true, musicShuffle: false, videoFilter: "pixel",
   region: "", playingToasts: true, confirmOverwrite: false, previewSound: true,
   netplay: true, netplayName: "", npAutoUnmute: true, npHostByDefault: true, npVoice: false, npPTT: false,
 };
@@ -2483,7 +2515,11 @@ async function routePlayGame(sys, romParam, resume = false) {
     : "Cloud save failed — check /#/status.";
   const cloudSave = async () => {
     if (prefs().confirmOverwrite && hasCloudSave && !confirm("Overwrite your “auto” cloud save?")) return;
-    toast(await putSlot("auto") ? `Saved to the server ☁${lastSaveAt ? ` · ${new Date(lastSaveAt).toLocaleTimeString()}` : ""}` : saveFailure());
+    const ok = await putSlot("auto");
+    if (ok) {
+      saveBtn.title = `Recovery save · ${new Date(lastSaveAt).toLocaleTimeString()}`;
+      toast(`Recovery saved ☁ · ${new Date(lastSaveAt).toLocaleTimeString()}`);
+    } else toast(saveFailure());
   };
   const cloudSaveAs = async () => {
     const name = (prompt("Name this save slot (e.g. “before boss”):", "") || "").trim().replace(/[^a-z0-9_ -]/gi, "").slice(0, 24);
@@ -2498,7 +2534,7 @@ async function routePlayGame(sys, romParam, resume = false) {
       const buf = await fetch(slotUrl(slot), { headers: authHdr() }).then((r) => { if (!r.ok) throw 0; return r.arrayBuffer(); });
       gm.loadState(new Uint8Array(buf));
       toast(slot === "auto" ? "Server save loaded" : `Loaded “${slot}”`);
-    } catch { toast("Couldn't load that save"); }
+    } catch { toast("Couldn't load that save — check /#/status"); }
   };
   const slotPicker = async () => {
     let slots = [];
@@ -2511,7 +2547,7 @@ async function routePlayGame(sys, romParam, resume = false) {
         slots.length ? el("div", {}, ...slots.map((s) => el("div", { className: "slot-row" },
           s.shot ? el("img", { className: "slot-shot", alt: "", src: slotUrl(s.slot) + "&shot=1" }) : el("div", { className: "slot-shot" }),
           el("button", { className: "btn btn-ghost", style: "flex:1;text-align:left",
-            textContent: `${s.slot === "auto" ? "Auto-save" : s.slot} · ${new Date(s.mtime).toLocaleString()}`,
+            textContent: `${s.slot === "auto" ? "Recovery save" : s.slot} · ${new Date(s.mtime).toLocaleString()}`,
             onclick: () => { o.remove(); cloudLoad(s.slot); } }),
           el("button", { className: "btn btn-ghost", textContent: "✕", title: "Delete",
             onclick: async () => { await fetch(slotUrl(s.slot), { method: "DELETE", headers: { ...tokenHdr(), ...authHdr() } }); o.remove(); toast("Slot deleted"); } }))))
@@ -2520,7 +2556,9 @@ async function routePlayGame(sys, romParam, resume = false) {
     uiRoot().append(o);
   };
 
-  // silent cloud auto-save (no toast) — on a timer and on exit, to "auto"
+  // Keep a short recovery window so a backgrounded app or a dropped room can
+  // resume close to the last shared position. The server keeps this as the
+  // normal "auto" slot, separate from named/manual saves.
   const autoSave = () => putSlot("auto");
   window.__emuAutoSave = autoSave;
 
@@ -2571,6 +2609,12 @@ async function routePlayGame(sys, romParam, resume = false) {
       LS.set("joinNp", null);
       setTimeout(() => autoJoinNetplay(joinHint.room), 1400);
     } else {
+      const session = LS.get("lastSession", null);
+      if (session?.role === "guest" && session.room
+          && session.sys === sys && (!session.file || session.file === file)
+          && Date.now() - (session.t || 0) < 15 * 60 * 1000) {
+        setTimeout(() => autoJoinNetplay(session.room), 1400);
+      }
       // We were hosting this game before a reload/background — re-host the same
       // room (server `reuse`) so P2 can reconnect instead of us becoming P2.
       const hostHint = LS.get("hostNp", null);
@@ -2595,7 +2639,7 @@ async function routePlayGame(sys, romParam, resume = false) {
       }
     }
     window.__emuHeartbeat = setInterval(() => { ping(false); flushPlaytime(); }, 15000);
-    window.__emuAutoSaveT = key ? setInterval(autoSave, 180000) : 0;
+    window.__emuAutoSaveT = key ? setInterval(autoSave, 15000) : 0;
     ctrlBtn.hidden = false;
     ctrlBtn.onclick = () => controlsPanel(core);
     ffBtn.hidden = false;
@@ -2830,7 +2874,31 @@ function invitePoll() {
 }
 setInterval(presenceTick, 20000);
 setInterval(invitePoll, 3000);
-document.addEventListener("visibilitychange", () => { if (!document.hidden) { presenceTick(); invitePoll(); } });
+document.addEventListener("visibilitychange", () => {
+  if (document.hidden) {
+    if (window.__emuUp) {
+      window.__emuAutoSave?.();
+      window.__emuFlush?.();
+      rememberSession({ room: NP.room || window.__npRoom, np: !!NP.room, role: NP.role || null });
+    }
+    return;
+  }
+  presenceTick();
+  invitePoll();
+  npResumeAfterBackground();
+});
+window.addEventListener("pageshow", () => {
+  if (window.__emuUp) {
+    npResumeAfterBackground();
+    window.__emuAutoSave?.();
+  }
+});
+window.addEventListener("pagehide", () => {
+  if (window.__emuUp) {
+    window.__emuAutoSave?.();
+    window.__emuFlush?.();
+  }
+});
 addEventListener("load", () => { setTimeout(presenceTick, 400); setTimeout(invitePoll, 600); });
 
 /* ---- controller setup panel -------------------------------------------------
@@ -4579,6 +4647,33 @@ function moveFocus(dir) {
   if (best) { best.focus(); best.scrollIntoView({ block: "nearest", inline: "nearest" }); }
 }
 let _padRAF = 0; const _padPrev = {};
+let _playbackPad = { fast: false, slow: false };
+function setPlaybackPadMode(mode, on) {
+  const gm = window.EJS_emulator?.gameManager;
+  if (!gm) return;
+  try {
+    if (mode === "fast" && typeof gm.toggleFastForward === "function") {
+      gm.toggleFastForward(on ? 1 : 0);
+      return;
+    }
+    if (mode === "slow") {
+      if (typeof gm.toggleSlowMotion === "function") { gm.toggleSlowMotion(on ? 1 : 0); return; }
+      if (typeof gm.setSpeed === "function") { gm.setSpeed(on ? 0.5 : 1); return; }
+      // RetroArch cores expose slow motion as the next virtual control.
+      if (typeof gm.simulateInput === "function") gm.simulateInput(0, 29, on ? 1 : 0);
+    }
+  } catch (e) { npLog?.(`playback control ${mode}: ${e?.message || e}`); }
+}
+function pollGameplayPad() {
+  requestAnimationFrame(pollGameplayPad);
+  if (!window.__emuUp) return;
+  const gp = [...(navigator.getGamepads ? navigator.getGamepads() : [])].find(Boolean);
+  if (!gp) return;
+  const fast = !!gp.buttons[7]?.pressed;
+  const slow = !!gp.buttons[6]?.pressed;
+  if (fast !== _playbackPad.fast) { _playbackPad.fast = fast; setPlaybackPadMode("fast", fast); }
+  if (slow !== _playbackPad.slow) { _playbackPad.slow = slow; setPlaybackPadMode("slow", slow); }
+}
 function pollPad() {
   _padRAF = requestAnimationFrame(pollPad);
   if (window.__emuUp) return;                       // EmulatorJS owns the pad in-game
@@ -4598,6 +4693,7 @@ function pollPad() {
   edge("a", b[0]?.pressed, () => document.activeElement?.click(), 320);
   edge("b", b[1]?.pressed, () => $("#back-btn")?.click() ?? history.back(), 320);
 }
+pollGameplayPad();
 window.addEventListener("gamepadconnected", () => { if (!_padRAF) { toast("🎮 Controller connected"); pollPad(); } });
 if (navigator.getGamepads && [...navigator.getGamepads()].some(Boolean)) pollPad();
 

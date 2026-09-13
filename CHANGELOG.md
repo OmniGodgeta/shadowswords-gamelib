@@ -2,6 +2,18 @@
 
 All notable changes to the RetroVerse website.
 
+## [2.22.35] — 2026-09-12 — Recovery saves and background reconnect
+
+### Added
+
+- Recovery saves now run every 15 seconds during normal play and every 8
+  seconds while linked in netplay.
+- The save menu labels the automatic slot as **Recovery save**.
+- Netplay saves and session role/room information before the app backgrounds,
+  then reconnects and re-syncs when the game resumes.
+- Standard gamepad **R2** holds fast-forward and **L2** holds slow motion,
+  with core fallbacks where EmulatorJS does not expose a slow-motion method.
+
 ## [2.22.34] — 2026-09-12 — Room fallback and connection diagnostics
 
 ### Added
