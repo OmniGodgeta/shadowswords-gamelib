@@ -95,6 +95,10 @@ this. (Netplay internals: `NETPLAY-UI-CONTRACT.md`. Roadmap split:
 - Isolated Chromium reproduced N64 core initialization stalling at
   “Decompress Game Core” with no canvas. Version `2.85` adds a desktop-only
   `webgl2Enabled: "disabled"` fallback; Android keeps WebGL2.
+- Version `2.86` fixes the room-creation regression caused by
+  `openNetplaySheet()` calling the locally scoped `ping()` function. The
+  presence ping is now exposed as `window.__playPing`, and invite failures
+  include diagnostics.
 
 ---
 

@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.86
+- Fixed Netplay room creation failing with `ping is not defined`: the play
+  presence ping is now exposed for controls outside the emulator-start scope.
+- Invite room errors now include the server error and are written to the
+  Netplay diagnostics instead of being reduced to a generic toast.
+
 ## 2.85
 - Added a desktop-only WebGL1 fallback for Nintendo 64 to avoid corrupted
   mupen64plus_next rendering and core initialization failures on affected

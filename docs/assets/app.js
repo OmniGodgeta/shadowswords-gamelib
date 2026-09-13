@@ -854,7 +854,7 @@ function openNetplaySheet(sys, file, name) {
           if (!NP.room) { await npHost({ sys, file, name }); toast("Room created — you are Player 1"); }
           const sb = document.getElementById("np-sync-btn");
           if (sb && !NP.video) { sb.hidden = false; sb.onclick = resyncNetplay; }
-          ping(false);
+          window.__playPing?.(false);
           invitePicker({ sys, file, name, watch: window.__watchId });
         } catch (e) { toast(`Couldn't create a room: ${e?.message || "server unavailable"}`); npLog(`room create failed: ${e?.message || e}`); }
       } }));
@@ -2841,6 +2841,7 @@ async function routePlayGame(sys, romParam, resume = false) {
       room: window.__npRoom || null,
     }),
   }).then((r) => r.json()).then(handlePingReply).catch(() => {});
+  window.__playPing = ping;
   const flushPlaytime = () => {
     if (!ptKey || !ptStart) return;
     const secs = Math.round((Date.now() - ptStart) / 1000);
@@ -3049,6 +3050,7 @@ function emuCleanup() {
   if (window.__watchId) fetch(`${API}/watch/${window.__watchId}`, { method: "DELETE", keepalive: true }).catch(() => {});
   try { wnpStop(); } catch { /* */ }
   window.__watchId = null; window.__inNetplay = false; window.__npRoom = null;
+  try { delete window.__playPing; } catch { /* */ }
   try { delete window.__sswStartWatch; } catch { window.__sswStartWatch = null; }
   try { npStop(); } catch { /* */ }
   try { window.SSPlay && window.SSPlay.postMessage("0"); } catch { /* */ }
@@ -3109,7 +3111,11 @@ function showInvite(inv) {
 async function invitePicker({ sys, file, name, watch }) {
   if (!NP.room) {
     try { await npHost({ sys, file, name }); toast("Room created — pick Player 2"); }
-    catch { toast("Couldn't create a room"); return; }
+    catch (e) {
+      npLog(`invite room create failed: ${e?.message || e}`);
+      toast(`Couldn't create a room: ${e?.message || "server unavailable"}`);
+      return;
+    }
   }
   const ps = await fetch(`${API}/play/stats`).then((r) => r.json()).catch(() => null);
   const people = ((ps && ps.online) || (ps && ps.nowPlaying) || [])
