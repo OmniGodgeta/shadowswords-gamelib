@@ -93,10 +93,11 @@ floating bubble); **RetroAchievements = web login now + cheevos unlocks after**;
   notification mute/leave, `partyStart/partyStop/partyMute/canOverlay/
   requestOverlay` bridge, `window.__sswPartyAction`.
 - ⏳ **Not done — true persistence after swipe-away.** The call still lives in
-  the Activity WebView, so force-stopping the app ends it. To finish: host the
-  party call in a headless WebView owned by `PartyService`, hand the call over
-  from the Activity when it backgrounds, and expose the bubble's mute via the
-  service. This is the remaining native work.
+  the Activity WebView; pressing back while on a call now backgrounds the app
+  (`backgroundApp`/`moveTaskToBack`) so the call + bubble survive, but a
+  force-stop/swipe-away still ends it. To finish: host the party call in a
+  headless WebView owned by `PartyService`, hand the call over from the Activity
+  when it backgrounds, and expose the bubble's mute via the service.
 - ✅ Watcher → talker: `🎙 Use microphone` rebuilds the peers with a mic track.
 - ✅ In-game access: `💬 Chat & party` in the `⋯` menu shows the panel above the
   game (mounted via `uiRoot()`).
