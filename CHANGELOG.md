@@ -1,5 +1,9 @@
 # Changelog
 
+## 2.74
+- Added keyboard Escape handling for the drawer and movie dialog.
+- Added save-slot warnings when the local recovery timestamp is newer than the server copy.
+
 ## 2.73
 - Added track-level music search, genre filtering, persistent favorites, volume controls, and a music request action.
 - Added retry/backoff and last-success metadata for cloud recovery saves.

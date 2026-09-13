@@ -2597,8 +2597,16 @@ async function routePlayGame(sys, romParam, resume = false) {
         slots.length ? el("div", {}, ...slots.map((s) => el("div", { className: "slot-row" },
           s.shot ? el("img", { className: "slot-shot", alt: "", src: slotUrl(s.slot) + "&shot=1" }) : el("div", { className: "slot-shot" }),
           el("button", { className: "btn btn-ghost", style: "flex:1;text-align:left",
-            textContent: `${s.slot === "auto" ? "Recovery save" : s.slot} · ${new Date(s.mtime).toLocaleString()}`,
-            onclick: () => { o.remove(); cloudLoad(s.slot); } }),
+            textContent: `${s.slot === "auto" ? "Recovery save" : s.slot} · ${new Date(s.mtime).toLocaleString()}${(() => {
+              const local = LS.get("lastCloudSave", null);
+              return local && local.sys === sys && local.file === file && local.slot === s.slot && local.at > s.mtime ? " · local copy newer" : "";
+            })()}`,
+            onclick: () => {
+              const local = LS.get("lastCloudSave", null);
+              if (local && local.sys === sys && local.file === file && local.slot === s.slot && local.at > s.mtime &&
+                  !confirm("Your local recovery timestamp is newer than this server slot. Load the server copy anyway?")) return;
+              o.remove(); cloudLoad(s.slot);
+            } }),
           el("button", { className: "btn btn-ghost", textContent: "✕", title: "Delete",
             onclick: async () => { await fetch(slotUrl(s.slot), { method: "DELETE", headers: { ...tokenHdr(), ...authHdr() } }); o.remove(); toast("Slot deleted"); } }))))
           : el("p", { className: "hint", textContent: "No saves for this game yet." }),
@@ -3183,7 +3191,8 @@ async function movieDetail(it) {
   const full = await fetch(`${JF}Items/${it.Id}?Fields=Overview,Genres,People`).then((r) => r.json()).catch(() => it);
   const back = full.BackdropImageTags && full.BackdropImageTags[0]
     ? `${JF}Items/${full.Id}/Images/Backdrop/0?maxWidth=1200&tag=${full.BackdropImageTags[0]}` : jfImg(full);
-  const o = el("div", { id: "movie-modal", onclick: (e) => { if (e.target.id === "movie-modal") o.remove(); } },
+  const o = el("div", { id: "movie-modal", role: "dialog", ariaModal: "true", tabIndex: -1,
+    onclick: (e) => { if (e.target.id === "movie-modal") o.remove(); } },
     el("div", { className: "mv-card" },
       back && el("div", { className: "mv-back", style: `background-image:url("${back}")` }),
       el("button", { className: "mv-x", textContent: "✕", onclick: () => o.remove() }),
@@ -4541,6 +4550,11 @@ document.addEventListener("click", (e) => {
   if (!drawer.hidden && !drawer.contains(e.target) && !e.target.closest("#menu-btn")) toggleDrawer(false);
 });
 addEventListener("scroll", () => { if (!drawer.hidden) toggleDrawer(false); }, { passive: true });
+document.addEventListener("keydown", (e) => {
+  if (e.key !== "Escape") return;
+  if (!drawer.hidden) toggleDrawer(false);
+  document.querySelector("#movie-modal")?.remove();
+}, true);
 const sf = $("#bar-search"), qi = $("#q");
 function openGameSearch() { sf.hidden = false; qi.focus(); }
 $("#search-btn").onclick = () => {

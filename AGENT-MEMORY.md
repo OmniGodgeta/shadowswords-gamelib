@@ -15,7 +15,9 @@ this. (Netplay internals: `NETPLAY-UI-CONTRACT.md`. Roadmap split:
   `#/status`.
 - Cloud recovery saves now retry transient failures with backoff and record
   `ssw:lastCloudSave` metadata; save slots remain server-authoritative.
-- Movie filters use compact themed controls; cache version is `2.73`.
+- Movie filters use compact themed controls; cache version is `2.74`.
+- Movie dialogs now expose dialog semantics and close on Escape; save-slot
+  loading warns when the local recovery timestamp is newer.
 - Remaining follow-up: live device validation of VLC URI handling and further
   save conflict UI (timestamps/origin comparison).
 
