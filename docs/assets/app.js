@@ -1049,6 +1049,11 @@ async function autoJoinNetplay(wantRoom) {
   toast(`Couldn't connect as Player 2: ${lastError?.message || "timeout"}`);
 }
 function acceptInvite(inv) {
+  // The invite can carry the host's party call — join it as a listener so the
+  // guest is on the same voice channel while they play.
+  if (inv.party) {
+    partyJoin(inv.party).then(() => partyJoinCall(true)).catch(() => {});
+  }
   const room = inv.room;
   const playHref = `#/play/${inv.sys}/${String(inv.file || "").split("/").map(encodeURIComponent).join("/")}`;
   if (!room) { toast("Host hasn't created a room yet"); return; }
@@ -2689,6 +2694,7 @@ async function routeWatch(id) {
     el("p", { className: "hint", textContent: "Live stream from the host — smooth video with sound (falls back to still frames if the stream can't connect)." })));
   wnpStop();
   let dead = 0;
+  let partyJoined = false;
   const token = state.render;
   const poll = async () => {
     if (token !== state.render) { wnpStop(); return; }
@@ -2711,6 +2717,11 @@ async function routeWatch(id) {
             img.style.display = "none";
             vid.play?.().then(() => { vid.muted = false; }).catch(() => { /* tap to unmute */ });
           });
+        }
+        // Join the host's voice party as a listener, if there is one.
+        if (info.party && !partyJoined && !PARTY.id) {
+          partyJoined = true;
+          partyJoin(info.party).then(() => partyJoinCall(true)).catch(() => {});
         }
         if (!info.room || !WNP.alive || vid.style.display === "none") img.src = `${API}/watch/${id}/frame?t=${Date.now()}`;
       }
@@ -3623,7 +3634,7 @@ async function routePlayGame(sys, romParam, resume = false) {
         const room = await wnpStartHost().catch(() => null);
         const d = await fetch(`${API}/watch`, { method: "POST",
           headers: { "content-type": "application/json", ...authHdr() },
-          body: JSON.stringify({ sys, file, name: romName, who: AUTH.user?.display || prefs().netplayName || "Host", room }),
+          body: JSON.stringify({ sys, file, name: romName, who: AUTH.user?.display || prefs().netplayName || "Host", room, party: PARTY.id || null }),
         }).then((r) => r.json());
         window.__watchId = d.id;
         const link = `${location.origin}${location.pathname}#/watch/${d.id}`;
@@ -3825,7 +3836,8 @@ async function invitePicker({ sys, file, name, watch }) {
             headers: { "content-type": "application/json", ...authHdr() },
             body: JSON.stringify({ to: p.cid, toUser: p.uid || null, from: CID,
               fromName: AUTH.user?.display || prefs().netplayName || "Someone",
-              sys, file, name, watch: watch || null, room: NP.room || window.__npRoom || null, np: true }) });
+              sys, file, name, watch: watch || null, room: NP.room || window.__npRoom || null, np: true,
+              party: PARTY.id || null }) });
           toast(`Invited ${p.who}`);
         } catch { toast("Couldn't send the invite"); }
       } }))

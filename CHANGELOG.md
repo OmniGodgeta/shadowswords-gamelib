@@ -1,5 +1,11 @@
 # Changelog
 
+## 3.2
+- Watch and netplay invites now carry the host's party call: accepting an
+  invite, or opening a watch link, joins the voice party as a listener so
+  spectators are on the same channel. (`/watch` and `/play/invite` gained a
+  `party` field; the server must be restarted after this change.)
+
 ## 3.1
 - Party chat and the voice-call panel are now reachable **during a game** from
   the `⋯` menu (`💬 Chat & party`) and mount inside the player so they render

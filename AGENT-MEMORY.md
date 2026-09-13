@@ -6,6 +6,17 @@ agent can pick up context without re-deriving it. Read `AGENTS.md` first, then
 this. (Netplay internals: `NETPLAY-UI-CONTRACT.md`. Roadmap split:
 `FEATURE-BACKLOG.md`.)
 
+## Session 2026-09-13 — watch/invite carry the party call
+- `invitePicker` and the watch-party `POST /watch` now send `party: PARTY.id`;
+  the server stores it on `WATCH` and on invites (`watchMeta` and the invite
+  object expose it). `acceptInvite()` and `routeWatch()` join the party as a
+  listener (`partyJoin(id)` → `partyJoinCall(true)`).
+- Applied the `party` field to both `server/arcade-server.mjs` and the live
+  `~/arcade-server.mjs`; restarted with `pkill -9 -f arcade-server.mjs`.
+- So the flow the owner asked for works: host starts a party call, invites a
+  watcher; the watcher opens the watch link and is on the call (listening),
+  not controlling the game.
+
 ## Session 2026-09-13 — in-game party chat + RA connection test
 - `openPartyChat()` now mounts via `uiRoot()` (was `document.body`) so the
   panel renders above a fullscreen game. `html.playing` hides only

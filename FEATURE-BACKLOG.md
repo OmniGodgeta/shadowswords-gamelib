@@ -101,10 +101,10 @@ floating bubble); **RetroAchievements = web login now + cheevos unlocks after**;
 - ✅ Watcher → talker: `🎙 Use microphone` rebuilds the peers with a mic track.
 - ✅ In-game access: `💬 Chat & party` in the `⋯` menu shows the panel above the
   game (mounted via `uiRoot()`).
+- ✅ Watch/invite → call: `/watch` and `/play/invite` carry `party`; accepting
+  or opening a watch link joins the party as a listener.
 - ⏳ Unify the netplay `#np-*` voice with the party call so a watcher joining a
   netplay session lands on the same call.
-- ⏳ Add the party id to the watch/invite payloads so a "watch" invite can also
-  drop the guest onto the call.
 
 ### B. RetroAchievements
 - Done: `raSettingsForm()` (prefs `raEnabled/raUser/raKey`) in profile Settings

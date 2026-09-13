@@ -550,7 +550,7 @@ function pruneWatch() {
 }
 setInterval(pruneWatch, 8000).unref?.();
 function watchMeta(id, w) {
-  return { id, sys: w.sys, file: w.file, name: w.name, host: w.host, at: w.at, live: !!w.frame, room: w.room || null };
+  return { id, sys: w.sys, file: w.file, name: w.name, host: w.host, at: w.at, live: !!w.frame, room: w.room || null, party: w.party || null };
 }
 
 // ---- WebRTC netplay signalling (game traffic is peer-to-peer) ----
@@ -867,6 +867,7 @@ async function playInvite(req, res) {
     fromName: u ? u.display : (b.fromName || "Someone"),
     sys: b.sys, file: b.file, name: b.name || b.file,
     watch: b.watch || null, room: b.room || null, np: b.np !== false,
+    party: (typeof b.party === "string" && /^[0-9a-f]{4,32}$/i.test(b.party)) ? b.party : null,
     at: now(),
   };
   s.invites.push(inv);
@@ -1249,7 +1250,8 @@ const server = http.createServer(async (req, res) => {
       const u = userByToken(req);
       WATCH.set(id, { sys: b.sys || null, file: b.file || null, name: b.name || "Game",
         host: u ? u.display : (b.who || "Host"), at: now(), frame: null, ctype: "image/jpeg",
-        room: (typeof b.room === "string" && /^[0-9a-f]{4,32}$/i.test(b.room)) ? b.room : null });
+        room: (typeof b.room === "string" && /^[0-9a-f]{4,32}$/i.test(b.room)) ? b.room : null,
+        party: (typeof b.party === "string" && /^[0-9a-f]{4,32}$/i.test(b.party)) ? b.party : null });
       jsonRes(res, 200, { id, url: `/#/watch/${id}` }); return;
     }
     if (P === "/watch/list" && req.method === "GET") {
