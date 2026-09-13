@@ -541,16 +541,40 @@ function npAttachRemoteAudio() {
 // Enable/disable the local mic. Used by the netplay sheet toggle and auto-run
 // on link if prefs().npVoice. Renegotiation is handled by onnegotiationneeded.
 // Inside the Android app the OS prompt only appears after the app is told to
-// request RECORD_AUDIO, so we signal first and retry getUserMedia once.
+// request RECORD_AUDIO. That dialog is asynchronous and can take several
+// seconds, so keep retrying while it is up instead of giving up after one try.
 async function npGetMic() {
+  if (!navigator.mediaDevices?.getUserMedia) {
+    throw new Error("Microphone capture isn't available in this browser");
+  }
   const ask = () => navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } });
-  const app = window.SSNotify;
-  if (app) { try { app.postMessage(JSON.stringify({ mic: true, cid: CID, origin: location.origin, on: prefs().netplay !== false })); } catch { /* */ } }
-  try { return await ask(); }
-  catch (e) {
-    if (!app) throw e;
-    await new Promise((r) => setTimeout(r, 1800));
-    return await ask();
+  const signal = () => {
+    try { window.SSNotify?.postMessage(JSON.stringify({ mic: true, cid: CID, origin: location.origin, on: prefs().netplay !== false })); } catch { /* */ }
+  };
+  // The native wrapper tells us once the OS dialog is answered.
+  let grantedByApp = null;
+  const onAppPerm = (e) => { grantedByApp = !!e.detail?.granted; };
+  addEventListener("ssw-mic", onAppPerm);
+  // Only the Android app has the async OS dialog worth waiting on; a desktop
+  // browser resolves (or rejects) its own prompt in one call.
+  const maxAttempts = window.SSNotify ? 6 : 1;
+  signal();
+  let lastErr = null;
+  try {
+    for (let attempt = 0; attempt < maxAttempts; attempt++) {
+      try { return await ask(); }
+      catch (e) {
+        lastErr = e;
+        // Hard device/permission errors won't resolve by waiting longer.
+        if (e?.name === "NotFoundError" || e?.name === "NotReadableError" || e?.name === "SecurityError") throw e;
+        if (grantedByApp === false) throw e;      // the app says the OS denied it
+        if (attempt === 0 || grantedByApp == null) signal();
+        await new Promise((r) => setTimeout(r, 1400 + attempt * 700));
+      }
+    }
+    throw lastErr || new Error("microphone unavailable");
+  } finally {
+    removeEventListener("ssw-mic", onAppPerm);
   }
 }
 async function npSetVoice(on) {
@@ -558,7 +582,14 @@ async function npSetVoice(on) {
     if (NP.mic) return true;
     try {
       NP.mic = await npGetMic();
-    } catch (e) { toast("Mic permission denied"); npLog(`mic denied ${e?.name || e}`); return false; }
+    } catch (e) {
+      const hint = e?.name === "NotAllowedError"
+        ? "Check the microphone permission for RetroVerse in your phone settings"
+        : e?.message || e?.name || "unavailable";
+      toast(`Mic permission denied — ${hint}`);
+      npLog(`mic denied ${e?.name || e}`);
+      return false;
+    }
     NP.micTrack = NP.mic.getAudioTracks()[0] || null;
     if (NP.micTrack && NP.pc) {
       try { NP.micSender = NP.pc.addTrack(NP.micTrack, new MediaStream([NP.micTrack])); } catch { /* */ }

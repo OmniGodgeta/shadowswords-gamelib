@@ -1,5 +1,14 @@
 # Changelog
 
+## 2.99
+- Voice chat no longer reports "permission denied" while the phone's permission
+  dialog is still open: the app now signals when the dialog is answered and the
+  site waits/retries for it. Desktop browsers still prompt once. A clear hint
+  points to the app's microphone permission when it is genuinely blocked.
+- Companion app change (requires a new APK): the WebView permission handler
+  reports the OS result back to the page and requests the OS mic permission for
+  any audio-capture request.
+
 ## 2.98
 - Live TV now loads the full iptv-org catalog (**11,000+ channels**) with search
   and a group filter instead of a handful of curated entries. Browser playback
