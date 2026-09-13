@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.73
+- Added track-level music search, genre filtering, persistent favorites, volume controls, and a music request action.
+- Added retry/backoff and last-success metadata for cloud recovery saves.
+- Added IPTV source attribution, catalog diagnostics, and retry UI.
+- Added music/IPTV checks to System status and compact themed movie filters.
+
 ## 2.72
 - Added Live TV channel cards to Home, Lounge, and the dedicated TV view, with Android VLC handoff.
 - Added music volume control, track favorites, and music request actions.

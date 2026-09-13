@@ -1729,11 +1729,20 @@ async function routeLounge() {
 async function routeTv() {
   const channels = await fetch("assets/live-tv.json", { cache: "no-store" }).then((r) => r.json()).catch(() => []);
   document.title = "Live TV — RetroVerse";
+  const status = el("div", { className: "hint", textContent: channels.length
+    ? `${channels.length} curated channels · Source: iptv-org and channel broadcasters`
+    : "The channel catalog is unavailable right now." });
+  const list = el("div", { className: "tile-grid", style: "padding:0" },
+    ...(channels.length ? channels.map(tvCard) : [el("div", { className: "empty-state" },
+      el("p", { textContent: "Live TV is temporarily unavailable." }),
+      el("button", { className: "btn btn-ghost", textContent: "Retry", onclick: () => routeTv() }))]));
   view.replaceChildren(el("div", { className: "wrap" },
     el("section", { className: "shelf", style: "padding:22px 0 8px" },
       el("div", { className: "shelf-head" }, el("h1", { textContent: "Live TV" })),
-      el("p", { className: "hint", textContent: "Choose a channel. Android sends streams to VLC when it is installed; browsers use the stream directly." })),
-    el("div", { className: "tile-grid", style: "padding:0" }, ...channels.map(tvCard))));
+      el("p", { className: "hint", textContent: "Choose a channel. Android sends streams to VLC when it is installed; browsers use the stream directly." }),
+      status,
+      el("a", { className: "btn btn-ghost sm", href: "https://github.com/iptv-org/iptv", ...extTarget, textContent: "IPTV source ↗" })),
+    list));
 }
 
 // Shared lounge chat. Polls GET /chat; POST /chat to send. The same widget is
@@ -2518,11 +2527,13 @@ async function routePlayGame(sys, romParam, resume = false) {
   const putSlot = async (slot) => {
     const gm = window.EJS_emulator?.gameManager;
     if (!gm || !key) return false;
-    try {
+    let body;
+    try { body = gm.getState(); } catch { lastSaveError = "Emulator could not export state"; return false; }
+    for (let attempt = 0; attempt < 3; attempt++) try {
     const response = await fetch(slotUrl(slot), {
       method: "PUT",
       headers: { "content-type": "application/octet-stream", ...tokenHdr(), ...authHdr() },
-      body: gm.getState(),
+      body,
     });
     if (!response.ok) {
       lastSaveError = response.status === 401 ? "Sign in or update your access token"
@@ -2541,11 +2552,13 @@ async function routePlayGame(sys, romParam, resume = false) {
             headers: { "content-type": "image/jpeg", ...tokenHdr(), ...authHdr() }, body: blob }).catch(() => {});
         }, "image/jpeg", 0.72);
       }
+      LS.set("lastCloudSave", { at: lastSaveAt, sys, file, slot });
       return true;
     } catch (e) {
       lastSaveError = e.message || "Server unreachable";
-      return false;
+      if (attempt < 2) await new Promise((resolve) => setTimeout(resolve, 350 * 2 ** attempt));
     }
+    return false;
   };
   const saveFailure = () => lastSaveError
     ? `Cloud save failed — ${lastSaveError}. Check Settings → Access token or /#/status.`
@@ -3197,10 +3210,10 @@ async function routeMovies() {
   const genres = await fetch(`${JF}Genres?IncludeItemTypes=Movie&Recursive=true&SortBy=SortName`)
     .then((r) => r.json()).then((d) => d.Items.map((g) => g.Name)).catch(() => []);
 
-  const fText = el("input", { type: "search", placeholder: "Search movies…" });
-  const fGenre = el("select", {}, el("option", { value: "", textContent: "All genres" }),
+  const fText = el("input", { className: "movie-filter", type: "search", placeholder: "Search movies…" });
+  const fGenre = el("select", { className: "movie-filter" }, el("option", { value: "", textContent: "All genres" }),
     ...genres.map((g) => el("option", { value: g, textContent: g })));
-  const fSort = el("select", {},
+  const fSort = el("select", { className: "movie-filter" },
     el("option", { value: "SortName", textContent: "A–Z" }),
     el("option", { value: "ProductionYear,SortName", textContent: "Newest" }),
     el("option", { value: "DateCreated,SortName", textContent: "Recently added" }),
@@ -3575,7 +3588,30 @@ async function routeMusic(albumIdx) {
     return;
   }
   document.title = "Music — RetroVerse";
+  if (albumIdx === "favorites") {
+    const favs = musicFavs().map((key) => key.split(":").map(Number))
+      .filter(([a, t]) => data.albums[a]?.tracks[t]);
+    const list = el("div", { className: "track-list" }, ...(favs.length ? favs.map(([a, t], i) => {
+      const alb = data.albums[a], track = alb.tracks[t], meta = parseAlbum(alb.name);
+      return el("div", { className: "track", tabIndex: 0, onclick: () => mpPlayTrackAt(a, t) },
+        el("span", { className: "num", textContent: String(i + 1).padStart(2, "0") }),
+        el("span", { textContent: track.title }),
+        el("small", { textContent: `${meta.artist || "Unknown artist"} · ${meta.album}` }));
+    }) : [el("p", { className: "hint", textContent: "No favorite tracks yet. Tap the play/heart control beside a track to add one." })]));
+    view.replaceChildren(el("div", { className: "wrap" },
+      el("section", { className: "shelf", style: "padding:22px 0 8px" },
+        el("div", { className: "shelf-head" }, el("h2", { textContent: "Favorite tracks" }),
+          el("a", { className: "btn btn-ghost sm", href: "#/music", textContent: "Back to music" }))),
+      list));
+    mpBar(); mpAudio();
+    return;
+  }
   const idx = Math.min(Math.max(0, albumIdx | 0), data.albums.length - 1);
+  const allTracks = allTrackRefs().map((r) => {
+    const a = data.albums[r.alb], t = a.tracks[r.tr];
+    return { ...r, title: t.title, artist: parseAlbum(a.name).artist, album: parseAlbum(a.name).album };
+  });
+  const genres = ["All", "Rock", "Rap / Hip-hop", "Electronic", "Jazz", "Metal", "Classical", "Other"];
   const album = data.albums[idx];
   const am = parseAlbum(album.name);
 
@@ -3595,11 +3631,18 @@ async function routeMusic(albumIdx) {
 
   // searchable album list (with artist / album split)
   const albSearch = el("input", { type: "search", className: "alb-search", placeholder: "Search albums or tracks…" });
+  const genreFilter = el("select", { className: "alb-search" }, ...genres.map((g) => el("option", { value: g, textContent: g })));
   const albumList = el("div", { className: "album-list" });
   const drawAlbums = () => {
     const q = albSearch.value.trim().toLowerCase();
-    albumList.replaceChildren(...data.albums.map((a, i) => {
+    const matches = q ? allTracks.filter((t) => `${t.title} ${t.artist} ${t.album}`.toLowerCase().includes(q)) : [];
+    albumList.replaceChildren(...(q && matches.length
+      ? matches.slice(0, 80).map((t) => el("button", { className: "album-btn", onclick: () => mpPlayTrackAt(t.alb, t.tr) },
+        el("span", { className: "alb-txt" }, el("span", { textContent: t.title }), el("small", { textContent: `${t.artist || "Unknown artist"} · ${t.album}` }))))
+      : data.albums.map((a, i) => {
       const m = parseAlbum(a.name);
+      const genre = (a.genre || m.artist || "").toLowerCase();
+      if (genreFilter.value !== "All" && !genre.includes(genreFilter.value.split(" ")[0].toLowerCase())) return null;
       if (q && !(m.album + " " + m.artist + " " + a.name).toLowerCase().includes(q)) return null;
       return el("button", {
         className: "album-btn" + (i === idx ? " active" : "") + (MP.alb === i ? " nowplaying" : ""),
@@ -3612,9 +3655,10 @@ async function routeMusic(albumIdx) {
         el("span", { className: "alb-txt" },
           el("span", { textContent: m.album }),
           el("small", { textContent: `${m.artist ? m.artist + " · " : ""}${a.tracks.length} track${a.tracks.length > 1 ? "s" : ""}` })));
-    }).filter(Boolean));
+    }).filter(Boolean)));
   };
   albSearch.oninput = debounce(drawAlbums, 120);
+  genreFilter.onchange = drawAlbums;
   drawAlbums();
 
   const albHead = el("div", { className: "alb-head" });
@@ -3644,7 +3688,7 @@ async function routeMusic(albumIdx) {
         el("span", { className: "count", textContent: `${data.albums.length} album${data.albums.length > 1 ? "s" : ""}` }),
         el("a", { href: "javascript:void 0", textContent: "🔀 Shuffle everything", onclick: () => mpQueueAll(true) }))),
     el("div", { className: "music-layout" },
-      el("div", { className: "album-col" }, albSearch, albumList),
+      el("div", { className: "album-col" }, albSearch, genreFilter, el("a", { className: "btn btn-ghost sm", href: "#/music/favorites", textContent: "♥ Favorites" }), albumList),
       el("div", {}, albHead, queuePanel, trackList, viz))));
   mpBar();
   mpAudio();
@@ -3794,6 +3838,8 @@ async function routeStatus() {
   await check("Netplay signalling", `${API}/np/health`, (d) => d.ok ? `ok · ${d.rooms || 0} active rooms` : "down");
   await check("ROM service", `${API}/roms/health`, () => "ok");
   await check("Cloud saves", `${STATE_BASE}list`, (d) => `${Array.isArray(d) ? d.length : 0} saved games`, authHdr());
+  await check("Music index", `${MUSIC_BASE}index.json`, (d) => `${d.albums?.length || 0} albums`);
+  await check("IPTV catalog", "assets/live-tv.json", (d) => `${Array.isArray(d) ? d.length : 0} curated channels`);
 }
 async function routeStats() {
   ++state.render; spinner();

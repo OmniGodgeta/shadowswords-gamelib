@@ -6,6 +6,19 @@ agent can pick up context without re-deriving it. Read `AGENTS.md` first, then
 this. (Netplay internals: `NETPLAY-UI-CONTRACT.md`. Roadmap split:
 `FEATURE-BACKLOG.md`.)
 
+## Session 2026-09-13 — media reliability and diagnostics
+
+- Added track-level search, genre filtering, persistent music favorites, volume
+  control, and music requests in `docs/assets/app.js`; the Android bridge
+  contract (`window.SSMusic`) is unchanged.
+- Added IPTV source attribution/retry messaging and Music/IPTV checks to
+  `#/status`.
+- Cloud recovery saves now retry transient failures with backoff and record
+  `ssw:lastCloudSave` metadata; save slots remain server-authoritative.
+- Movie filters use compact themed controls; cache version is `2.73`.
+- Remaining follow-up: live device validation of VLC URI handling and further
+  save conflict UI (timestamps/origin comparison).
+
 ---
 
 ## Session 2026-09-12 — final handoff recovery

@@ -26,6 +26,9 @@ The service worker caches the app shell. If you change `docs/assets/app.js` or
 Skip the bump and users keep running the old bundle until a second reload, or
 forever in the installed PWA / Android WebView.
 
+Run `node tools/smoke-check.mjs` against the self-hosted server after deploy;
+pass a different base URL as its first argument when needed.
+
 The site version (`## [X.Y.Z]` in CHANGELOG), the SW `VERSION`, and the `?v=`
 number are three different counters. Keep the SW `VERSION` and `?v=` in lockstep;
 the CHANGELOG number moves independently.

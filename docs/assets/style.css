@@ -458,6 +458,12 @@ body.lite .shelf-track > .tile, body.lite .tile-grid > .tile { animation: none; 
 .tv-number { color:var(--cyan); font-size:22px; letter-spacing:.08em; }
 .tv-channel-name { color:var(--muted); font-size:11px; text-align:center; padding:0 8px; }
 .grid-tools input, .grid-tools select { font-size:12px; padding:7px 9px; }
+.grid-tools { gap: 7px; flex-wrap: wrap; }
+.movie-filter { background: rgba(16,16,28,.72); color: var(--text); border-color: var(--line-2); }
+.movie-filter:focus { border-color: var(--cyan); box-shadow: var(--glow-cyan); }
+@media (max-width: 560px) {
+  .grid-tools .movie-filter { min-width: 0; flex: 1 1 130px; }
+}
 
 /* ---- music: album column + album head + queue ---- */
 .album-col { display: flex; flex-direction: column; gap: 8px; position: sticky; top: 74px; max-height: calc(100dvh - 150px); }
