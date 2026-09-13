@@ -1566,8 +1566,12 @@ function livePeopleShelf(live, title = "On the floor") {
           onclick: x.netplay && x.room
             ? () => { LS.set("joinNp", { sys: x.sys, file: x.file, room: x.room, t: Date.now() }); }
             : null,
-          textContent: x.netplay && x.room ? "Join" : "Play too" }),
-        x.watch && el("a", { className: "btn btn-ghost sm", href: `#/watch/${x.watch}`, textContent: "Watch" })));
+          textContent: x.netplay && x.room ? "Join as P2" : "Play too" }),
+        x.watch
+          ? el("a", { className: "btn btn-ghost sm", href: `#/watch/${x.watch}`, textContent: "Watch" })
+          : x.netplay && x.room
+            ? el("span", { className: "btn btn-ghost sm disabled", title: "The player has not started a watch party", textContent: "Watch unavailable" })
+            : null));
   });
   return el("section", { className: "shelf" },
     el("div", { className: "shelf-head" },
@@ -2891,6 +2895,17 @@ async function routePlayGame(sys, romParam, resume = false) {
       ffBtn.classList.toggle("on", !!emu.isFastForward);
       ffBtn.title = emu.isFastForward ? "Fast-forward on" : "Fast-forward";
     };
+    // Some Android WebViews expose the last trigger state when the N64 core
+    // starts. Always begin at normal speed; R2 must be actively pressed.
+    _playbackPad.fast = false;
+    _playbackPad.slow = false;
+    try {
+      if (window.EJS_emulator?.gameManager?.toggleFastForward) {
+        window.EJS_emulator.gameManager.toggleFastForward(0);
+        window.EJS_emulator.isFastForward = false;
+      }
+      ffBtn.classList.remove("on");
+    } catch { /* */ }
     rwBtn.hidden = false;
     const rewind = (on) => {
       const gm = window.EJS_emulator?.gameManager;
@@ -4973,8 +4988,9 @@ function pollGameplayPad() {
   if (!window.__emuUp) return;
   const gp = [...(navigator.getGamepads ? navigator.getGamepads() : [])].find(Boolean);
   if (!gp) return;
-  const fast = !!gp.buttons[7]?.pressed;
-  const slow = !!gp.buttons[6]?.pressed;
+  const trigger = (b) => typeof b?.value === "number" ? b.value > 0.65 : !!b?.pressed;
+  const fast = trigger(gp.buttons[7]);
+  const slow = trigger(gp.buttons[6]);
   if (fast !== _playbackPad.fast) { _playbackPad.fast = fast; setPlaybackPadMode("fast", fast); }
   if (slow !== _playbackPad.slow) { _playbackPad.slow = slow; setPlaybackPadMode("slow", slow); }
 }
@@ -5027,8 +5043,7 @@ if ("serviceWorker" in navigator) {
         btn.textContent = "Updating…";
         bar.hidden = false;
         try { (reg.waiting || worker).postMessage("skip"); } catch { /* */ }
-        setTimeout(doReload, 300);
-        setTimeout(doReload, 2500);
+        setTimeout(doReload, 500);
       };
       uiRoot().append(t);
     };

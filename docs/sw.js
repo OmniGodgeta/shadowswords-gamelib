@@ -5,7 +5,7 @@
    ssw-data   : data/*.json, network-first, PERSISTS across version bumps (offline browse)
    ssw-ejs    : /emulatorjs/* core files, cache-first, PERSISTS (offline play)
    Never touched: /roms, /music, /states, search.json, cross-origin CDN, dynamic APIs */
-const VERSION = "ssw-v2.80";
+const VERSION = "ssw-v2.81";
 const SHELL = VERSION, DATA = "ssw-data", EJS_CACHE = "ssw-ejs";
 const KEEP = [SHELL, DATA, EJS_CACHE];
 const SHELL_FILES = [

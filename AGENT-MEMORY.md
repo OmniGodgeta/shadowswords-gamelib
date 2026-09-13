@@ -73,6 +73,16 @@ this. (Netplay internals: `NETPLAY-UI-CONTRACT.md`. Roadmap split:
 - Desktop `.player-bar` controls are centered with a desktop-only media query;
   touch devices retain the existing scrollable layout. Cache version is `2.80`.
 
+## Session 2026-09-13 — Android update and playback regression fixes
+
+- Service-worker update activation now performs one reload after `skipWaiting`
+  instead of two competing timers, which was especially visible in Android
+  WebView.
+- Emulator speed is reset to normal at game start; gamepad trigger values must
+  exceed 0.65 for R2 fast-forward or L2 slow motion.
+- Presence cards use “Join as P2” and show an explicit Watch-unavailable state
+  when no watch-party ID exists. Cache version is `2.81`.
+
 ---
 
 ## Session 2026-09-12 — final handoff recovery

@@ -1,5 +1,15 @@
 # Changelog
 
+## 2.81
+- Fixed Android/WebView update activation requiring repeated reloads by
+  allowing one controlled service-worker reload instead of two competing
+  reload timers.
+- Reset emulator speed when a game starts and require an active R2/L2 trigger
+  value before enabling fast-forward or slow motion.
+- Home and Play presence cards now label the action “Join as P2” and clearly
+  indicate when Watch is unavailable because the player has not started a
+  watch party.
+
 ## 2.80
 - Centered the desktop in-game toolbar while retaining horizontally scrollable
   left-aligned controls on touch devices.
