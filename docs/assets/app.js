@@ -1196,7 +1196,7 @@ function hero({ kicker, title, desc, meta: metaLine, art, actions = [], mod }) {
 // Home showcase: rotating game preview video (muted, from the ES-DE snaps) with
 // a slider to flip to an era-ordered box-art gallery. Falls back to art-only
 // when there is no video server (the public GitHub Pages mirror).
-function heroShowcase(vids, { title, desc, actions }) {
+function heroShowcase(vids, { title, desc, actions, mod = "" }) {
   const stage = el("div", { className: "hero-art sc-stage" });
   const chip = el("div", { className: "sc-chip", hidden: true });
   const toggle = el("div", { className: "sc-toggle" });
@@ -1297,7 +1297,7 @@ function heroShowcase(vids, { title, desc, actions }) {
   // order: title + actions, then the preview, then the (small) mode toggle
   // directly under it. On desktop `stage` is an absolute backdrop and `toggle`
   // is pinned bottom-left; on mobile they flow in this order.
-  const sec = el("section", { className: "hero hero-sc" }, body, stage, toggle, chip);
+  const sec = el("section", { className: "hero hero-sc" + (mod ? ` ${mod}` : "") }, body, stage, toggle, chip);
   setMode(mode);
   return sec;
 }
@@ -2138,7 +2138,7 @@ async function routePlay() {
 
   const frag = document.createDocumentFragment();
   frag.append(hero({
-    mod: "hero-top",
+    mod: "hero-top play-hero",
     title: "Play in your browser",
     desc: `${total.toLocaleString()} games across ${playable.length} systems, emulated right here. Pick a console below, or drop in a ROM from your device.`,
     art: await spotlightArt(24),
@@ -2149,6 +2149,8 @@ async function routePlay() {
       { label: "⌕ Search games", className: "play-search", onClick: () => openGameSearch() },
     ],
   }));
+  const liveAnchor = el("div");
+  frag.append(liveAnchor);
   const previewAnchor = el("div");
   frag.append(previewAnchor);
   fetch("data/gamevideos.json").then((r) => r.json()).then((vids) => {
@@ -2157,11 +2159,19 @@ async function routePlay() {
       title: "Preview the floor",
       desc: "Scrub through gameplay previews, switch to box art, and jump straight into a game.",
       actions: [{ label: "Browse all previews", href: "#/browse" }],
+      mod: "play-preview",
     }));
   }).catch(() => {});
-  const liveAnchor = el("div");
-  frag.append(liveAnchor);
-  frag.append(el("div", { className: "wrap", style: "padding-bottom:6px" }, dropzone()));
+  frag.append(el("section", { className: "shelf play-tools" },
+    el("div", { className: "shelf-head" },
+      el("h2", { textContent: "Choose how to play" }),
+      el("span", { className: "count", textContent: `${playable.length} systems` })),
+    el("p", { className: "shelf-note hint", textContent: "Pick a console, browse the full library, or load a ROM from your device." }),
+    el("div", { className: "play-tools-row" },
+      el("div", { className: "play-upload" }, dropzone()),
+      el("div", { className: "hero-actions" },
+        el("a", { className: "btn btn-ghost", href: "#/browse", textContent: "Browse all games" }),
+        el("a", { className: "btn btn-ghost", href: "#/netplay", textContent: "Netplay guide" })))));
   frag.append(el("div", { className: "shelf" },
     el("div", { className: "shelf-head" }, el("h2", { textContent: "Playable consoles" }),
       el("span", { className: "count", textContent: `${playable.length}` })),

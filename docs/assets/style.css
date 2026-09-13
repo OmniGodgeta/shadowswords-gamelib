@@ -179,6 +179,8 @@ main { min-height: calc(100dvh - var(--bar-h) - 90px); }
 /* Play page — text pulled up to the top, the famous-titles collage behind it */
 .hero.hero-top { align-items: flex-start; min-height: min(50vh, 420px); padding-top: clamp(16px, 4vh, 40px); }
 .hero.hero-top .hero-art { inset: 0; }
+.hero.play-hero { min-height: clamp(300px, 38vh, 360px); }
+.hero.play-hero .hero-title { max-width: 560px; }
 .hero-art img, .hero-art .collage { width: 100%; height: 100%; object-fit: cover; }
 .hero-art .collage {
   display: grid; gap: 4px;
@@ -1003,6 +1005,7 @@ body.lite .pad-row.listening .pr-chip { animation: none; border-style: dashed; }
 
 /* ---- home showcase: game preview video + box-art gallery ------------------ */
 .hero-sc { flex-direction: column; justify-content: flex-end; align-items: stretch; }
+.hero.play-preview { min-height: clamp(360px, 48vh, 470px); }
 .hero-sc .hero-body { align-self: auto; flex: 0 0 auto; }
 .sc-stage { inset: 0; background: #05050c; }
 .sc-v { width: 100%; height: 100%; object-fit: cover; background: #05050c; }
@@ -1083,6 +1086,7 @@ body.lite .pad-row.listening .pr-chip { animation: none; border-style: dashed; }
 }
 
 @media (max-width: 720px) {
+  .hero.play-hero { min-height: 0; }
   .hero-sc { display: block; }
   /* the title sits above the clip on mobile, not over it — so no overlay at
      all (it was dimming the video top and, being static, sitting over the
@@ -1101,6 +1105,9 @@ body.lite .pad-row.listening .pr-chip { animation: none; border-style: dashed; }
   .sc-chip { position: relative; inset: auto; max-width: none; margin: 10px var(--pad) 0; }
   .sc-strip { padding-left: 12px; }
   .hero-sc[data-mode="art"] .sc-stage { height: clamp(150px, 40vw, 240px); }
+  .hero.play-preview { min-height: 0; }
+  .play-tools-row { align-items: stretch; }
+  .play-tools-row > .hero-actions { margin-left: 0; }
 }
 
 .sc-strip-load { position:absolute; inset:0; display:grid; place-items:center; color:var(--dim); font-size:12px; letter-spacing:.12em; text-transform:uppercase; }
@@ -1122,6 +1129,11 @@ body.lite .pad-row.listening .pr-chip { animation: none; border-style: dashed; }
 .cab-plaque .cab-t { font-weight: 800; font-size: 13px; letter-spacing: .04em; }
 .cab-plaque .cab-s { font-size: 11px; color: var(--dim); }
 .play-search { display: none; }
+.play-tools { padding-top: 22px; }
+.play-tools-row { display: flex; align-items: center; gap: 18px; flex-wrap: wrap; }
+.play-tools-row > .hero-actions { margin-left: auto; }
+.play-upload { width: min(420px, 100%); }
+.play-upload .drop { min-height: 72px; }
 @media (min-width: 1024px) {
   .cab-dock { gap: 14px; }
   .cab-plaque { min-width: 158px; padding: 18px 20px; gap: 4px; }

@@ -42,6 +42,13 @@ this. (Netplay internals: `NETPLAY-UI-CONTRACT.md`. Roadmap split:
   The existing `/chat` and watch/netplay transports remain unchanged. Cache
   version is `2.76`.
 
+## Session 2026-09-13 — Play landing page organization
+
+- Reordered `#/play`: main actions, Friends/On the floor presence, preview
+  slider, upload/browse/netplay tools, then playable console shelves.
+- Added `play-hero`, `play-preview`, and `play-tools` responsive styles to
+  keep the page compact and usable on mobile. Cache version is `2.77`.
+
 ---
 
 ## Session 2026-09-12 — final handoff recovery

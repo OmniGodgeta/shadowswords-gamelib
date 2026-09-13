@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.77
+- Reorganized the Play landing page so active players appear immediately
+  after the main actions, followed by the preview slider and a compact
+  “Choose how to play” area.
+- Reduced oversized Play-page hero and preview spacing on desktop and mobile.
+
 ## 2.76
 - Made the floating Chat button draggable across the site, with persistent
   positioning and an X drop target to hide it until reload.
