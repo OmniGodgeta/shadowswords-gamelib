@@ -21,6 +21,17 @@ this. (Netplay internals: `NETPLAY-UI-CONTRACT.md`. Roadmap split:
 - Remaining follow-up: live device validation of VLC URI handling and further
   save conflict UI (timestamps/origin comparison).
 
+## Session 2026-09-13 — netplay toolbar and watcher UX
+
+- The in-game player bar now groups transport, saves, and Netplay controls.
+  Invite, Watch, Sync, and room controls are inside the responsive Netplay
+  submenu; the `#player`, `#game`, and `window.SSMusic` contracts are unchanged.
+- The Netplay sheet can start a watch party explicitly, allowing viewers to
+  join without occupying Player 2. Home/Play presence cards continue to show
+  Watch once the host starts the party.
+- Signaling polling now surfaces room expiry and repeated server failures
+  instead of silently swallowing them. Cache version is `2.75`.
+
 ---
 
 ## Session 2026-09-12 — final handoff recovery

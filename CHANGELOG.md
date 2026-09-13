@@ -1,5 +1,12 @@
 # Changelog
 
+## 2.75
+- Reorganized the in-game toolbar into transport, saves, and Netplay groups.
+- Moved Invite, Watch, Sync, and room controls into a responsive Netplay submenu.
+- Added explicit watch-party start controls to the Netplay sheet so viewers can
+  join without taking Player 2.
+- Improved signaling poll errors, room-expiry messaging, and reconnect diagnostics.
+
 ## 2.74
 - Added keyboard Escape handling for the drawer and movie dialog.
 - Added save-slot warnings when the local recovery timestamp is newer than the server copy.

@@ -206,7 +206,7 @@ function snapshotNetplay(sys, file, name) {
 }
 /* WebRTC netplay — replaces EmulatorJS's broken savestate lockstep.
    Host = player 1, guest = player 2. Inputs ride a datachannel on the tailnet. */
-const NP = { role: null, room: null, pc: null, dc: null, myP: 0, after: 0, pollT: 0, alive: false, pendingIce: [], rxLen: 0, rxGot: 0, rxChunks: [], syncT: 0, sent: 0, recv: 0, video: false, hostStream: null, mic: null, micTrack: null, micSender: null, remoteAudio: null, pingT: 0, rtt: 0, meReady: false, peerReady: false, micMuted: false };
+const NP = { role: null, room: null, pc: null, dc: null, myP: 0, after: 0, pollT: 0, pollFails: 0, alive: false, pendingIce: [], rxLen: 0, rxGot: 0, rxChunks: [], syncT: 0, sent: 0, recv: 0, video: false, hostStream: null, mic: null, micTrack: null, micSender: null, remoteAudio: null, pingT: 0, rtt: 0, meReady: false, peerReady: false, micMuted: false };
 
 // Netplay diagnostics: kept in memory and shown in the Netplay sheet so a
 // failure can be read off a phone with no devtools.
@@ -222,6 +222,8 @@ function npLog(msg) {
 function npIndicator() {
   let text = null;
   const open = NP.dc?.readyState === "open";
+  const sync = document.getElementById("np-sync-btn");
+  if (sync) sync.hidden = !(open && NP.role === "host" && !NP.video);
   const ping = (open && NP.rtt) ? ` · ${NP.rtt} ms` : "";
   const ready = (open && NP.peerReady) ? " ✓ ready" : "";
   if (NP.role === "host") text = open ? `● P2 connected${ping}${ready}` : (NP.room ? "○ Waiting for P2" : null);
@@ -564,11 +566,25 @@ async function npHandleSig(m) {
 function npPoll() {
   if (!NP.alive || !NP.room) return;
   fetch(`${API}/np/sig?room=${encodeURIComponent(NP.room)}&after=${NP.after}`, { cache: "no-store" })
-    .then((r) => r.json()).then(async (d) => {
+    .then((r) => {
+      if (!r.ok) { const e = new Error(`signalling HTTP ${r.status}`); e.status = r.status; throw e; }
+      return r.json();
+    }).then(async (d) => {
       if (!d || d.error) return;
+      NP.pollFails = 0;
       NP.after = d.after || NP.after;
       for (const m of (d.msgs || [])) await npHandleSig(m);
-    }).catch(() => {}).finally(() => { if (NP.alive) NP.pollT = setTimeout(npPoll, 300); });
+    }).catch((e) => {
+      if (!NP.alive) return;
+      NP.pollFails++;
+      npLog(`signalling poll failed (${NP.pollFails}): ${e.message || e}`);
+      if (e.status === 404) {
+        toast("This netplay room expired — create a new room");
+        npStop();
+      } else if (NP.pollFails === 5) {
+        toast("Netplay server is not responding — still trying to reconnect");
+      }
+    }).finally(() => { if (NP.alive) NP.pollT = setTimeout(npPoll, 500); });
 }
 async function npHost({ sys, file, name, reuse }) {
   const d = await fetch(`${API}/np/room`, { method: "POST", headers: { "content-type": "application/json", ...authHdr() },
@@ -672,7 +688,7 @@ function npStop() {
   npIndicator();
   const cv = document.querySelector("#game canvas");
   if (cv) cv.style.visibility = "";
-  NP.dc = NP.pc = NP.room = NP.role = null; NP.myP = 0; NP.pendingIce = [];
+  NP.dc = NP.pc = NP.room = NP.role = null; NP.myP = 0; NP.pendingIce = []; NP.pollFails = 0;
   window.__inNetplay = false; window.__npRoom = null;
 }
 // ---- watch-party over WebRTC (additive; the JPEG stream stays as fallback) ----
@@ -806,6 +822,12 @@ function openNetplaySheet(sys, file, name) {
     kids.push(el("button", { className: "btn btn-ghost", style: "width:100%;margin:6px 0", textContent: "🔗 Copy invite link",
       title: "Share a link that opens this game and auto-joins the room",
       onclick: () => copyInviteLink(sys, file, NP.room) }));
+  }
+  if (NP.role !== "guest" && !window.__watchId && window.__sswStartWatch) {
+    kids.push(el("button", { className: "btn btn-ghost", style: "width:100%;margin:6px 0",
+      textContent: "👁 Start watch party",
+      title: "Let people join as viewers without taking Player 2",
+      onclick: async () => { o.remove(); await window.__sswStartWatch(); } }));
   }
   if (linked) {
     const voiceOn = !!NP.mic;
@@ -2419,6 +2441,12 @@ async function routePlayGame(sys, romParam, resume = false) {
   const npBtn = el("button", { className: "pbtn", id: "np-btn", textContent: "Netplay", title: "Host or join a netplay room for this game", hidden: true });
   const syncBtn = el("button", { className: "pbtn", id: "np-sync-btn", textContent: "Sync", title: "Force both players onto this screen (host only)", hidden: true });
   const invBtn = el("button", { className: "pbtn", id: "inv-btn", textContent: "Invite", title: "Invite someone who's online", hidden: true });
+  const npOpenBtn = el("button", { className: "pbtn np-menu-action", textContent: "Room & connection", title: "Open netplay room controls" });
+  const npMenu = el("div", { className: "np-menu", hidden: true },
+    npOpenBtn, invBtn, watchBtn, syncBtn);
+  const npGroup = el("div", { className: "player-control-group np-group" }, npBtn, npMenu);
+  const transportGroup = el("div", { className: "player-control-group", role: "group", ariaLabel: "Playback controls" }, rwBtn, ffBtn);
+  const saveGroup = el("div", { className: "player-control-group save-group", role: "group", ariaLabel: "Save controls" }, saveBtn, saveAsBtn, loadBtn);
   const flagBtn = el("button", { className: "pbtn", id: "flag-btn", textContent: "⚑", title: "Report a problem with this game" });
   const padLayoutBtn = el("button", { className: "pbtn", id: "pad-layout-btn", textContent: "Pad", title: "Touch pad size, opacity and position", hidden: true });
   if (sys !== "upload") flagBtn.onclick = () => reportGame(sys, file, romName);
@@ -2427,9 +2455,7 @@ async function routePlayGame(sys, romParam, resume = false) {
     el("div", { className: "player-chrome" },
       el("div", { className: "player-bar" },
         el("button", { type: "button", className: "pbtn exit", textContent: "‹ Exit", onclick: (e) => { e.preventDefault(); exitPlayer(); } }),
-        rwBtn, ffBtn,
-        saveBtn, saveAsBtn, loadBtn,
-        npBtn, syncBtn, invBtn, watchBtn,
+        transportGroup, saveGroup, npGroup,
         ctrlBtn, noteBtn, flagBtn, padLayoutBtn),
       el("div", { className: "title", id: "player-title", textContent: "Loading…" })),
     el("div", { className: "player-stage" },
@@ -2453,6 +2479,9 @@ async function routePlayGame(sys, romParam, resume = false) {
         onclick: (e) => { e.preventDefault(); e.stopPropagation(); controlsPanel(core); } }));
   }
   document.body.append(shell);
+  shell.addEventListener("click", (e) => {
+    if (!npGroup.contains(e.target)) npMenu.hidden = true;
+  });
   view.replaceChildren();
 
   const file = sys === "upload" ? null : romParam;
@@ -2749,6 +2778,13 @@ async function routePlayGame(sys, romParam, resume = false) {
         }, 160);
       } catch { toast("Couldn't start a watch party"); }
     };
+    window.__sswStartWatch = () => watchBtn.onclick();
+    npOpenBtn.onclick = () => { npMenu.hidden = true; openNetplaySheet(sys, file, romName); };
+    syncBtn.onclick = () => { npMenu.hidden = true; resyncNetplay(); };
+    npBtn.onclick = (e) => {
+      e.stopPropagation();
+      npMenu.hidden = !npMenu.hidden;
+    };
     const tips = notesFor(sys, file, romName);
     if (tips.length) {
       noteBtn.hidden = false;
@@ -2764,7 +2800,6 @@ async function routePlayGame(sys, romParam, resume = false) {
     window.__playSys = sys; window.__playFile = file;
     if (np && sys !== "upload") {
       npBtn.hidden = false;
-      npBtn.onclick = () => openNetplaySheet(sys, file, romName);
       invBtn.hidden = false;
       invBtn.onclick = () => invitePicker({ sys, file, name: romName, watch: window.__watchId });
     }
@@ -2827,6 +2862,7 @@ function emuCleanup() {
   if (window.__watchId) fetch(`${API}/watch/${window.__watchId}`, { method: "DELETE", keepalive: true }).catch(() => {});
   try { wnpStop(); } catch { /* */ }
   window.__watchId = null; window.__inNetplay = false; window.__npRoom = null;
+  try { delete window.__sswStartWatch; } catch { window.__sswStartWatch = null; }
   try { npStop(); } catch { /* */ }
   try { window.SSPlay && window.SSPlay.postMessage("0"); } catch { /* */ }
   try { screen.orientation.unlock(); } catch { /* */ }

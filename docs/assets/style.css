@@ -500,9 +500,25 @@ body.lite .shelf-track > .tile, body.lite .tile-grid > .tile { animation: none; 
 .player-chrome { position: relative; z-index: 2; flex: 0 0 auto; }
 
 .player-bar {
-  height: 46px; flex: 0 0 auto; display: flex; align-items: center; gap: 14px; padding: 0 14px;
+  min-height: 46px; flex: 0 0 auto; display: flex; align-items: center; gap: 10px; padding: 6px 14px;
   background: #06060c; border-bottom: 1px solid var(--line);
+  overflow: visible; scrollbar-width: thin;
 }
+.player-control-group { display: flex; align-items: center; gap: 5px; flex: 0 0 auto; }
+.player-control-group::before {
+  content: ""; width: 1px; height: 24px; margin: 0 3px;
+  background: var(--line-2); opacity: .75;
+}
+.np-group { position: relative; }
+.np-group .np-menu {
+  position: absolute; z-index: 20; top: calc(100% + 7px); left: 0;
+  display: flex; flex-direction: column; gap: 5px; min-width: 174px; padding: 7px;
+  background: rgba(7,7,15,.98); border: 1px solid var(--gold);
+  border-radius: 10px; box-shadow: 0 12px 28px rgba(0,0,0,.55);
+}
+.np-group .np-menu[hidden] { display: none; }
+.np-menu .pbtn { width: 100%; text-align: left; }
+.np-menu .np-menu-action { color: var(--gold); border-color: rgba(255,210,61,.45); }
 .player-bar .exit { text-transform: uppercase; letter-spacing: .06em; }
 .player-bar .exit:disabled { opacity: .6; cursor: default; }
 .player-chrome .title {
@@ -1220,13 +1236,15 @@ html.playing .party-chat-fab, html.playing .party-chat { display: none; }
 /* phone / touch player chrome */
 @media (pointer: coarse) {
   .player-bar {
-    height: auto; min-height: 52px; flex-wrap: wrap; gap: 8px;
-    padding: 8px 10px calc(8px + env(safe-area-inset-bottom, 0px));
+    height: auto; min-height: 52px; flex-wrap: nowrap; gap: 7px;
+    padding: 8px 10px calc(8px + env(safe-area-inset-bottom, 0px)); overflow-x: auto;
   }
   .player-bar .exit {
     min-height: 44px; padding: 10px 16px; font-size: 14px;
   }
   .player-bar .pbtn { min-height: 40px; padding: 0 12px; }
+  .player-control-group::before { height: 30px; margin: 0 1px; }
+  .np-group .np-menu { position: fixed; top: 62px; left: auto; right: 10px; min-width: 190px; }
 }
 
 /* Touch pad: larger hit targets, press glow, visible analog stick */
@@ -1330,7 +1348,7 @@ html.in-app.playing .drawer { display: none !important; }
   transition: transform .18s ease;
 }
 .player.in-app-player .player-bar {
-  flex-wrap: nowrap; overflow-x: auto; overflow-y: hidden;
+  flex-wrap: nowrap; overflow-x: auto; overflow-y: visible;
   scrollbar-width: none;
 }
 .player.in-app-player .player-bar::-webkit-scrollbar { display: none; }
