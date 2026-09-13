@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>RetroVerse</title>
+<meta name="description" content="Browse, play and stream the RetroVerse game, movie & music collection.">
+<meta name="theme-color" content="#07070d">
+<meta property="og:title" content="RetroVerse">
+<meta property="og:description" content="77,000+ games across 108 systems — browse the lot, play 40-plus in your browser, stream the movies and music.">
+<meta property="og:type" content="website">
+<meta property="og:image" content="assets/img/og.jpg">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="RetroVerse">
+<meta name="twitter:description" content="Browse, play and stream the RetroVerse collection.">
+<meta name="twitter:image" content="assets/img/og.jpg">
+<link rel="manifest" href="manifest.json">
+<link rel="apple-touch-icon" href="assets/img/icon-192.png">
+<link rel="icon" href="assets/img/favicon.png">
+<link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
+<link rel="preconnect" href="https://cdn.emulatorjs.org" crossorigin>
+<link rel="stylesheet" href="assets/style.css?v=2.82">
+</head>
+<body>
+<div class="scanlines" aria-hidden="true"></div>
+<header class="bar" id="bar">
+  <div class="bar-side bar-left">
+    <button class="bar-btn" id="back-btn" aria-label="Back" hidden>‹</button>
+    <nav class="bar-nav" id="bar-nav">
+      <a href="#/" data-nav="home" class="bar-link">Home</a>
+      <a href="#/play" data-nav="play" class="bar-link">Play</a>
+      <a href="#/lounge" data-nav="lounge" class="bar-link">Lounge</a>
+      <a href="#/library" data-nav="library" class="bar-link">Library</a>
+    </nav>
+  </div>
+  <a class="brand" href="#/" aria-label="RetroVerse home">
+    <img class="logo" src="assets/img/logo.webp" alt="RetroVerse" width="260" height="80">
+  </a>
+  <div class="bar-side bar-right" id="bar-right">
+    <button class="bar-btn" id="menu-btn" aria-label="Menu" aria-expanded="false" aria-controls="drawer"><svg viewBox="0 0 24 24" width="1em" height="1em" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16"/></svg></button>
+    <button class="bar-btn" id="search-btn" aria-label="Search"><svg viewBox="0 0 24 24" width="1em" height="1em" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M20.5 20.5l-4-4"/></svg></button>
+  </div>
+  <form class="bar-search" id="bar-search" hidden>
+    <input id="q" type="search" placeholder="Search every system…" autocomplete="off" spellcheck="false">
+  </form>
+</header>
+
+<nav class="drawer" id="drawer" hidden>
+  <a href="#/login" class="drawer-acct signin" id="drawer-acct" data-nav="acct">👤 Sign in</a>
+  <a href="#/" data-nav="home">Home</a>
+  <a href="#/play" data-nav="play">Play</a>
+  <a href="#/lounge" data-nav="lounge">Lounge</a>
+  <a href="#/library" data-nav="library">Library</a>
+  <a href="#/netplay" data-nav="netplay">Netplay</a>
+  <div class="drawer-sep" role="separator"></div>
+  <a href="#/movies" data-nav="movies">Movies</a>
+  <a href="#/music" data-nav="music">Music</a>
+  <a href="#/videos" data-nav="videos">Videos</a>
+  <div class="drawer-sep" role="separator"></div>
+  <a href="#/favorites" data-nav="favorites">Favorites</a>
+  <a href="#/saves" data-nav="saves">Cloud saves</a>
+  <a href="#/contact" data-nav="contact">Contact</a>
+  <a href="#/profile" data-nav="profile">Profile &amp; settings</a>
+</nav>
+
+<main id="view" aria-live="polite"></main>
+
+<button class="party-chat-fab" id="party-chat-fab" type="button" aria-label="Open party chat" aria-expanded="false">Chat</button>
+
+<audio id="player-audio" hidden></audio>
+
+<footer class="foot">
+  <span id="footcount"></span>
+  <span class="foot-sep">·</span>
+  <a href="https://es-de.org/" rel="noopener">ES-DE</a> ·
+  <a href="https://emulatorjs.org/" rel="noopener">EmulatorJS</a> ·
+  <a href="https://discord.gg/QnMc35rUdB" rel="noopener">Discord</a> ·
+  <a href="#/cache">Install &amp; offline</a> ·
+  <a href="javascript:void 0" onclick="toggleLite()">Lite mode</a> ·
+  <a href="javascript:void 0" onclick="toggleHelp()">Shortcuts</a>
+</footer>
+
+<script src="assets/app.js?v=2.82"></script>
+</body>
+</html>
