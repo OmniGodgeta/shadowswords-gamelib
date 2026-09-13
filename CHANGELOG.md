@@ -1,5 +1,22 @@
 # Changelog
 
+## 2.98
+- Live TV now loads the full iptv-org catalog (**11,000+ channels**) with search
+  and a group filter instead of a handful of curated entries. Browser playback
+  uses an in-page player (hls.js for `.m3u8`, native HLS where available) with a
+  clear error and an "open stream" fallback; the app still hands off to VLC.
+- Added **Surprise me** to the Play page hero.
+- In-game toolbar: "Pad layout" moved into the input panel, and the controller
+  entry is now labelled **Input settings**.
+- Chat: player names link to their profile, and the party panel lists active
+  players with a profile link (server now exposes `uname`).
+- Added a **RetroAchievements** settings section (enable, username, web API key)
+  and an in-game Achievements panel. (Achievement unlocking awaits a cheevos-
+  capable emulator path — see AGENT-MEMORY.)
+- Android app: larger RetroVerse wordmark nudged higher in the top bar.
+- `~/arcade-server.mjs` gained `uname` on chat messages and presence; restart
+  `arcade-server.service` to activate the profile links.
+
 ## 2.97
 - Fixed browser-only flicker/artefacts over the game canvas: the full-screen
   `.scanlines` overlay (`mix-blend-mode: multiply`, above the player) is now

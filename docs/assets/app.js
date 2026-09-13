@@ -1325,6 +1325,7 @@ const PREF_DEFAULTS = {
   region: "", playingToasts: true, confirmOverwrite: false, previewSound: true,
   netplay: true, netplayName: "", npAutoUnmute: true, npHostByDefault: true, npVoice: false, npPTT: false,
   ffPadButton: 7, slowPadButton: 6,
+  raEnabled: false, raUser: "", raKey: "",
 };
 const AUTH = { token: LS.get("auth", null), user: null };
 const authHdr = () => AUTH.token ? { "x-ssw-auth": AUTH.token } : {};
@@ -1979,12 +1980,21 @@ async function homeMusicShelf() {
       }) });
   } catch { return null; }
 }
-async function liveTvShelf() {
+async function curatedChannels() {
   const channels = await fetch("assets/live-tv.json", { cache: "no-store" }).then((r) => r.json()).catch(() => []);
-  if (!channels.length) return null;
+  // The catalog entry points at the full iptv-org m3u (a playlist, not a channel).
+  return (Array.isArray(channels) ? channels : []).filter((c) => c && c.url && !/\.m3u(\?|$)/i.test(c.url));
+}
+async function liveTvShelf() {
+  const channels = await curatedChannels();
+  const tiles = channels.map((c) => tvCard(c));
+  tiles.push(el("a", { className: "tile wide tv-card", href: "#/tv" },
+    el("div", { className: "tile-art tv-art" }, el("strong", { className: "tv-number", textContent: "10k+" }),
+      el("span", { className: "tv-channel-name", textContent: "Browse the full IPTV catalog" })),
+    el("div", { className: "tile-cap" }, el("div", { className: "t", textContent: "All channels" }),
+      el("div", { className: "s", textContent: "Search thousands of free channels" }))));
   return shelf({ title: "Live TV", count: channels.length, moreHref: "#/tv",
-    note: "Live channels open in VLC in the Android app.",
-    tiles: channels.map((c) => tvCard(c)) });
+    note: "Live channels open in VLC in the Android app.", tiles });
 }
 function tvCard(c) {
   return el("a", { className: "tile wide tv-card", href: "#/tv", onclick: (e) => { e.preventDefault(); openTvChannel(c); } },
@@ -1993,12 +2003,108 @@ function tvCard(c) {
       el("span", { className: "tv-channel-name", textContent: c.name })),
     el("div", { className: "tile-cap" },
       el("div", { className: "t", textContent: c.name }),
-      el("div", { className: "s", textContent: `Channel ${c.number || "—"}` })));
+      el("div", { className: "s", textContent: c.group ? c.group : `Channel ${c.number || "—"}` })));
 }
 function openTvChannel(c) {
   if (IN_APP && window.SSTV) { window.SSTV.postMessage(JSON.stringify(c)); return; }
-  const w = window.open(c.url, "_blank", "noopener");
-  if (!w) toast("Allow pop-ups to open live TV");
+  playStream(c);
+}
+
+// ---- iptv-org catalog (thousands of free channels) -----------------------
+const IPTV_SRC = "https://iptv-org.github.io/iptv/index.m3u";
+let _iptvCatalog = null;
+function parseM3U(text) {
+  const out = [];
+  let cur = null;
+  for (const raw of String(text).split(/\r?\n/)) {
+    const line = raw.trim();
+    if (!line) continue;
+    if (line.startsWith("#EXTINF")) {
+      const attr = (k) => { const m = line.match(new RegExp(k + '="([^"]*)"', "i")); return m ? m[1] : ""; };
+      const name = (line.split(",").slice(1).join(",") || attr("tvg-name") || "").trim();
+      cur = { name: name || attr("tvg-name") || "Channel", logo: attr("tvg-logo") || null,
+        group: attr("group-title") || "Other", id: attr("tvg-id") || null };
+    } else if (!line.startsWith("#") && cur) {
+      if (/^https?:\/\//i.test(line)) { cur.url = line; out.push(cur); }
+      cur = null;
+    }
+  }
+  return out;
+}
+async function iptvCatalog() {
+  if (_iptvCatalog) return _iptvCatalog;
+  let text = "";
+  try {
+    const cache = await caches.open("ssw-iptv");
+    let res = await cache.match(IPTV_SRC);
+    if (!res || !res.ok) {
+      const fresh = await fetch(IPTV_SRC, { cache: "no-store" });
+      if (fresh.ok) { cache.put(IPTV_SRC, fresh.clone()).catch(() => {}); res = fresh; }
+    }
+    if (res && res.ok) text = await res.text();
+  } catch { /* caches/fetch unavailable */ }
+  if (!text) { try { text = await fetch(IPTV_SRC).then((r) => r.text()); } catch { /* offline */ } }
+  _iptvCatalog = parseM3U(text);
+  return _iptvCatalog;
+}
+
+// Browser playback: HLS via hls.js when the native <video> can't handle m3u8.
+let _hlsPromise = null;
+function loadHls() {
+  if (window.Hls) return Promise.resolve(window.Hls);
+  if (!_hlsPromise) {
+    _hlsPromise = new Promise((resolve, reject) => {
+      const s = el("script", { src: "https://cdn.jsdelivr.net/npm/hls.js@1/dist/hls.min.js" });
+      s.onload = () => resolve(window.Hls);
+      s.onerror = () => reject(new Error("hls.js unavailable"));
+      document.head.append(s);
+    });
+  }
+  return _hlsPromise;
+}
+function playStream(c) {
+  document.getElementById("tv-player-overlay")?.remove();
+  const video = el("video", { className: "tv-video", controls: true, autoplay: true, playsInline: true });
+  const status = el("div", { className: "hint tv-status", textContent: `Tuning ${c.name}…` });
+  const o = el("div", { id: "tv-player-overlay", className: "tv-player-overlay",
+    onclick: (e) => { if (e.target === o) close(); } },
+    el("div", { className: "tv-player-card" },
+      el("div", { className: "tv-player-head" },
+        el("div", {}, el("strong", { textContent: c.name }),
+          c.group ? el("div", { className: "hint", textContent: c.group }) : null),
+        el("button", { className: "cc-x", ariaLabel: "Close", textContent: "✕", onclick: () => close() })),
+      video, status,
+      el("div", { className: "tv-player-acts" },
+        el("button", { className: "btn btn-ghost sm", textContent: "Open stream in a new tab",
+          onclick: () => window.open(c.url, "_blank", "noopener") }))));
+  let hls = null, dead = false;
+  const close = () => {
+    dead = true;
+    try { hls && hls.destroy(); } catch { /* */ }
+    try { video.pause(); video.removeAttribute("src"); video.load(); } catch { /* */ }
+    o.remove();
+  };
+  const fail = (msg) => { if (dead) return; status.textContent = msg; status.classList.add("bad"); };
+  video.onerror = () => fail("This channel didn't respond. Try another, or open the stream directly.");
+  video.onplaying = () => { if (!dead) { status.textContent = "Playing"; status.classList.remove("bad"); } };
+  const isHls = /\.m3u8(\?|$)/i.test(c.url);
+  const nativeHls = !!video.canPlayType("application/vnd.apple.mpegurl");
+  if (isHls && !nativeHls) {
+    loadHls().then((Hls) => {
+      if (dead) return;
+      if (Hls && Hls.isSupported()) {
+        hls = new Hls({ enableWorker: true, lowLatencyMode: false });
+        hls.on(Hls.Events.ERROR, (_e, data) => {
+          if (data && data.fatal) fail(`Stream error (${data.details || "network"}). Try another channel or open the stream directly.`);
+        });
+        hls.loadSource(c.url); hls.attachMedia(video);
+      } else { video.src = c.url; video.play?.().catch(() => {}); }
+    }).catch(() => { if (!dead) { video.src = c.url; video.play?.().catch(() => {}); } });
+  } else {
+    video.src = c.url;
+    video.play?.().catch(() => {});
+  }
+  uiRoot().append(o);
 }
 
 async function routeLounge() {
@@ -2030,22 +2136,59 @@ async function routeLounge() {
       loungeChat())));
 }
 async function routeTv() {
-  const channels = await fetch("assets/live-tv.json", { cache: "no-store" }).then((r) => r.json()).catch(() => []);
+  const token = ++state.render;
   document.title = "Live TV — RetroVerse";
-  const status = el("div", { className: "hint", textContent: channels.length
-    ? `${channels.length} curated channels · Source: iptv-org and channel broadcasters`
-    : "The channel catalog is unavailable right now." });
-  const list = el("div", { className: "tile-grid", style: "padding:0" },
-    ...(channels.length ? channels.map(tvCard) : [el("div", { className: "empty-state" },
-      el("p", { textContent: "Live TV is temporarily unavailable." }),
-      el("button", { className: "btn btn-ghost", textContent: "Retry", onclick: () => routeTv() }))]));
+  spinner();
+  const [curated, catalog] = await Promise.all([
+    curatedChannels().catch(() => []),
+    iptvCatalog().catch(() => []),
+  ]);
+  if (token !== state.render) return;
+  const groups = [...new Set(catalog.map((c) => c.group))].sort((a, b) => a.localeCompare(b));
+  const search = el("input", { className: "chat-input tv-search", type: "search", placeholder: "Search channels…" });
+  const groupSel = el("select", { className: "tv-group" },
+    el("option", { value: "", textContent: `All groups (${groups.length})` }),
+    ...groups.map((g) => el("option", { value: g, textContent: g })));
+  const status = el("div", { className: "hint" });
+  const list = el("div", { className: "tv-list" });
+  const PAGE = 200;
+  let query = "", group = "", shown = PAGE;
+  const draw = () => {
+    if (token !== state.render) return;
+    const q = query.toLowerCase();
+    const all = catalog
+      .filter((c) => !group || c.group === group)
+      .filter((c) => !q || c.name.toLowerCase().includes(q) || (c.group || "").toLowerCase().includes(q));
+    const slice = all.slice(0, shown);
+    const rows = slice.map((c) => el("button", { className: "tv-row", onclick: () => openTvChannel(c) },
+      el("span", { className: "tv-row-logo" }, c.logo ? el("img", { src: c.logo, loading: "lazy", alt: "" }) : el("span", { textContent: "📺" })),
+      el("span", { className: "tv-row-name", textContent: c.name }),
+      el("span", { className: "tv-row-group", textContent: c.group })));
+    list.replaceChildren(...rows);
+    if (all.length > shown) list.append(el("button", { className: "btn btn-ghost",
+      textContent: `Load more (${(all.length - shown).toLocaleString()} left)`,
+      onclick: () => { shown += PAGE; draw(); } }));
+    status.textContent = catalog.length
+      ? `${all.length.toLocaleString()} channels${group ? ` · ${group}` : ""}`
+      : "Couldn't load the IPTV catalog — check your connection.";
+  };
+  const favTop = el("div", { className: "tv-favs" });
+  if (curated.length) {
+    favTop.append(el("div", { className: "shelf-head" }, el("h2", { textContent: "Featured" })),
+      el("div", { className: "tile-grid", style: "padding:0" }, ...curated.map(tvCard)));
+  }
   view.replaceChildren(el("div", { className: "wrap" },
     el("section", { className: "shelf", style: "padding:22px 0 8px" },
       el("div", { className: "shelf-head" }, el("h1", { textContent: "Live TV" })),
-      el("p", { className: "hint", textContent: "Choose a channel. Android sends streams to VLC when it is installed; browsers use the stream directly." }),
-      status,
-      el("a", { className: "btn btn-ghost sm", href: "https://github.com/iptv-org/iptv", ...extTarget, textContent: "IPTV source ↗" })),
-    list));
+      el("p", { className: "hint", textContent: "Thousands of free channels from iptv-org. In the app, channels open in VLC; in a browser they play right here." }),
+      favTop,
+      el("div", { className: "tv-controls" }, search, groupSel),
+      status, list,
+      el("p", { style: "margin-top:16px" },
+        el("a", { className: "btn btn-ghost sm", href: "https://github.com/iptv-org/iptv", ...extTarget, textContent: "IPTV source ↗" })))));
+  search.oninput = () => { query = search.value.trim(); shown = PAGE; draw(); };
+  groupSel.onchange = () => { group = groupSel.value; shown = PAGE; draw(); };
+  draw();
 }
 
 // Shared lounge chat. Polls GET /chat; POST /chat to send. The same widget is
@@ -2057,8 +2200,11 @@ function chatWidget() {
   const who = () => AUTH.user?.display || prefs().netplayName || "Guest";
   let after = 0, timer = 0, alive = true;
   const push = (m) => {
-    list.append(el("div", { className: "chat-msg" },
-      el("span", { className: "chat-who", textContent: m.who || "Guest" }),
+    const whoEl = m.uname
+      ? el("a", { className: "chat-who chat-who-link", href: `#/u/${encodeURIComponent(m.uname)}`,
+          title: `View ${m.who || m.uname}'s profile`, textContent: m.who || m.uname })
+      : el("span", { className: "chat-who", textContent: m.who || "Guest" });
+    list.append(el("div", { className: "chat-msg" }, whoEl,
       el("span", { className: "chat-text", textContent: m.text })));
     list.scrollTop = list.scrollHeight;
   };
@@ -2187,7 +2333,9 @@ function openPartyChat() {
       const row = el("div", { className: "party-friend" },
         el("div", { className: "party-friend-meta" },
           el("span", { className: "live-dot" }),
-          el("strong", { textContent: x.who || "Someone" }),
+          x.uname
+            ? el("a", { className: "chat-who-link", href: `#/u/${encodeURIComponent(x.uname)}`, textContent: x.who || x.uname })
+            : el("strong", { textContent: x.who || "Someone" }),
           el("small", { textContent: `${x.game || "Playing"}${x.netplay ? " · room open" : ""}` })),
         el("div", { className: "party-friend-actions" },
           join,
@@ -2425,6 +2573,7 @@ async function routePlay() {
     art: await spotlightArt(24),
     actions: [
       { label: "Pick a ROM file", primary: true, onClick: () => $("#rom-input")?.click() },
+      { label: "🎲 Surprise me", href: "#/play/random" },
       { label: "Browse all games", href: "#/browse" },
       { label: "Netplay", href: "#/netplay" },
       { label: "⌕ Search games", className: "play-search", onClick: () => openGameSearch() },
@@ -2813,7 +2962,8 @@ async function routePlayGame(sys, romParam, resume = false) {
   const saveBtn = el("button", { className: "pbtn", id: "cloud-save", textContent: "☁ Save", title: "Save state (right-click / long-press to name a slot)", hidden: true });
   const saveAsBtn = el("button", { className: "pbtn", id: "cloud-save-as", textContent: "＋", title: "Save to a named slot", hidden: true });
   const loadBtn = el("button", { className: "pbtn", id: "cloud-load", textContent: "☁ Load", title: "Load a save slot", hidden: true });
-  const ctrlBtn = el("button", { className: "pbtn", id: "ctrl-btn", textContent: "🎮", title: "Controller setup — see & remap buttons", hidden: true });
+  const ctrlBtn = el("button", { className: "pbtn", id: "ctrl-btn", textContent: "Input settings", title: "Controller, keyboard and touch-pad settings", hidden: true });
+  const raBtn = el("button", { className: "pbtn", id: "ra-btn", textContent: "🏆 Achievements", title: "RetroAchievements settings", hidden: true });
   const watchBtn = el("button", { className: "pbtn", id: "watch-btn", textContent: "Watch", title: "Start a watch party — others on the tailnet can spectate", hidden: true });
   const noteBtn = el("button", { className: "note-chip", textContent: "Note", title: "Tips for this game", hidden: true });
   const npBtn = el("button", { className: "pbtn", id: "np-btn", textContent: "Netplay", title: "Host or join a netplay room for this game", hidden: true });
@@ -2826,9 +2976,8 @@ async function routePlayGame(sys, romParam, resume = false) {
   const saveMenu = el("div", { className: "save-menu", hidden: true }, saveBtn, saveAsBtn, loadBtn);
   const saveGroup = el("div", { className: "player-control-group save-group", role: "group", ariaLabel: "Save controls" }, saveMenuBtn, saveMenu);
   const flagBtn = el("button", { className: "pbtn", id: "flag-btn", textContent: "⚑ Report", title: "Report a problem with this game" });
-  const padLayoutBtn = el("button", { className: "pbtn", id: "pad-layout-btn", textContent: "Pad layout", title: "Touch pad size, opacity and position", hidden: true });
   const moreBtn = el("button", { className: "pbtn more-menu-btn", textContent: "⋯", title: "More controls" });
-  const moreMenu = el("div", { className: "more-menu", hidden: true }, ctrlBtn, padLayoutBtn, noteBtn, flagBtn);
+  const moreMenu = el("div", { className: "more-menu", hidden: true }, ctrlBtn, raBtn, noteBtn, flagBtn);
   const moreGroup = el("div", { className: "player-control-group more-group" }, moreBtn, moreMenu);
   if (sys !== "upload") flagBtn.onclick = () => reportGame(sys, file, romName);
   else flagBtn.hidden = true;
@@ -3127,8 +3276,10 @@ async function routePlayGame(sys, romParam, resume = false) {
     // no duplicate Portrait control in the top player menu.
     setLandscape(true);
     applyPadPreset(sys);
-    padLayoutBtn.hidden = false;
-    padLayoutBtn.onclick = () => padLayoutPanel(sys);
+    ctrlBtn.hidden = false;
+    ctrlBtn.onclick = () => controlsPanel(core, sys);
+    raBtn.hidden = false;
+    raBtn.onclick = () => { moreMenu.hidden = true; raPanel(); };
     rememberSession({ sys, file, name: romName });
     window.__npSnapT = setInterval(() => snapshotNetplay(sys, file, romName), 4000);
     try { window.SSPlay && window.SSPlay.postMessage("1"); } catch { /* */ }
@@ -3160,8 +3311,6 @@ async function routePlayGame(sys, romParam, resume = false) {
     }
     window.__emuHeartbeat = setInterval(() => { ping(false); flushPlaytime(); }, 15000);
     window.__emuAutoSaveT = key && !n64 ? setInterval(autoSave, 15000) : 0;
-    ctrlBtn.hidden = false;
-    ctrlBtn.onclick = () => controlsPanel(core);
     watchBtn.hidden = false;
     watchBtn.onclick = async () => {
       if (window.__watchId) {
@@ -3494,7 +3643,7 @@ function padSvg(lbl, showSet) {
 </svg>`;
 }
 
-function controlsPanel(core) {
+function controlsPanel(core, sys) {
   const emu = window.EJS_emulator;
   if (!emu || !emu.controls) { toast("Emulator still loading…"); return; }
   if ($("#ctrl-panel")) return;
@@ -3627,6 +3776,9 @@ function controlsPanel(core) {
         playbackRow("fast", "Fast-forward", PAD_BINDS.ff),
         playbackRow("slow", "Slow motion", PAD_BINDS.slow)),
       el("div", { className: "pad-acts" },
+        sys ? el("button", { className: "btn btn-ghost sm", textContent: "Pad layout…",
+          title: "Touch pad size, opacity and position",
+          onclick: () => { close(); padLayoutPanel(sys); } }) : null,
         el("button", { className: "btn btn-ghost sm", textContent: "Reset to defaults",
           onclick: () => { try { emu.controls = JSON.parse(JSON.stringify(emu.defaultControllers)); } catch { /* */ } apply(); toast("Controls reset to defaults"); } }),
         el("button", { className: "btn btn-primary sm", textContent: "Done", onclick: close })));
@@ -3639,7 +3791,7 @@ function controlsPanel(core) {
   }
 
   panel.append(el("div", { className: "ctrl-card" },
-    el("div", { className: "cc-head" }, el("h3", { textContent: "Controller setup" }),
+    el("div", { className: "cc-head" }, el("h3", { textContent: "Input settings" }),
       el("button", { className: "cc-x", ariaLabel: "Close", textContent: "✕", onclick: close })),
     el("div", { className: "cc-body" }, svgWrap, mapWrap), hint));
   uiRoot().append(panel);
@@ -4634,6 +4786,35 @@ function accountCard() {
         el("div", { className: "hint", style: "margin:16px 0 6px", textContent: "Change password" }),
         el("div", { className: "pw-row" }, pOld, pNew), pBtn, pStatus)));
 }
+// RetroAchievements settings, shared by the profile Settings page and the
+// in-game "Achievements" panel. Credentials stay on the device.
+function raSettingsForm() {
+  const p = prefs();
+  const en = el("input", { type: "checkbox", checked: p.raEnabled === true });
+  en.onchange = () => setPref("raEnabled", en.checked);
+  const user = el("input", { type: "text", placeholder: "RetroAchievements username",
+    autocomplete: "username", value: p.raUser || "", style: "width:180px" });
+  user.onchange = () => setPref("raUser", user.value.trim());
+  const key = el("input", { type: "password", placeholder: "Web API key", autocomplete: "off",
+    value: p.raKey || "", style: "width:180px" });
+  key.onchange = () => setPref("raKey", key.value.trim());
+  return el("div", {},
+    el("label", { className: "set-row" }, en,
+      el("div", {}, el("div", { textContent: "RetroAchievements" }),
+        el("div", { className: "hint", textContent: "Show achievement popups while you play" }))),
+    el("label", { className: "set-row" }, user, el("div", {}, el("div", { textContent: "RA username" }))),
+    el("label", { className: "set-row" }, key,
+      el("div", {}, el("div", { textContent: "RA web API key" }),
+        el("div", { className: "hint", textContent: "From retroachievements.org → Settings → Keys" }))));
+}
+function raPanel() {
+  const o = el("div", { id: "help-overlay", onclick: (e) => { if (e.target.id === "help-overlay") o.remove(); } },
+    el("div", { className: "help-card" },
+      el("h3", { textContent: "RetroAchievements" }),
+      raSettingsForm(),
+      el("button", { className: "btn btn-primary", style: "width:100%;margin-top:12px", textContent: "Done", onclick: () => o.remove() })));
+  uiRoot().append(o);
+}
 function settingsCard() {
   const p = prefs();
   const toggle = (k, label, hint) => {
@@ -4671,6 +4852,7 @@ function settingsCard() {
       toggle("musicShuffle", "Shuffle albums by default", "Start an album shuffled when you hit Play"),
       toggle("previewSound", "Game sound on home previews", "Play each showcase clip's own audio"),
       toggle("lite", "Lite mode", "Drop the scanlines, glow and animations"),
+      raSettingsForm(),
       toggle("playingToasts", "Show “people playing now” popups", ""),
       toggle("confirmOverwrite", "Confirm before overwriting a cloud save", ""),
       signedIn() ? toggle("publicProfile", "Public profile",

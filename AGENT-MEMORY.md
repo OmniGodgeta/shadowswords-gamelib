@@ -6,6 +6,31 @@ agent can pick up context without re-deriving it. Read `AGENTS.md` first, then
 this. (Netplay internals: `NETPLAY-UI-CONTRACT.md`. Roadmap split:
 `FEATURE-BACKLOG.md`.)
 
+## Session 2026-09-13 — IPTV, toolbar/input, chat profiles, RA groundwork
+- `live-tv.json` only ever held 3 playable channels plus a pointer to the whole
+  iptv-org m3u, so Live TV looked like "4 channels". `routeTv` now fetches
+  `https://iptv-org.github.io/iptv/index.m3u` (2.5 MB, CORS `*`), parses it
+  (`parseM3U`), caches it in the `ssw-iptv` Cache API cache, and renders a
+  searchable, group-filtered list (200 at a time). Browser playback is an
+  in-page `playStream()` overlay using hls.js (CDN, lazily loaded) for `.m3u8`;
+  the Android path still posts to `window.SSTV` (VLC). `curatedChannels()`
+  filters the playlist pointer out of the featured tiles.
+- In-game toolbar: `padLayoutBtn` removed; "Pad layout…" now lives inside the
+  controller panel, which is relabelled **Input settings** and receives `sys`
+  (`controlsPanel(core, sys)`).
+- Chat profile links: server chat messages and presence now carry `uname`
+  (username). `chatWidget.push` and the party panel link names to `#/u/<uname>`
+  when present. Applied to tracked `server/arcade-server.mjs` **and** the live
+  `~/arcade-server.mjs`; **restart `arcade-server.service`** to activate.
+- RetroAchievements: the self-hosted EmulatorJS `stable` build has no `cheevos`
+  (grep found none), so unlocking needs either an EJS build with RA or an
+  rcheevos wasm path. For now `raSettingsForm()` (profile Settings + in-game
+  Achievements panel) stores `raEnabled/raUser/raKey` in prefs. RA's web API
+  needs an API key; password login is only available via the rcheevos library
+  (how ES-DE does it), so a future build must call that.
+- Android wordmark: `html.in-app` sets `--bar-h:76px` and `.brand .logo`
+  height 62px with a small upward nudge.
+
 ## Session 2026-09-13 — browser-only overlay flicker
 - Reproduced the site in a real-GPU Chromium (`/usr/bin/chromium --remote-debugging-port=9222` on the Wayland display) and captured the N64 canvas over time. The browser-only difference over the game is `.scanlines`: a fixed full-screen `mix-blend-mode: multiply` overlay at z-index 100, **above** `.player` (z 60). The app hides it (`html.in-app .scanlines`), the browser did not. Cache version `2.97` adds `html.playing .scanlines { display: none }`; the emulator's own CRT filter covers the look.
 - Also throttled `invitePoll` (was every 3s, even in-game) to ~12s while `__emuUp`; it was the only 2-3s main-thread timer during play.

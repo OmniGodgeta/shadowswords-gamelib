@@ -793,6 +793,7 @@ async function playPing(req, res) {
     s.sessions[body.cid] = {
       cid: body.cid,
       uid: u ? u.id : null,
+      uname: u ? u.name : null,
       game: idle ? null : (body.name || null), at: now(),
       who: u ? u.display : (body.who || null),
       sys: idle ? null : (body.sys || null),
@@ -831,6 +832,7 @@ function playStats(req, res) {
   const pack = (x) => ({
     cid: x.cid || null, uid: x.uid || null,
     who: x.who || "Someone",
+    uname: x.uname || null,
     game: x.game || null,
     sys: x.sys || null, file: x.file || null,
     watch: x.watch || null, netplay: !!x.netplay && roomLive(x.room), room: roomLive(x.room) ? (x.room || null) : null, idle: !x.game,
@@ -1153,6 +1155,7 @@ const server = http.createServer(async (req, res) => {
       const u = userByToken(req);
       CHAT.push({ id: crypto.randomBytes(4).toString("hex"),
         who: (u ? u.display : String(b.who || "Guest")).slice(0, 40),
+        uname: u ? u.name : null,
         text, at: Date.now(), uid: u ? u.id : null });
       if (CHAT.length > CHAT_MAX) CHAT.splice(0, CHAT.length - CHAT_MAX);
       jsonRes(res, 200, { ok: true }); return;
