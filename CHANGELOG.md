@@ -1,5 +1,14 @@
 # Changelog
 
+## 2.84
+- Added signaling heartbeats so active rooms remain present while the host or
+  guest is polling.
+- Closing a playing session now removes rooms owned by that client instead of
+  leaving stale room entries behind after Android/WebView restarts.
+- Confirmed the isolated browser boot reaches the EmulatorJS core loader; the
+  remaining render path is now captured by the diagnostics and no longer
+  depends on stale room state.
+
 ## 2.83
 - Fixed browser N64 boot configuration by translating the `n64` metadata alias
   to the verified `mupen64plus_next` EmulatorJS core.

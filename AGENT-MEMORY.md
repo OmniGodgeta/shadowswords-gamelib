@@ -88,6 +88,10 @@ this. (Netplay internals: `NETPLAY-UI-CONTRACT.md`. Roadmap split:
   `mupen64plus_next`. Failed guest joins close the peer and clear stale guest
   recovery hints; signaling message failures no longer stop polling. Cache
   version is `2.83`.
+- Deep audit found stale rooms accumulating because `/np/sig` polling did not
+  refresh room activity and `/play/ping bye` did not remove host rooms. Client
+  polls now include the CID, and both tracked and live server copies remove
+  host rooms on exit. Cache version is `2.84`.
 
 ---
 

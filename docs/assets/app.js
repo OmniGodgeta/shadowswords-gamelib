@@ -573,7 +573,7 @@ async function npHandleSig(m) {
 }
 function npPoll() {
   if (!NP.alive || !NP.room) return;
-  fetch(`${API}/np/sig?room=${encodeURIComponent(NP.room)}&after=${NP.after}`, { cache: "no-store" })
+  fetch(`${API}/np/sig?room=${encodeURIComponent(NP.room)}&after=${NP.after}&cid=${encodeURIComponent(CID)}`, { cache: "no-store" })
     .then((r) => {
       if (!r.ok) { const e = new Error(`signalling HTTP ${r.status}`); e.status = r.status; throw e; }
       return r.json();

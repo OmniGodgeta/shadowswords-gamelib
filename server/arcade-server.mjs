@@ -768,6 +768,9 @@ async function playPing(req, res) {
   const u = userByToken(req);
   if (body.bye && body.cid) {
     delete s.sessions[body.cid];
+    for (const [id, room] of NP_SIG) {
+      if (room.host === body.cid) NP_SIG.delete(id);
+    }
     statsDirty = true;
     jsonRes(res, 200, { ok: true }); return;
   }
@@ -1110,10 +1113,12 @@ const server = http.createServer(async (req, res) => {
     }
     if (P === "/np/sig" && req.method === "GET") {
       const room = u0.searchParams.get("room");
+      const cid = u0.searchParams.get("cid");
       const after = +u0.searchParams.get("after") || 0;
       const r = NP_SIG.get(room);
       if (!r) { jsonRes(res, 404, { error: "no room" }); return; }
       if (r.at < now() - 30 * 60 * 1000) { NP_SIG.delete(room); jsonRes(res, 404, { error: "room expired" }); return; }
+      if (cid && (cid === r.host || r.n > 0)) r.at = now();
       jsonRes(res, 200, { host: r.host, sys: r.sys, file: r.file, name: r.name,
         after: r.n, msgs: r.msgs.filter((m) => m.n > after) });
       return;
