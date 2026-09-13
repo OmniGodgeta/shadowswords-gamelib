@@ -1,5 +1,12 @@
 # Changelog
 
+## 2.90
+- Netplay state synchronization now uses identified transfers with
+  backpressure, preventing large savestates from overflowing the WebRTC data
+  channel or overlapping automatic syncs.
+- Sync failures and guest state-application errors now appear in Netplay
+  diagnostics instead of being silently swallowed.
+
 ## 2.89
 - Netplay signaling now tracks the active Player 2 and routes SDP/ICE only
   between the host and that guest instead of replaying one shared history to

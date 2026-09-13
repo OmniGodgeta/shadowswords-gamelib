@@ -206,7 +206,7 @@ function snapshotNetplay(sys, file, name) {
 }
 /* WebRTC netplay — replaces EmulatorJS's broken savestate lockstep.
    Host = player 1, guest = player 2. Inputs ride a datachannel on the tailnet. */
-const NP = { role: null, room: null, pc: null, dc: null, myP: 0, after: 0, pollT: 0, pollFails: 0, alive: false, pendingIce: [], rxLen: 0, rxGot: 0, rxChunks: [], syncT: 0, sent: 0, recv: 0, video: false, hostStream: null, mic: null, micTrack: null, micSender: null, remoteAudio: null, pingT: 0, rtt: 0, meReady: false, peerReady: false, micMuted: false };
+const NP = { role: null, room: null, pc: null, dc: null, myP: 0, after: 0, pollT: 0, pollFails: 0, alive: false, pendingIce: [], rxId: null, rxLen: 0, rxGot: 0, rxChunks: [], txBusy: false, syncT: 0, sent: 0, recv: 0, video: false, hostStream: null, mic: null, micTrack: null, micSender: null, remoteAudio: null, pingT: 0, rtt: 0, meReady: false, peerReady: false, micMuted: false };
 
 // Netplay diagnostics: kept in memory and shown in the Netplay sheet so a
 // failure can be read off a phone with no devtools.
@@ -336,7 +336,8 @@ function npBindDc(dc) {
       // chunks it — reassemble here before loading.
       const gm = window.EJS_emulator?.gameManager;
       if (!NP.rxLen) {                        // legacy single-message state
-        if (gm?.loadState) try { gm.loadState(new Uint8Array(e.data)); NP.recv++; } catch { /* */ }
+        if (gm?.loadState) try { gm.loadState(new Uint8Array(e.data)); NP.recv++; npLog(`legacy state applied ${e.data.byteLength}B`); }
+          catch (err) { npLog(`legacy state apply failed: ${err?.message || err}`); }
         return;
       }
       NP.rxChunks.push(new Uint8Array(e.data));
@@ -346,13 +347,24 @@ function npBindDc(dc) {
         let o = 0;
         for (const c of NP.rxChunks) { total.set(c, o); o += c.length; }
         NP.rxChunks = []; NP.rxGot = 0; NP.rxLen = 0;
-        if (gm?.loadState) try { gm.loadState(total); NP.recv++; npLog(`state applied ${total.length}B`); } catch { /* */ }
+        if (gm?.loadState) {
+          try { gm.loadState(total); NP.recv++; npLog(`state applied ${total.length}B id=${NP.rxId || "-"}`); }
+          catch (err) { npLog(`state apply failed id=${NP.rxId || "-"}: ${err?.message || err}`); }
+        } else npLog("state apply failed: gameManager.loadState unavailable");
+        NP.rxId = null;
       }
       return;
     }
     let m; try { m = JSON.parse(e.data); } catch { return; }
     if (m.t === "i") npCore(m.p, m.i, m.v);
-    else if (m.t === "sc") { NP.rxLen = m.n | 0; NP.rxGot = 0; NP.rxChunks = []; }
+    else if (m.t === "sc") {
+      if (!Number.isSafeInteger(m.n) || m.n <= 0 || m.n > 64 * 1024 * 1024) {
+        npLog(`state rejected: invalid size ${m.n}`); return;
+      }
+      NP.rxId = String(m.id || "");
+      NP.rxLen = m.n | 0; NP.rxGot = 0; NP.rxChunks = [];
+      npLog(`state receiving ${NP.rxLen}B id=${NP.rxId || "-"}`);
+    }
     else if (m.t === "ping") { try { NP.dc.send(JSON.stringify({ t: "pong", ts: m.ts })); } catch { /* */ } }
     else if (m.t === "pong") { NP.rtt = Math.max(0, Date.now() - m.ts); }
     else if (m.t === "ready") { NP.peerReady = !!m.r; npIndicator(); }
@@ -739,7 +751,7 @@ function npStop() {
   npIndicator();
   const cv = document.querySelector("#game canvas");
   if (cv) cv.style.visibility = "";
-  NP.dc = NP.pc = NP.room = NP.role = null; NP.myP = 0; NP.pendingIce = []; NP.pollFails = 0;
+  NP.dc = NP.pc = NP.room = NP.role = null; NP.myP = 0; NP.pendingIce = []; NP.rxId = null; NP.rxLen = 0; NP.rxGot = 0; NP.rxChunks = []; NP.txBusy = false; NP.pollFails = 0;
   window.__inNetplay = false; window.__npRoom = null;
 }
 // ---- watch-party over WebRTC (additive; the JPEG stream stays as fallback) ----
@@ -985,31 +997,42 @@ function openNetplaySheet(sys, file, name) {
   o.append(el("div", { className: "help-card" }, ...kids));
   uiRoot().append(o);
 }
-function resyncNetplay() {
+async function resyncNetplay() {
   if (NP.video) { toast("Not needed — P2 mirrors your screen"); return; }
   if (NP.role !== "host") { toast("Only the host can sync"); return; }
   if (!NP.dc || NP.dc.readyState !== "open") { toast("Netplay isn't linked yet"); return; }
-  if (npSendState()) toast("Sent your screen to P2");
-  else toast("Sync failed");
+  if (await npSendState()) toast("Sent your screen to P2");
+  else toast("Sync failed — open Diagnostics for the reason");
 }
 // Send the host's current savestate, chunked to stay under the datachannel's
-// max message size (a single dc.send of a >256 KB state throws).
-function npSendState() {
+// max message size. Backpressure prevents large states from overflowing the
+// WebRTC queue and an id prevents overlapping transfers from being applied.
+async function npSendState() {
   const gm = window.EJS_emulator?.gameManager;
   if (NP.role !== "host") return false;
   if (!gm?.getState) { npLog("sync skip: no getState"); return false; }
   if (!NP.dc || NP.dc.readyState !== "open") { npLog("sync skip: dc not open"); return false; }
+  if (NP.txBusy) { npLog("sync skip: previous state is still sending"); return false; }
+  NP.txBusy = true;
   try {
     const st = gm.getState();
     const buf = st instanceof Uint8Array ? st : new Uint8Array(st);
     if (!buf.length) { npLog("sync skip: empty state"); return false; }
+    const id = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
     const CH = 16384;
-    NP.dc.send(JSON.stringify({ t: "sc", n: buf.length }));
-    for (let o = 0; o < buf.length; o += CH) NP.dc.send(buf.subarray(o, o + CH));
+    NP.dc.send(JSON.stringify({ t: "sc", id, n: buf.length }));
+    for (let o = 0; o < buf.length; o += CH) {
+      while (NP.dc.bufferedAmount > 256 * 1024) {
+        await new Promise((resolve) => setTimeout(resolve, 20));
+        if (!NP.dc || NP.dc.readyState !== "open") throw new Error("data channel closed during sync");
+      }
+      NP.dc.send(buf.subarray(o, Math.min(o + CH, buf.length)));
+    }
     NP.sent++;
-    npLog(`state sent ${buf.length}B`);
+    npLog(`state sent ${buf.length}B id=${id}`);
     return true;
-  } catch (e) { npLog(`state send error ${e?.message || e}`); return false; }
+  } catch (e) { npLog(`state send error: ${e?.message || e}`); return false; }
+  finally { NP.txBusy = false; }
 }
 function maybeResumeSession() {
   const s = LS.get("lastSession", null);

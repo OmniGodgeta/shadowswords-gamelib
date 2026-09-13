@@ -28,6 +28,15 @@ this. (Netplay internals: `NETPLAY-UI-CONTRACT.md`. Roadmap split:
 - The tracked server and live `~/arcade-server.mjs` must stay identical; restart
   `arcade-server.service` after backend changes.
 
+## Session 2026-09-13 — state synchronization transport
+
+- Connection and signaling can succeed while the two local emulator cores
+  drift. The old sync path sent every 16 KB state chunk immediately, allowed
+  overlapping transfers, and hid `loadState` errors.
+- Cache version `2.90` adds a transfer ID, one-transfer-at-a-time locking,
+  WebRTC bufferedAmount backpressure, bounded receive sizes, and visible state
+  send/apply diagnostics.
+
 ## Session 2026-09-13 — media reliability and diagnostics
 
 - Added track-level search, genre filtering, persistent music favorites, volume
