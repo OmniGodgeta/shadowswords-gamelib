@@ -487,6 +487,14 @@ body.lite .shelf-track > .tile, body.lite .tile-grid > .tile { animation: none; 
 .tv-video { width:100%; aspect-ratio:16/9; background:#000; border-radius:10px; display:block; }
 .tv-status.bad { color:var(--pink,#ff5fa2); }
 .tv-player-acts { display:flex; gap:8px; flex-wrap:wrap; margin-top:8px; }
+.gfx-opts { display:flex; flex-direction:column; gap:8px; margin:6px 0; }
+.gfx-opt {
+  display:flex; flex-direction:column; gap:2px; text-align:left; width:100%; cursor:pointer;
+  padding:10px 12px; border-radius:10px; border:1px solid var(--line); background:var(--bg-2); color:var(--text);
+}
+.gfx-opt:hover { border-color: var(--cyan); }
+.gfx-opt.on { border-color: var(--cyan); box-shadow: var(--glow-cyan); }
+.gfx-opt .hint { margin:0; }
 .grid-tools input, .grid-tools select { font-size:12px; padding:7px 9px; }
 .grid-tools { gap: 7px; flex-wrap: wrap; }
 .movie-filter { background: rgba(16,16,28,.72); color: var(--text); border-color: var(--line-2); }
@@ -1275,6 +1283,15 @@ body.lite .pad-row.listening .pr-chip { animation: none; border-style: dashed; }
 .party-chat-reset { border: 0; background: transparent; color: var(--dim); font-size: 10px; cursor: pointer; }
 .party-chat-close { border: 0; background: transparent; color: var(--muted); font-size: 24px; line-height: 1; cursor: pointer; }
 .party-chat .chat-log { height: min(42vh, 280px); }
+.party-call { margin-bottom: 10px; padding-bottom: 9px; border-bottom: 1px solid var(--line); display: flex; flex-direction: column; gap: 6px; }
+.party-call-head { display: flex; align-items: baseline; gap: 8px; }
+.party-call-code { display: flex; align-items: center; gap: 6px; }
+.party-call-code code { background: var(--bg-2); border: 1px solid var(--line-2); border-radius: 6px; padding: 3px 7px; letter-spacing: .08em; }
+.party-call-join { display: flex; gap: 6px; }
+.party-call-join input { flex: 1; min-width: 0; }
+.party-call-members { display: flex; flex-direction: column; gap: 3px; max-height: 140px; overflow-y: auto; }
+.party-member { display: flex; align-items: center; gap: 7px; font-size: 12px; }
+.party-member strong { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .party-friends { margin-bottom: 10px; border-bottom: 1px solid var(--line); padding-bottom: 9px; }
 .party-friends-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; margin-bottom: 6px; }
 .party-friend { display: flex; align-items: center; gap: 8px; padding: 7px 0; border-top: 1px solid rgba(255,255,255,.06); }

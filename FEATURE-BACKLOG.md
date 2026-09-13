@@ -83,19 +83,23 @@ Owner decisions: **party calls = native Android** (survives app close, OS
 floating bubble); **RetroAchievements = web login now + cheevos unlocks after**;
 **graphics = per-console options**.
 
-### A. Party calls (Discord-like)
-Needs both repos and a server room:
-1. Server: a persistent party room on `arcade-server.mjs` — create/join, members,
-   presence (who is on the call), and WebRTC signaling (reuse the `/np/sig`
-   fan-out pattern but many peers). Design the room to outlive a single socket.
-2. Web: a `PARTY` module (mesh `RTCPeerConnection`s, one per member), 1:1 and
-   small-group voice; mic from the existing `npGetMic()` (2.99 handshake).
-   Watchers join a party without taking a player slot.
-3. Android: foreground service + `SYSTEM_ALERT_WINDOW` floating bubble so the
-   call persists outside the app and shows over other apps; notification with
-   mute/leave. Grant flow for `SYSTEM_ALERT_WINDOW` + `RECORD_AUDIO` +
-   `FOREGROUND_SERVICE_MICROPHONE`.
-4. Chat floating window: shows party members, invite/join/leave, watcher view.
+### A. Party calls (Discord-like) — started
+- ✅ Server party room on `arcade-server.mjs`: `/party` (create/join),
+  `/party/ping`, `/party/leave`, `/party/sig` (directed/broadcast). Members have
+  a 45s heartbeat; empty rooms are GC'd after 30 min.
+- ✅ Web `PARTY` mesh (voice, lower CID offers) + call UI at the top of the chat
+  panel; watchers join as listeners; room code is posted to chat.
+- ✅ Android `PartyService` (foreground, mic type) + draggable overlay bubble,
+  notification mute/leave, `partyStart/partyStop/partyMute/canOverlay/
+  requestOverlay` bridge, `window.__sswPartyAction`.
+- ⏳ **Not done — true persistence after swipe-away.** The call still lives in
+  the Activity WebView, so force-stopping the app ends it. To finish: host the
+  party call in a headless WebView owned by `PartyService`, hand the call over
+  from the Activity when it backgrounds, and expose the bubble's mute via the
+  service. This is the remaining native work.
+- ⏳ Watcher can't upgrade to talking without rejoining; add a "Use mic" action.
+- ⏳ Party calls during a game: the `#np-*` netplay voice and the party voice are
+  separate; unify so a watcher joining a netplay session joins the same call.
 
 ### B. RetroAchievements
 - Done: `raSettingsForm()` (prefs `raEnabled/raUser/raKey`) in profile Settings
@@ -105,8 +109,9 @@ Needs both repos and a server room:
   self-hosted `stable` EJS has no cheevos code, so this is the blocker. Popups
   render via a `uiRoot()` overlay (`raToast({title,desc,points,icon})`).
 
-### C. Per-console graphics
-- `EMU_CORE`-keyed options in `build.py`/`data/`, applied through
-  `EJS_defaultOptions` (shader) plus core options where EJS exposes them.
-  N64 stays on WebGL1 (see AGENT-MEMORY). Start with a `#/settings`-style
-  per-console override stored like `padPresets`.
+### C. Per-console graphics — started
+- ✅ `gfxFilterFor(sys)`/`saveGfxFilter()` (LS `gfxPresets`, like padPresets),
+  applied in `routePlayGame`; `gfxPanel(sys)` from the in-game `🖼 Graphics`
+  entry (Pixel-perfect / Smooth / CRT per console).
+- Next: per-core internal-resolution + texture-filter options where EJS/core
+  exposes them (N64 stays WebGL1).

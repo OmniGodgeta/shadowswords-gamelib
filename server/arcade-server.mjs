@@ -555,6 +555,9 @@ function watchMeta(id, w) {
 
 // ---- WebRTC netplay signalling (game traffic is peer-to-peer) ----
 const NP_SIG = new Map(); // id -> { host, sys, file, name, n, msgs, at }
+// Party calls — multi-peer rooms that outlive any one client (so an Android
+// foreground service can keep a call alive while the app is closed).
+const PARTY = new Map(); // id -> { id, name, owner, n, msgs, members:Map, at }
 // Lounge chat — a single shared room, in memory. Recent messages only.
 const CHAT = [];          // { id, who, text, at, uid }
 const CHAT_MAX = 200;
@@ -563,6 +566,15 @@ function pruneNp() {
   for (const [id, r] of NP_SIG) if (r.at < cut) NP_SIG.delete(id);
 }
 setInterval(pruneNp, 60000).unref?.();
+function pruneParties() {
+  const memberCut = now() - 45 * 1000;      // no heartbeat -> dropped from the call
+  const partyCut = now() - 30 * 60 * 1000;  // empty and idle -> forget the room
+  for (const [id, p] of PARTY) {
+    for (const [cid, m] of p.members) if (m.at < memberCut) p.members.delete(cid);
+    if (!p.members.size && p.at < partyCut) PARTY.delete(id);
+  }
+}
+setInterval(pruneParties, 15000).unref?.();
 
 // ---- auth endpoints ---------------------------------------------------
 const NAME_RE = /^[a-z0-9_.-]{2,24}$/i;
@@ -1143,6 +1155,69 @@ const server = http.createServer(async (req, res) => {
       jsonRes(res, 200, { host: r.host, guest: r.guest, sys: r.sys, file: r.file, name: r.name,
         after: r.n, msgs });
       return;
+    }
+
+    // ---- party rooms (multi-peer calls; survive client disconnects) ----
+    if (P === "/party" && req.method === "POST") {
+      if (rateLimited(req, res, 30, 60000)) return;
+      let b = {};
+      try { b = JSON.parse((await readBody(req, 4096)).toString() || "{}"); } catch { /* */ }
+      const u = userByToken(req);
+      // Reuse an existing id (join) or mint a new room (create).
+      const want = (typeof b.id === "string" && /^[0-9a-f]{4,32}$/i.test(b.id)) ? b.id : null;
+      const id = (want && PARTY.has(want)) ? want : crypto.randomBytes(4).toString("hex");
+      if (!PARTY.has(id)) {
+        PARTY.set(id, { id, name: String(b.name || "Party").slice(0, 40), owner: b.cid || "",
+          n: 0, msgs: [], members: new Map(), at: now() });
+      }
+      const p = PARTY.get(id);
+      const cid = String(b.cid || "");
+      if (cid) p.members.set(cid, { cid, uid: u ? u.id : null, uname: u ? u.name : null,
+        who: u ? u.display : String(b.who || "Guest").slice(0, 40), at: now(),
+        muted: !!b.muted, watcher: !!b.watcher });
+      p.at = now();
+      jsonRes(res, 200, { id, name: p.name, owner: p.owner, members: [...p.members.values()] }); return;
+    }
+    if (P === "/party/ping" && req.method === "POST") {
+      let b = {};
+      try { b = JSON.parse((await readBody(req, 4096)).toString() || "{}"); } catch { /* */ }
+      const p = PARTY.get(b.id);
+      if (!p) { jsonRes(res, 404, { error: "no party" }); return; }
+      const m = p.members.get(String(b.cid || ""));
+      if (m) { m.at = now(); if (typeof b.muted === "boolean") m.muted = b.muted; }
+      p.at = now();
+      jsonRes(res, 200, { id: p.id, name: p.name, owner: p.owner, members: [...p.members.values()] }); return;
+    }
+    if (P === "/party/leave" && req.method === "POST") {
+      let b = {};
+      try { b = JSON.parse((await readBody(req, 4096)).toString() || "{}"); } catch { /* */ }
+      const p = PARTY.get(b.id);
+      if (p) { p.members.delete(String(b.cid || "")); if (!p.members.size) PARTY.delete(p.id); }
+      jsonRes(res, 200, { ok: true }); return;
+    }
+    if (P === "/party/sig" && req.method === "POST") {
+      let b = {};
+      try { b = JSON.parse((await readBody(req, 65536)).toString() || "{}"); } catch { /* */ }
+      const p = PARTY.get(b.id);
+      if (!p) { jsonRes(res, 404, { error: "no party" }); return; }
+      p.n++; p.at = now();
+      p.msgs.push({ n: p.n, from: String(b.from || ""), to: b.to ? String(b.to) : null, payload: b.payload });
+      if (p.msgs.length > 400) p.msgs.splice(0, 200);
+      jsonRes(res, 200, { ok: true, n: p.n }); return;
+    }
+    if (P === "/party/sig" && req.method === "GET") {
+      const id = u0.searchParams.get("id");
+      const cid = u0.searchParams.get("cid") || "";
+      const after = +u0.searchParams.get("after") || 0;
+      const p = PARTY.get(id);
+      if (!p) { jsonRes(res, 404, { error: "no party" }); return; }
+      const m = cid && p.members.get(cid);
+      if (m) m.at = now();
+      p.at = now();
+      // Directed messages go only to the target; broadcasts to everyone else.
+      const msgs = p.msgs.filter((x) => x.n > after && x.from !== cid && (!x.to || x.to === cid));
+      jsonRes(res, 200, { id: p.id, name: p.name, owner: p.owner, after: p.n,
+        members: [...p.members.values()], msgs }); return;
     }
 
     // ---- lounge chat (one shared room, in memory) ----

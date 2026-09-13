@@ -6,6 +6,36 @@ agent can pick up context without re-deriving it. Read `AGENTS.md` first, then
 this. (Netplay internals: `NETPLAY-UI-CONTRACT.md`. Roadmap split:
 `FEATURE-BACKLOG.md`.)
 
+## Session 2026-09-13 — party calls, per-console graphics, mic handshake
+- **Mic fix (2.99)**: `npGetMic` retried once after 1.8s, so answering the
+  Android permission dialog late showed "denied". It now retries up to 6 times
+  while the app dialog is open (`maxAttempts = window.SSNotify ? 6 : 1`), and
+  the app dispatches `ssw-mic` with the OS result. App commit adds the bridge.
+- **Party calls (3.0)**: server `PARTY` map + `/party`, `/party/ping`,
+  `/party/leave`, `/party/sig` (directed or broadcast, monotonic `n`, 45s
+  member heartbeat, 30min empty-room GC). Web `PARTY` module is a mesh: the
+  lower CID offers, the higher answers; `partyCallUI()` sits at the top of the
+  chat panel. Watchers join with `watcher:true` (no mic track). The room ID is
+  posted to chat so others can join by code.
+- **Android party**: `PartyService.kt` (foreground, `microphone` type) +
+  draggable `TYPE_APPLICATION_OVERLAY` bubble; `MainActivity` methods
+  `partyStart/partyStop/partyMute/canOverlay/requestOverlay`; Dart forwards
+  `SSNotify {party, muted}` to the service and the service's `partyAction` back
+  into `window.__sswPartyAction`. Manifest adds `FOREGROUND_SERVICE_MICROPHONE`
+  + `SYSTEM_ALERT_WINDOW` and the `<service>` entry.
+  **Limitation**: swiping the app away still tears the process down and ends the
+  call. True persistence needs the call engine moved into the service (headless
+  WebView). Do not claim otherwise.
+- **Per-console graphics**: `gfxFilterFor(sys)` / `saveGfxFilter()` ("gfxPresets"
+  LS key, mirrors `padPresets`), used by `routePlayGame` for the EJS shader +
+  `data-vf`. Panel: `gfxPanel(sys)` from the in-game `🖼 Graphics` entry. Deeper
+  per-core options (resolution, texture filter) remain in EJS's own menu.
+- Restarted `arcade-server.service` after the live `~/arcade-server.mjs` edits
+  (party + uname). `kill` is an unsupported builtin in this shell — use
+  `pkill -9 -f arcade-server.mjs`; systemd `Restart=on-failure` brings it back.
+- Flutter is at `~/development/flutter/bin` (not on PATH); `flutter analyze`
+  and `flutter build apk --release` both work here.
+
 ## Session 2026-09-13 — IPTV, toolbar/input, chat profiles, RA groundwork
 - `live-tv.json` only ever held 3 playable channels plus a pointer to the whole
   iptv-org m3u, so Live TV looked like "4 channels". `routeTv` now fetches

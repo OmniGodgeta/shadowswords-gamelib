@@ -1,5 +1,20 @@
 # Changelog
 
+## 3.0
+- **Party calls**: the Chat window can start or join a multi-peer voice party
+  (server room + WebRTC mesh). Watchers can join as listeners, members see a
+  roster with mute state, and the room lives on `arcade-server.mjs` so it
+  survives a client leaving. Server endpoints: `/party`, `/party/ping`,
+  `/party/leave`, `/party/sig`.
+- **Android party service**: while a party is active the app keeps the call
+  alive with a foreground service (`PartyService`, mic type) and shows a
+  draggable floating bubble over other apps (long-press to mute). Needs the
+  new APK and the "display over other apps" permission.
+- **Per-console graphics**: the in-game `⋯` menu has a Graphics panel to pick
+  Pixel-perfect / Smooth / CRT per console, stored like pad presets.
+- RetroAchievements settings/panel and profile links from chat are in place
+  (see 2.98); the server now exposes `uname`.
+
 ## 2.99
 - Voice chat no longer reports "permission denied" while the phone's permission
   dialog is still open: the app now signals when the dialog is answered and the

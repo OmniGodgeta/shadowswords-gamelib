@@ -113,6 +113,46 @@ function applyPadVals(p) {
   r.setProperty("--pad-bottom", p.bottom + "px");
 }
 function applyPadPreset(sys) { applyPadVals(padPresetFor(sys)); }
+/* ---- per-console graphics ------------------------------------------------
+   FilmLook filter override per console (pixel-perfect / smooth / CRT),
+   stored like padPresets. Falls back to the global videoFilter pref. */
+function gfxStore() {
+  const s = LS.get("gfxPresets", null);
+  return (s && typeof s === "object") ? { def: s.def || "", sys: s.sys || {} } : { def: "", sys: {} };
+}
+function gfxFilterFor(sys) {
+  const s = gfxStore();
+  return s.sys[sys] || s.def || prefs().videoFilter || "pixel";
+}
+function saveGfxFilter(sys, val, asDefault) {
+  const s = gfxStore();
+  if (asDefault) s.def = val;
+  else s.sys = { ...(s.sys || {}), [sys]: val };
+  LS.set("gfxPresets", s);
+}
+function gfxPanel(sys) {
+  const o = el("div", { id: "help-overlay", onclick: (e) => { if (e.target.id === "help-overlay") o.remove(); } });
+  const cur = gfxFilterFor(sys);
+  const opts = [["pixel", "Pixel-perfect", "Sharp, integer-ish pixels — classic look"],
+    ["smooth", "Smooth (HD)", "Bicubic upscaling, softer edges"],
+    ["crt", "CRT / scanlines", "Aperture-grille shader"]];
+  const list = el("div", { className: "gfx-opts" },
+    ...opts.map(([v, label, hint]) => {
+      const b = el("button", { className: "gfx-opt" + (cur === v ? " on" : ""), type: "button" },
+        el("strong", { textContent: label }), el("span", { className: "hint", textContent: hint }));
+      b.onclick = () => { saveGfxFilter(sys, v, false); toast(`${label} for this console`); o.remove(); };
+      return b;
+    }));
+  const all = el("button", { className: "btn btn-ghost", style: "width:100%;margin-top:8px", textContent: "Use Pixel-perfect for every console",
+    onclick: () => { saveGfxFilter(sys, "pixel", true); toast("Default filter set"); o.remove(); } });
+  o.append(el("div", { className: "help-card" },
+    el("h3", { textContent: "Graphics" }),
+    el("p", { className: "hint", textContent: `Filter for ${sysName(sys)}. Applies the next time you open a game.` }),
+    list, all,
+    el("p", { className: "hint", style: "font-size:11px;margin-top:10px", textContent: "Deeper per-core options (internal resolution, texture filtering) live in the emulator's own menu (☰ while playing)." }),
+    el("button", { className: "btn btn-primary", style: "width:100%;margin-top:8px", textContent: "Done", onclick: () => o.remove() })));
+  uiRoot().append(o);
+}
 function savePadPreset(sys, patch, asDefault) {
   const s = padStore();
   if (asDefault) s.def = { ...(s.def || {}), ...patch };
@@ -2269,6 +2309,7 @@ const loungeChat = () => chatWidget();
 let partyChatPanel = null;
 function closePartyChat() {
   partyChatPanel?.remove(); partyChatPanel = null;
+  _partyCallBox = null;
   const fab = $("#party-chat-fab");
   if (fab) fab.setAttribute("aria-expanded", "false");
 }
@@ -2322,6 +2363,213 @@ function initChatFab() {
     document.body.append(dropZone);
   });
 }
+// ---- party calls (multi-peer voice; server room outlives the page) --------
+// A party room lives on arcade-server so an Android foreground service can keep
+// a call alive with the app closed. The web side is a small mesh: each member
+// peers with every other member. The lower CID is always the offerer so both
+// sides agree who negotiates without glare.
+const PARTY = { id: null, name: "", owner: null, members: [], pcs: new Map(),
+  local: null, micTrack: null, alive: false, pollT: 0, pingT: 0, after: 0, muted: false, watcher: false };
+let _partyCallBox = null;
+const partyWho = () => AUTH.user?.display || prefs().netplayName || "Guest";
+async function partyPost(path, body) {
+  const r = await fetch(`${API}${path}`, { method: "POST",
+    headers: { "content-type": "application/json", ...authHdr() }, body: JSON.stringify(body) });
+  if (!r.ok) { let e = {}; try { e = await r.json(); } catch { /* */ } throw new Error(e.error || `HTTP ${r.status}`); }
+  return r.json();
+}
+function partyAdopt(d) {
+  PARTY.id = d.id; PARTY.name = d.name || PARTY.name; PARTY.owner = d.owner || PARTY.owner;
+  PARTY.members = d.members || [];
+  if (!PARTY.alive) { PARTY.alive = true; partyPollLoop(); partyStartPing(); }
+  partyRenderUI();
+}
+async function partyCreateStart(name) {
+  const d = await partyPost("/party", { cid: CID, who: partyWho(), name: name || `${partyWho()}'s party` });
+  PARTY.after = 0;
+  partyAdopt(d);
+  await partyJoinCall(false).catch(() => {});
+  try { await fetch(`${API}/chat`, { method: "POST", headers: { "content-type": "application/json", ...authHdr() },
+    body: JSON.stringify({ text: `🎙 started a voice party — join with code ${d.id}`, who: "RetroVerse" }) }); } catch { /* */ }
+  toast(`Party ${d.id} started`);
+  return d.id;
+}
+async function partyJoin(id) {
+  const d = await partyPost("/party", { cid: CID, who: partyWho(), id });
+  PARTY.after = 0;
+  partyAdopt(d);
+  toast("Joined the party");
+}
+async function partyJoinCall(watcher) {
+  if (!PARTY.id) { await partyCreateStart(); return; }
+  PARTY.watcher = !!watcher;
+  if (!watcher) {
+    try { PARTY.local = await npGetMic(); PARTY.micTrack = PARTY.local.getAudioTracks()[0] || null; }
+    catch { toast("Mic unavailable — joining as a listener"); PARTY.watcher = true; }
+  }
+  if (PARTY.micTrack) PARTY.micTrack.enabled = !PARTY.muted;
+  try { const d = await partyPost("/party", { id: PARTY.id, cid: CID, who: partyWho(),
+    muted: PARTY.muted, watcher: PARTY.watcher }); partyAdopt(d); } catch { /* */ }
+  partyNotifyApp(true, PARTY.muted);
+  toast(PARTY.watcher ? "Joined as a listener" : "Voice party joined");
+}
+async function partyLeaveCall() {
+  for (const [, pc] of PARTY.pcs) { try { pc.close(); } catch { /* */ } }
+  PARTY.pcs.clear();
+  document.querySelectorAll(".party-audio").forEach((a) => a.remove());
+  try { PARTY.local?.getTracks().forEach((t) => t.stop()); } catch { /* */ }
+  PARTY.local = null; PARTY.micTrack = null; PARTY.watcher = false;
+  partyNotifyApp(false, false);
+  partyRenderUI();
+}
+async function partyLeave() {
+  await partyLeaveCall();
+  if (PARTY.id) { try { await partyPost("/party/leave", { id: PARTY.id, cid: CID }); } catch { /* */ } }
+  PARTY.alive = false; clearTimeout(PARTY.pollT); clearInterval(PARTY.pingT);
+  PARTY.id = null; PARTY.members = []; PARTY.owner = null; PARTY.after = 0;
+  toast("Left the party");
+  partyRenderUI();
+}
+function partyToggleMute() {
+  PARTY.muted = !PARTY.muted;
+  if (PARTY.micTrack) PARTY.micTrack.enabled = !PARTY.muted;
+  partyNotifyApp(true, PARTY.muted);
+  partyRenderUI();
+}
+// Tell the Android wrapper to keep the call alive in the background and show
+// its floating bubble. No-op in a plain browser.
+function partyNotifyApp(active, muted) {
+  try {
+    // Listeners don't transmit, so don't ask Android for a microphone-type
+    // foreground service (which would be rejected when the mic isn't in use).
+    const onCall = !!active && !PARTY.watcher;
+    window.SSNotify?.postMessage(JSON.stringify({ party: onCall, muted: !!muted,
+      cid: CID, origin: location.origin }));
+  } catch { /* */ }
+}
+window.__sswPartyAction = (action) => {
+  if (action === "mute") { PARTY.muted = true; if (PARTY.micTrack) PARTY.micTrack.enabled = false; partyRenderUI(); }
+  else if (action === "unmute") { PARTY.muted = false; if (PARTY.micTrack) PARTY.micTrack.enabled = true; partyRenderUI(); }
+  else if (action === "leave") partyLeave().catch(() => {});
+};
+function partyStartPing() {
+  clearInterval(PARTY.pingT);
+  PARTY.pingT = setInterval(() => {
+    if (!PARTY.alive || !PARTY.id) return;
+    fetch(`${API}/party/ping`, { method: "POST", headers: { "content-type": "application/json", ...authHdr() },
+      body: JSON.stringify({ id: PARTY.id, cid: CID, muted: PARTY.muted }) }).catch(() => {});
+  }, 10000);
+}
+function partySendSig(to, payload) {
+  if (!PARTY.id) return;
+  fetch(`${API}/party/sig`, { method: "POST", headers: { "content-type": "application/json", ...authHdr() },
+    body: JSON.stringify({ id: PARTY.id, from: CID, to, payload }) }).catch(() => {});
+}
+function partyPeerFor(cid) {
+  let pc = PARTY.pcs.get(cid);
+  if (pc) return pc;
+  pc = new RTCPeerConnection({ iceServers: NETPLAY_ICE });
+  pc.onicecandidate = (e) => { if (e.candidate) partySendSig(cid, { ice: e.candidate.toJSON?.() || e.candidate }); };
+  pc.ontrack = (e) => {
+    let a = document.getElementById("party-audio-" + cid);
+    if (!a) { a = el("audio", { id: "party-audio-" + cid, className: "party-audio", autoplay: true, playsInline: true, style: "display:none" }); document.body.append(a); }
+    a.srcObject = e.streams[0] || new MediaStream([e.track]);
+    a.play?.().catch(() => {});
+  };
+  if (PARTY.micTrack && !PARTY.watcher) pc.addTrack(PARTY.micTrack, new MediaStream([PARTY.micTrack]));
+  PARTY.pcs.set(cid, pc);
+  return pc;
+}
+async function partyOffer(cid) {
+  const pc = partyPeerFor(cid);
+  if (pc.signalingState !== "stable") return;
+  const o = await pc.createOffer(); await pc.setLocalDescription(o);
+  partySendSig(cid, { sdp: pc.localDescription });
+}
+async function partyHandleSig(m) {
+  if (!m?.from || m.from === CID) return;
+  const pc = partyPeerFor(m.from);
+  const p = m.payload || {};
+  if (p.sdp) {
+    if (p.sdp.type === "offer") {
+      if (pc.signalingState !== "stable") { try { await pc.setLocalDescription(await pc.createAnswer()); } catch { /* */ } }
+      try { await pc.setRemoteDescription(p.sdp); } catch { return; }
+      const ans = await pc.createAnswer(); await pc.setLocalDescription(ans);
+      partySendSig(m.from, { sdp: pc.localDescription });
+    } else if (p.sdp.type === "answer" && pc.signalingState === "have-local-offer") {
+      try { await pc.setRemoteDescription(p.sdp); } catch { /* */ }
+    }
+    return;
+  }
+  if (p.ice) { try { if (pc.remoteDescription) await pc.addIceCandidate(p.ice); } catch { /* */ } }
+}
+function partyReconcile() {
+  const ids = new Set(PARTY.members.map((m) => m.cid));
+  for (const [cid, pc] of PARTY.pcs) {
+    if (!ids.has(cid)) { try { pc.close(); } catch { /* */ } PARTY.pcs.delete(cid); document.getElementById("party-audio-" + cid)?.remove(); }
+  }
+  if (!PARTY.local && !PARTY.watcher) return;   // not on the call yet
+  for (const m of PARTY.members) {
+    if (m.cid === CID || PARTY.pcs.has(m.cid)) continue;
+    if (CID < m.cid) partyOffer(m.cid).catch(() => {});
+  }
+}
+async function partyPollLoop() {
+  if (!PARTY.alive || !PARTY.id) return;
+  try {
+    const d = await fetch(`${API}/party/sig?id=${encodeURIComponent(PARTY.id)}&cid=${encodeURIComponent(CID)}&after=${PARTY.after}`,
+      { cache: "no-store" }).then((r) => r.ok ? r.json() : null);
+    if (d) {
+      PARTY.after = d.after || PARTY.after;
+      PARTY.members = d.members || [];
+      PARTY.owner = d.owner || PARTY.owner; PARTY.name = d.name || PARTY.name;
+      for (const m of (d.msgs || [])) await partyHandleSig(m);
+      partyReconcile();
+      partyRenderUI();
+    }
+  } catch { /* offline */ }
+  PARTY.pollT = setTimeout(partyPollLoop, 800);
+}
+function partyRenderUI() { if (_partyCallBox) renderPartyCall(_partyCallBox); }
+function renderPartyCall(box) {
+  const inCall = !!PARTY.id && PARTY.members.some((m) => m.cid === CID);
+  const kids = [el("div", { className: "party-call-head" }, el("strong", { textContent: "Voice party" }))];
+  if (!PARTY.id) {
+    const codeIn = el("input", { className: "chat-input", placeholder: "Party code", maxLength: 32 });
+    kids.push(el("button", { className: "btn btn-primary sm", textContent: "Start a voice party",
+      onclick: () => partyCreateStart().catch((e) => toast(`Couldn't start: ${e.message}`)) }));
+    kids.push(el("div", { className: "party-call-join" }, codeIn,
+      el("button", { className: "btn btn-ghost sm", textContent: "Join", onclick: () => {
+        const id = codeIn.value.trim();
+        if (/^[0-9a-f]{4,32}$/i.test(id)) partyJoin(id).catch((e) => toast(`Couldn't join: ${e.message}`));
+        else toast("Enter a valid party code");
+      } })));
+    kids.push(el("p", { className: "hint", textContent: "Calls stay up while this page is open (and on Android, when the app is closed)." }));
+  } else {
+    kids.push(el("div", { className: "party-call-code" },
+      el("span", { className: "hint", textContent: "Party code" }),
+      el("code", { textContent: PARTY.id }),
+      el("button", { className: "btn btn-ghost sm", textContent: "Copy",
+        onclick: () => { navigator.clipboard?.writeText(PARTY.id).catch(() => {}); toast("Party code copied"); } })));
+    kids.push(el("div", { className: "party-call-members" },
+      ...PARTY.members.map((m) => el("div", { className: "party-member" },
+        el("span", { className: "live-dot" }),
+        el("strong", { textContent: (m.who || "Someone") + (m.cid === CID ? " (you)" : "") }),
+        m.watcher ? el("span", { className: "hint", textContent: "listening" }) : el("span", { className: "hint", textContent: m.muted ? "🔇" : "🎙" })))));
+    if (!inCall) {
+      kids.push(el("button", { className: "btn btn-primary sm", textContent: "Join voice",
+        onclick: () => partyJoinCall(false).catch((e) => toast(`Couldn't join: ${e.message}`)) }));
+      kids.push(el("button", { className: "btn btn-ghost sm", textContent: "Join as listener",
+        onclick: () => partyJoinCall(true).catch(() => {}) }));
+    } else {
+      kids.push(el("button", { className: "btn " + (PARTY.muted ? "btn-primary" : "btn-ghost") + " sm",
+        textContent: PARTY.muted ? "🔇 Unmute" : "🎙 Mute", onclick: () => partyToggleMute() }));
+    }
+    kids.push(el("button", { className: "btn btn-ghost sm", style: "color:var(--pink,#ff5fa2)", textContent: "Leave party",
+      onclick: () => partyLeave().catch(() => {}) }));
+  }
+  box.replaceChildren(...kids);
+}
 function openPartyChat() {
   if (partyChatPanel?.isConnected) { closePartyChat(); return; }
   const close = el("button", { type: "button", className: "party-chat-close", textContent: "×", ariaLabel: "Close party chat", title: "Close" });
@@ -2330,14 +2578,17 @@ function openPartyChat() {
     el("div", { className: "party-friends-head" },
       el("strong", { textContent: "Friends playing now" }),
       el("span", { className: "hint", textContent: "Loading…" })));
+  _partyCallBox = el("div", { className: "party-call" });
   partyChatPanel = el("section", { className: "party-chat", role: "dialog", ariaLabel: "Party chat" },
     el("div", { className: "party-chat-head" },
       el("strong", { textContent: "Party chat" }),
       el("button", { className: "party-chat-reset", textContent: "Reset position", title: "Reset floating button position",
         onclick: () => setChatFabPosition(null) }),
       close),
+    _partyCallBox,
     friends,
     chatWidget());
+  renderPartyCall(_partyCallBox);
   document.body.append(partyChatPanel);
   const fabRect = $("#party-chat-fab")?.getBoundingClientRect();
   if (fabRect) {
@@ -2995,6 +3246,7 @@ async function routePlayGame(sys, romParam, resume = false) {
   const loadBtn = el("button", { className: "pbtn", id: "cloud-load", textContent: "☁ Load", title: "Load a save slot", hidden: true });
   const ctrlBtn = el("button", { className: "pbtn", id: "ctrl-btn", textContent: "Input settings", title: "Controller, keyboard and touch-pad settings", hidden: true });
   const raBtn = el("button", { className: "pbtn", id: "ra-btn", textContent: "🏆 Achievements", title: "RetroAchievements settings", hidden: true });
+  const gfxBtn = el("button", { className: "pbtn", id: "gfx-btn", textContent: "🖼 Graphics", title: "Per-console graphics filter", hidden: true });
   const watchBtn = el("button", { className: "pbtn", id: "watch-btn", textContent: "Watch", title: "Start a watch party — others on the tailnet can spectate", hidden: true });
   const noteBtn = el("button", { className: "note-chip", textContent: "Note", title: "Tips for this game", hidden: true });
   const npBtn = el("button", { className: "pbtn", id: "np-btn", textContent: "Netplay", title: "Host or join a netplay room for this game", hidden: true });
@@ -3008,7 +3260,7 @@ async function routePlayGame(sys, romParam, resume = false) {
   const saveGroup = el("div", { className: "player-control-group save-group", role: "group", ariaLabel: "Save controls" }, saveMenuBtn, saveMenu);
   const flagBtn = el("button", { className: "pbtn", id: "flag-btn", textContent: "⚑ Report", title: "Report a problem with this game" });
   const moreBtn = el("button", { className: "pbtn more-menu-btn", textContent: "⋯", title: "More controls" });
-  const moreMenu = el("div", { className: "more-menu", hidden: true }, ctrlBtn, raBtn, noteBtn, flagBtn);
+  const moreMenu = el("div", { className: "more-menu", hidden: true }, ctrlBtn, gfxBtn, raBtn, noteBtn, flagBtn);
   const moreGroup = el("div", { className: "player-control-group more-group" }, moreBtn, moreMenu);
   if (sys !== "upload") flagBtn.onclick = () => reportGame(sys, file, romName);
   else flagBtn.hidden = true;
@@ -3095,7 +3347,7 @@ async function routePlayGame(sys, romParam, resume = false) {
   window.EJS_Buttons = { restart: true, settings: true, fullscreen: true, saveState: true,
     loadState: true, screenshot: true, cheat: true, gamepad: true, netplay: false,
     exitEmulation: true };
-  const vf = prefs().videoFilter;
+  const vf = gfxFilterFor(sys);
   document.documentElement.dataset.vf = vf;
   const requestedWebgl = new URLSearchParams(location.search).get("ejs-webgl");
   window.EJS_defaultOptions = Object.assign(
@@ -3311,6 +3563,8 @@ async function routePlayGame(sys, romParam, resume = false) {
     ctrlBtn.onclick = () => controlsPanel(core, sys);
     raBtn.hidden = false;
     raBtn.onclick = () => { moreMenu.hidden = true; raPanel(); };
+    gfxBtn.hidden = false;
+    gfxBtn.onclick = () => { moreMenu.hidden = true; gfxPanel(sys); };
     rememberSession({ sys, file, name: romName });
     window.__npSnapT = setInterval(() => snapshotNetplay(sys, file, romName), 4000);
     try { window.SSPlay && window.SSPlay.postMessage("1"); } catch { /* */ }
