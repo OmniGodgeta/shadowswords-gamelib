@@ -2772,6 +2772,7 @@ async function routePlayGame(sys, romParam, resume = false) {
   const file = sys === "upload" ? null : romParam;
   window.__playSys = sys; window.__playFile = file;
   let romUrl, romName, core;
+  const cacheKey = sys === "upload" ? null : sys + "/" + romParam;
   try {
     if (sys === "upload") {
       const u = await idbGet("upload");
@@ -2783,7 +2784,6 @@ async function routePlayGame(sys, romParam, resume = false) {
       core = meta(sys).core || EXT_CORE[file.split(".").pop().toLowerCase()];
       if (!core) throw 0;
       const url = ROM_BASE + "rom/" + encodeURIComponent(sys) + "/" + file.split("/").map(encodeURIComponent).join("/");
-      const cacheKey = sys + "/" + file;
       const bar = el("div", { className: "dl-bar" }, el("i"));
       loadEl.replaceChildren(el("div", { textContent: "Downloading ROM…" }), bar);
       romUrl = await fetchRom(cacheKey, url, (got, tot, cached) => {
@@ -2841,6 +2841,7 @@ async function routePlayGame(sys, romParam, resume = false) {
   // named slots via ?s=<slot>; "auto" is the default / auto-save / resume slot.
   const key = sys === "upload" ? null : stateKey(sys, file);
   const slotUrl = (slot) => key + "?s=" + encodeURIComponent(slot || "auto") + (AUTH.token ? "&a=" + encodeURIComponent(AUTH.token) : "");
+  const n64 = sys === "n64";
   const wantResume = resume || prefs().autoResume;
   let hasCloudSave = false;
   let lastSaveAt = 0;
@@ -2937,11 +2938,25 @@ async function routePlayGame(sys, romParam, resume = false) {
         el("button", { className: "btn btn-ghost", style: "margin-top:10px", textContent: "Cancel", onclick: () => o.remove() })));
     uiRoot().append(o);
   };
+  const deleteCloudSaves = async () => {
+    let slots = [];
+    try {
+      const list = await fetch(STATE_BASE + "list", { headers: authHdr() }).then((r) => r.json());
+      slots = (list.find((x) => x.sys === sys && x.file === file) || {}).slots || [];
+    } catch { toast("Couldn't list saves — check /#/status"); return; }
+    if (!slots.length) { toast("No cloud saves for this game"); return; }
+    if (!confirm(`Delete all ${slots.length} cloud save${slots.length === 1 ? "" : "s"} for ${romName}?`)) return;
+    const results = await Promise.allSettled(slots.map((s) =>
+      fetch(slotUrl(s.slot), { method: "DELETE", headers: { ...tokenHdr(), ...authHdr() } })));
+    const failed = results.filter((r) => r.status === "rejected" || !r.value.ok).length;
+    if (failed) toast(`${failed} save${failed === 1 ? "" : "s"} could not be deleted`);
+    else { hasCloudSave = false; toast("Cloud saves deleted"); }
+  };
 
-  // Keep a short recovery window so a backgrounded app or a dropped room can
-  // resume close to the last shared position. The server keeps this as the
-  // normal "auto" slot, separate from named/manual saves.
-  const autoSave = () => putSlot("auto");
+  // N64 getState() can block the browser while serializing its large core
+  // memory. Never run it in lifecycle/background timers or while netplay is
+  // active; N64 saves remain available only through an explicit user action.
+  const autoSave = () => n64 ? false : putSlot("auto");
   window.__emuAutoSave = autoSave;
 
   // play-stats ping + local playtime accounting
@@ -3046,7 +3061,7 @@ async function routePlayGame(sys, romParam, resume = false) {
       }
     }
     window.__emuHeartbeat = setInterval(() => { ping(false); flushPlaytime(); }, 15000);
-    window.__emuAutoSaveT = key ? setInterval(autoSave, 15000) : 0;
+    window.__emuAutoSaveT = key && !n64 ? setInterval(autoSave, 15000) : 0;
     ctrlBtn.hidden = false;
     ctrlBtn.onclick = () => controlsPanel(core);
     ffBtn.hidden = false;
@@ -3132,10 +3147,17 @@ async function routePlayGame(sys, romParam, resume = false) {
       saveBtn.onclick = cloudSave;
       saveBtn.oncontextmenu = (e) => { e.preventDefault(); cloudSaveAs(); };
       saveAsBtn.hidden = false; saveAsBtn.onclick = cloudSaveAs;
-      loadBtn.hidden = false; loadBtn.onclick = () => cloudLoad();
+      loadBtn.hidden = false; loadBtn.textContent = "☁ Saves"; loadBtn.onclick = () => cloudLoad();
+      loadBtn.title = "Load or delete cloud saves";
+      saveAsBtn.title = "Save to a named slot";
+      const deleteBtn = el("button", { className: "pbtn", id: "cloud-delete", textContent: "🗑", title: "Delete all cloud saves for this game" });
+      deleteBtn.onclick = deleteCloudSaves;
+      saveGroup.append(deleteBtn);
       // never auto-load a save once netplay is (or will be) on — that puts the
       // host in-game while the guest is still on the title screen.
-      if (hasCloudSave && !LS.get("joinNp") && !window.__inNetplay) {
+      // N64 auto-resume is disabled because a stale/partial recovery state can
+      // restore into a black screen and getState/loadState can block Chrome.
+      if (hasCloudSave && !n64 && !LS.get("joinNp") && !window.__inNetplay) {
         setTimeout(() => { if (!window.__inNetplay) cloudLoad("auto"); }, 800);
       }
     }

@@ -6,6 +6,16 @@ agent can pick up context without re-deriving it. Read `AGENTS.md` first, then
 this. (Netplay internals: `NETPLAY-UI-CONTRACT.md`. Roadmap split:
 `FEATURE-BACKLOG.md`.)
 
+## Session 2026-09-13 — N64 save-state regression
+
+- Cache version `2.94` disables N64 automatic recovery loads and background
+  auto-saves. `gameManager.getState()` can block Chrome while serializing N64
+  memory, and stale recovery states can produce a black screen.
+- The player save controls now expose a `Saves` picker and a trash action that
+  deletes all cloud slots for the current game.
+- The N64 retry action now correctly reaches the ROM cache key and can remove a
+  failed cached download before retrying.
+
 ## Session 2026-09-13 — N64 launch hardening and netplay cleanup
 
 - Cache version `2.93` validates complete ROM bodies before caching or booting.

@@ -1,5 +1,13 @@
 # Changelog
 
+## 2.94
+- Disabled automatic N64 save-state loading and background auto-saving. N64
+  state serialization can freeze Chrome and a stale recovery state can restore
+  into a black screen; N64 saves now require an explicit user action.
+- Renamed the in-game save loader to **Saves** and added a visible trash action
+  to delete all cloud saves for the current game.
+- Fixed the N64 retry path so it can invalidate the failed ROM cache entry.
+
 ## 2.93
 - N64 ROM launches now reject incomplete downloads and remove truncated cached
   ROMs before retrying, preventing intermittent black screens from home-screen
