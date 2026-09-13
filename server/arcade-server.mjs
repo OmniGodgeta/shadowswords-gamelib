@@ -1097,7 +1097,7 @@ const server = http.createServer(async (req, res) => {
       // (guests keep polling it). Any other value gets a fresh id.
       const reuse = (typeof b.reuse === "string" && /^[0-9a-f]{4,32}$/i.test(b.reuse)) ? b.reuse : null;
       const id = reuse || crypto.randomBytes(4).toString("hex");
-      NP_SIG.set(id, { id, host: b.cid || "", sys: b.sys, file: b.file, name: b.name || "Game",
+      NP_SIG.set(id, { id, host: b.cid || "", guest: "", sys: b.sys, file: b.file, name: b.name || "Game",
         n: 0, msgs: [], at: now() });
       jsonRes(res, 200, { id }); return;
     }
@@ -1106,8 +1106,18 @@ const server = http.createServer(async (req, res) => {
       try { b = JSON.parse((await readBody(req, 65536)).toString() || "{}"); } catch { /* */ }
       const r = NP_SIG.get(b.room);
       if (!r) { jsonRes(res, 404, { error: "no room" }); return; }
+      const from = String(b.from || "");
+      // A room has one active Player 2. A replacement guest starts with a
+      // clean signaling history, but keeps the monotonic sequence so an
+      // already-polling host cannot miss the new offer.
+      if (from && from !== r.host && r.guest && r.guest !== from) {
+        r.guest = from;
+        r.msgs = [];
+      } else if (from && from !== r.host) {
+        r.guest = from;
+      }
       r.n++; r.at = now();
-      r.msgs.push({ n: r.n, from: b.from, payload: b.payload });
+      r.msgs.push({ n: r.n, from, payload: b.payload });
       if (r.msgs.length > 80) r.msgs.splice(0, r.msgs.length - 40);
       jsonRes(res, 200, { ok: true, n: r.n }); return;
     }
@@ -1119,8 +1129,15 @@ const server = http.createServer(async (req, res) => {
       if (!r) { jsonRes(res, 404, { error: "no room" }); return; }
       if (r.at < now() - 30 * 60 * 1000) { NP_SIG.delete(room); jsonRes(res, 404, { error: "room expired" }); return; }
       if (cid && (cid === r.host || r.n > 0)) r.at = now();
+      // Never replay a peer's own or stale-session SDP/ICE. Watch-party
+      // clients omit cid and retain the old unfiltered behavior.
+      const msgs = cid === r.host
+        ? r.msgs.filter((m) => m.from !== r.host && m.from === r.guest && m.n > after)
+        : cid && r.host
+          ? r.msgs.filter((m) => m.from === r.host && m.n > after)
+          : r.msgs.filter((m) => m.n > after);
       jsonRes(res, 200, { host: r.host, sys: r.sys, file: r.file, name: r.name,
-        after: r.n, msgs: r.msgs.filter((m) => m.n > after) });
+        after: r.n, msgs });
       return;
     }
 

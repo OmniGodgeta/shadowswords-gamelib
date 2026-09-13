@@ -1,5 +1,13 @@
 # Changelog
 
+## 2.89
+- Netplay signaling now tracks the active Player 2 and routes SDP/ICE only
+  between the host and that guest instead of replaying one shared history to
+  both clients.
+- Replacing a disconnected guest clears stale signaling messages while keeping
+  sequence numbers monotonic, preventing reconnects from applying old offers
+  or answers.
+
 ## 2.88
 - Auth failures now show the server's actual response, including rate-limit
   timing, instead of falling back to a generic error.

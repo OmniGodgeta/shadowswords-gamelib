@@ -16,6 +16,18 @@ this. (Netplay internals: `NETPLAY-UI-CONTRACT.md`. Roadmap split:
 - Cache version `2.88` now preserves non-JSON auth responses and reports
   network, rate-limit, and server errors directly in the sign-in form.
 
+## Session 2026-09-13 — netplay signaling isolation
+
+- The previous `/np/sig` implementation replayed one append-only message list
+  to both peers. Reconnects could therefore apply stale SDP/ICE from an earlier
+  guest session.
+- Cache version `2.89` adds an active `guest` CID per room, routes host traffic
+  only to that guest and guest traffic only to the host, and clears the old
+  message list when a different guest takes over. Sequence numbers remain
+  monotonic so existing host polls do not miss replacement offers.
+- The tracked server and live `~/arcade-server.mjs` must stay identical; restart
+  `arcade-server.service` after backend changes.
+
 ## Session 2026-09-13 — media reliability and diagnostics
 
 - Added track-level search, genre filtering, persistent music favorites, volume
