@@ -1,5 +1,9 @@
 # Changelog
 
+## 2.82
+- Reset emulator speed after the core is actually ready, ensuring the
+  fast-forward fix applies to N64 and other cores.
+
 ## 2.81
 - Fixed Android/WebView update activation requiring repeated reloads by
   allowing one controlled service-worker reload instead of two competing

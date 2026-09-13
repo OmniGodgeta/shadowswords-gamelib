@@ -82,6 +82,8 @@ this. (Netplay internals: `NETPLAY-UI-CONTRACT.md`. Roadmap split:
   exceed 0.65 for R2 fast-forward or L2 slow motion.
 - Presence cards use “Join as P2” and show an explicit Watch-unavailable state
   when no watch-party ID exists. Cache version is `2.81`.
+- The speed reset is also performed from `EJS_onGameStart`, after the emulator
+  instance exists; cache version is now `2.82`.
 
 ---
 

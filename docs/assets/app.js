@@ -2835,6 +2835,14 @@ async function routePlayGame(sys, romParam, resume = false) {
   };
   window.EJS_onGameStart = () => {
     $("#player-load")?.remove();
+    _playbackPad.fast = false;
+    _playbackPad.slow = false;
+    try {
+      const emu = window.EJS_emulator;
+      if (emu?.gameManager?.toggleFastForward) emu.gameManager.toggleFastForward(0);
+      if (emu) emu.isFastForward = false;
+      ffBtn.classList.remove("on");
+    } catch { /* */ }
     ptStart = Date.now();
     ping(true);
     if (NP.role) npHookInput();   // re-wire input for a guest that joined mid-boot
@@ -2895,17 +2903,6 @@ async function routePlayGame(sys, romParam, resume = false) {
       ffBtn.classList.toggle("on", !!emu.isFastForward);
       ffBtn.title = emu.isFastForward ? "Fast-forward on" : "Fast-forward";
     };
-    // Some Android WebViews expose the last trigger state when the N64 core
-    // starts. Always begin at normal speed; R2 must be actively pressed.
-    _playbackPad.fast = false;
-    _playbackPad.slow = false;
-    try {
-      if (window.EJS_emulator?.gameManager?.toggleFastForward) {
-        window.EJS_emulator.gameManager.toggleFastForward(0);
-        window.EJS_emulator.isFastForward = false;
-      }
-      ffBtn.classList.remove("on");
-    } catch { /* */ }
     rwBtn.hidden = false;
     const rewind = (on) => {
       const gm = window.EJS_emulator?.gameManager;
