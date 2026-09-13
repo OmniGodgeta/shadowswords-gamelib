@@ -1442,6 +1442,31 @@ function tileGrid(container, list, shown, opts = {}) {
   container.replaceChildren(...parts);
 }
 
+function livePeopleShelf(live, title = "On the floor") {
+  const cards = live.map((x) => {
+    const playHref = x.sys && x.file
+      ? `#/play/${x.sys}/${x.file.split("/").map(encodeURIComponent).join("/")}` : "#/play";
+    return el("div", { className: "live-card" },
+      el("div", { className: "live-who" }, el("span", { className: "live-dot" }), x.who),
+      el("div", { className: "live-game", textContent: x.game }),
+      el("div", { className: "live-sys", textContent: x.sys ? sysName(x.sys) : "" }),
+      el("div", { className: "live-acts" },
+        el("a", { className: "btn btn-primary sm", href: playHref,
+          onclick: x.netplay && x.room
+            ? () => { LS.set("joinNp", { sys: x.sys, file: x.file, room: x.room, t: Date.now() }); }
+            : null,
+          textContent: x.netplay && x.room ? "Join" : "Play too" }),
+        x.watch && el("a", { className: "btn btn-ghost sm", href: `#/watch/${x.watch}`, textContent: "Watch" })));
+  });
+  return el("section", { className: "shelf" },
+    el("div", { className: "shelf-head" },
+      el("h2", { textContent: title }),
+      el("span", { className: "count", textContent: `${live.length} playing` })),
+    el("p", { className: "shelf-note hint", textContent: "Friends and players on the tailnet — join their room or start the same game." }),
+    el("div", { className: "wrap", style: "padding-bottom:8px" },
+      el("div", { className: "live-row" }, ...cards)));
+}
+
 /* ---- routes: browse --------------------------------------------- */
 async function routeHome() {
   const token = ++state.render;
@@ -1526,27 +1551,7 @@ async function routeHome() {
     if (token !== state.render) return;
     const live = (ps && ps.nowPlaying) || [];
     if (!live.length) return;
-    liveAnchor.replaceWith(el("section", { className: "shelf" },
-      el("div", { className: "shelf-head" },
-        el("h2", { textContent: "On the floor" }),
-        el("span", { className: "count", textContent: `${live.length} playing` })),
-      el("p", { className: "shelf-note hint", textContent: "People on the tailnet right now — join their room or start the same game." }),
-      el("div", { className: "wrap", style: "padding-bottom:8px" },
-        el("div", { className: "live-row" }, ...live.map((x) => {
-          const playHref = x.sys && x.file
-            ? `#/play/${x.sys}/${x.file.split("/").map(encodeURIComponent).join("/")}` : "#/play";
-          return el("div", { className: "live-card" },
-            el("div", { className: "live-who" }, el("span", { className: "live-dot" }), x.who),
-            el("div", { className: "live-game", textContent: x.game }),
-            el("div", { className: "live-sys", textContent: x.sys ? sysName(x.sys) : ""}),
-            el("div", { className: "live-acts" },
-              el("a", { className: "btn btn-primary sm", href: playHref,
-                onclick: x.netplay && x.room
-                  ? () => { LS.set("joinNp", { sys: x.sys, file: x.file, room: x.room, t: Date.now() }); }
-                  : null,
-                textContent: x.netplay ? "Join room" : "Play too" }),
-              x.watch && el("a", { className: "btn btn-ghost sm", href: `#/watch/${x.watch}`, textContent: "Watch" })));
-        })))));
+    liveAnchor.replaceWith(livePeopleShelf(live));
   }).catch(() => {});
 
   Promise.all([
@@ -1946,6 +1951,18 @@ async function routePlay() {
       { label: "⌕ Search games", className: "play-search", onClick: () => openGameSearch() },
     ],
   }));
+  const previewAnchor = el("div");
+  frag.append(previewAnchor);
+  fetch("data/gamevideos.json").then((r) => r.json()).then((vids) => {
+    if (token !== state.render || !Array.isArray(vids) || !vids.length) return;
+    previewAnchor.replaceWith(heroShowcase(vids, {
+      title: "Preview the floor",
+      desc: "Scrub through gameplay previews, switch to box art, and jump straight into a game.",
+      actions: [{ label: "Browse all previews", href: "#/browse" }],
+    }));
+  }).catch(() => {});
+  const liveAnchor = el("div");
+  frag.append(liveAnchor);
   frag.append(el("div", { className: "wrap", style: "padding-bottom:6px" }, dropzone()));
   frag.append(el("div", { className: "shelf" },
     el("div", { className: "shelf-head" }, el("h2", { textContent: "Playable consoles" }),
@@ -1953,6 +1970,17 @@ async function routePlay() {
     el("div", { className: "tile-grid", style: "padding:0" },
       ...playable.map((s) => consoleTile(s, { play: true, offline: bySys[s.id] || 0 })))));
   view.replaceChildren(frag);
+  fetch(`${API}/play/stats`).then((r) => r.json()).then((ps) => {
+    if (token !== state.render) return;
+    const live = (ps && ps.nowPlaying) || [];
+    if (live.length) liveAnchor.replaceWith(livePeopleShelf(live, "Friends playing now"));
+    else liveAnchor.replaceWith(el("section", { className: "shelf play-social" },
+      el("div", { className: "shelf-head" }, el("h2", { textContent: "Friends & chat" })),
+      el("p", { className: "shelf-note hint", textContent: "No one is playing right now. Start a game, then invite a friend from the room controls." }),
+      el("div", { className: "hero-actions" },
+        el("a", { className: "btn btn-primary", href: "#/lounge", textContent: "Open Lounge chat" }),
+        el("a", { className: "btn btn-ghost", href: "#/netplay", textContent: "Netplay guide" }))));
+  }).catch(() => {});
 }
 
 async function routeNetplay() {
@@ -2395,9 +2423,13 @@ async function routePlayGame(sys, romParam, resume = false) {
     const gm = window.EJS_emulator?.gameManager;
     if (!gm || !key) return false;
     try {
-      await fetch(slotUrl(slot), { method: "PUT", keepalive: true,
-        headers: { "content-type": "application/octet-stream", ...tokenHdr(), ...authHdr() }, body: gm.getState() });
-      hasCloudSave = true;
+    const response = await fetch(slotUrl(slot), {
+      method: "PUT",
+      headers: { "content-type": "application/octet-stream", ...tokenHdr(), ...authHdr() },
+      body: gm.getState(),
+    });
+    if (!response.ok) throw new Error(`save upload returned ${response.status}`);
+    hasCloudSave = true;
       const canvas = document.querySelector("#game canvas");
       if (canvas && canvas.toBlob) {
         canvas.toBlob((blob) => {
@@ -2509,6 +2541,16 @@ async function routePlayGame(sys, romParam, resume = false) {
           if (NP.role || window.__inNetplay) return;
           try { await npHost({ sys, file, name: romName, reuse: hostHint.room }); toast("Re-hosting — P2 can reconnect"); }
           catch { /* */ }
+        }, 1600);
+      } else if (prefs().npHostByDefault !== false && np && sys !== "upload") {
+        // Every normal launch advertises a ready Player 1 room, so the
+        // "Join" action on Home and Play never depends on a second setup step.
+        setTimeout(async () => {
+          if (NP.role || window.__inNetplay || !window.__emuUp) return;
+          try {
+            await npHost({ sys, file, name: romName });
+            ping(false);
+          } catch { /* room creation is retried from the Netplay sheet */ }
         }, 1600);
       }
     }

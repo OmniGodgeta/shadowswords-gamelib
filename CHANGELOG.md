@@ -2,6 +2,20 @@
 
 All notable changes to the RetroVerse website.
 
+## [2.22.33] — 2026-09-12 — Play lobby and reliable cloud saves
+
+### Added
+
+- **Play lobby:** the Play section now includes the gameplay preview/box-art
+  carousel, current players, join actions, and a clearer friends/chat area.
+- **Automatic rooms:** normal browser game launches create a Player 1 room by
+  default, so players appearing on Home and Play can be joined directly.
+
+### Fixed
+
+- Cloud save uploads no longer use browser `keepalive`, which rejects large
+  EmulatorJS state files before they reach the server.
+
 ## [2.22.32] — 2026-09-12 — Expose emulator load diagnostics
 
 ### Fixed
