@@ -6,6 +6,16 @@ agent can pick up context without re-deriving it. Read `AGENTS.md` first, then
 this. (Netplay internals: `NETPLAY-UI-CONTRACT.md`. Roadmap split:
 `FEATURE-BACKLOG.md`.)
 
+## Session 2026-09-13 — auth diagnostics
+
+- The live `/auth/login` and `/auth/register` endpoints are healthy and
+  registration is open. Unauthenticated `/auth/me` returning 401 is expected.
+- The public GitHub Pages mirror reaches the account API through the Tailnet
+  hostname; users outside the Tailnet cannot authenticate there because Funnel
+  is intentionally disabled.
+- Cache version `2.88` now preserves non-JSON auth responses and reports
+  network, rate-limit, and server errors directly in the sign-in form.
+
 ## Session 2026-09-13 — media reliability and diagnostics
 
 - Added track-level search, genre filtering, persistent music favorites, volume

@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.88
+- Auth failures now show the server's actual response, including rate-limit
+  timing, instead of falling back to a generic error.
+- Network failures now explain whether the public mirror needs a Tailnet
+  connection or the self-hosted server is unavailable.
+
 ## 2.87
 - Hardened invite netplay signaling against stale SDP offers and answers from
   reconnects by enforcing host/guest signaling roles and states.

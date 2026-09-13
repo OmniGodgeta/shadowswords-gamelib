@@ -1173,13 +1173,26 @@ function setPref(k, v) {
   window.dispatchEvent(new Event("ssw-prefs"));
 }
 async function apiAuth(action, body) {
-  const r = await fetch(`${API}/auth/${action}`, {
-    method: action === "me" ? "GET" : "POST",
-    headers: { "content-type": "application/json", ...authHdr() },
-    body: action === "me" ? undefined : JSON.stringify(body || {}),
-  });
-  const data = await r.json().catch(() => ({}));
-  if (!r.ok) throw Object.assign(new Error(data.error || r.statusText), { status: r.status });
+  let r;
+  try {
+    r = await fetch(`${API}/auth/${action}`, {
+      method: action === "me" ? "GET" : "POST",
+      headers: { "content-type": "application/json", ...authHdr() },
+      body: action === "me" ? undefined : JSON.stringify(body || {}),
+    });
+  } catch {
+    throw new Error(SELF_HOSTED
+      ? "The RetroVerse server is unreachable. Check your Tailnet connection and try again."
+      : "The public site cannot reach the account server. Open RetroVerse on the Tailnet or use the app.");
+  }
+  const raw = await r.text();
+  let data = {};
+  try { data = raw ? JSON.parse(raw) : {}; } catch { /* retain the useful text below */ }
+  if (!r.ok) {
+    const message = data.error || raw.trim() || r.statusText || `Request failed (${r.status})`;
+    const retry = r.headers.get("retry-after");
+    throw Object.assign(new Error(retry ? `${message} Try again in ${retry} seconds.` : message), { status: r.status });
+  }
   return data;
 }
 function setSession(token, user) {
