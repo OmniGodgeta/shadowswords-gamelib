@@ -32,6 +32,16 @@ this. (Netplay internals: `NETPLAY-UI-CONTRACT.md`. Roadmap split:
 - Signaling polling now surfaces room expiry and repeated server failures
   instead of silently swallowing them. Cache version is `2.75`.
 
+## Session 2026-09-13 — floating chat and friends
+
+- The persistent floating Chat button is draggable on desktop and touch
+  devices. Its position is saved in `ssw:chatFabPosition`; dragging to the
+  bottom X target hides it until reload.
+- The chat window now includes active players from `/play/stats`, with
+  `Join as P2` when a room is open and `Watch` when a watch-party link exists.
+  The existing `/chat` and watch/netplay transports remain unchanged. Cache
+  version is `2.76`.
+
 ---
 
 ## Session 2026-09-12 — final handoff recovery

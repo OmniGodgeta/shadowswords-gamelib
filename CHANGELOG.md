@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.76
+- Made the floating Chat button draggable across the site, with persistent
+  positioning and an X drop target to hide it until reload.
+- Added active friends to the floating chat window with Join as P2 and Watch
+  actions using the existing presence and watch-party transports.
+
 ## 2.75
 - Reorganized the in-game toolbar into transport, saves, and Netplay groups.
 - Moved Invite, Watch, Sync, and room controls into a responsive Netplay submenu.

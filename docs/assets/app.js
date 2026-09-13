@@ -1814,16 +1814,108 @@ function closePartyChat() {
   const fab = $("#party-chat-fab");
   if (fab) fab.setAttribute("aria-expanded", "false");
 }
+function setChatFabPosition(pos) {
+  const fab = $("#party-chat-fab");
+  if (!fab) return;
+  if (!pos) {
+    LS.set("chatFabPosition", null);
+    fab.style.removeProperty("left"); fab.style.removeProperty("top");
+    fab.style.removeProperty("right"); fab.style.removeProperty("bottom");
+    return;
+  }
+  const x = Math.max(8, Math.min(window.innerWidth - fab.offsetWidth - 8, pos.x));
+  const y = Math.max(8, Math.min(window.innerHeight - fab.offsetHeight - 8, pos.y));
+  fab.style.left = `${x}px`; fab.style.top = `${y}px`;
+  fab.style.right = "auto"; fab.style.bottom = "auto";
+  LS.set("chatFabPosition", { x, y });
+}
+function initChatFab() {
+  const fab = $("#party-chat-fab");
+  if (!fab || fab.dataset.dragReady) return;
+  fab.dataset.dragReady = "1";
+  const saved = LS.get("chatFabPosition", null);
+  if (saved) setChatFabPosition(saved);
+  let drag = null, moved = false, dropZone = null;
+  fab.addEventListener("pointerdown", (e) => {
+    if (e.button !== 0) return;
+    const r = fab.getBoundingClientRect();
+    drag = { id: e.pointerId, dx: e.clientX - r.left, dy: e.clientY - r.top, sx: e.clientX, sy: e.clientY };
+    moved = false; fab.setPointerCapture?.(e.pointerId);
+  });
+  fab.addEventListener("pointermove", (e) => {
+    if (!drag || drag.id !== e.pointerId) return;
+    if (Math.abs(e.clientX - drag.sx) > 3 || Math.abs(e.clientY - drag.sy) > 3) moved = true;
+    setChatFabPosition({ x: e.clientX - drag.dx, y: e.clientY - drag.dy });
+    dropZone?.classList.toggle("hot", e.clientY > window.innerHeight - 110);
+  });
+  fab.addEventListener("pointerup", (e) => {
+    if (!drag || drag.id !== e.pointerId) return;
+    if (moved && e.clientY > window.innerHeight - 110) {
+      setChatFabPosition(null);
+      fab.hidden = true;
+      toast("Chat button hidden — reload the page to restore it");
+    }
+    if (dropZone) { dropZone.remove(); dropZone = null; }
+    drag = null;
+  });
+  fab.addEventListener("click", (e) => { if (moved) { e.preventDefault(); e.stopImmediatePropagation(); moved = false; } }, true);
+  fab.addEventListener("pointerdown", () => {
+    dropZone = el("div", { className: "chat-drop-zone", textContent: "×  Drop here to hide chat" });
+    document.body.append(dropZone);
+  });
+}
 function openPartyChat() {
   if (partyChatPanel?.isConnected) { closePartyChat(); return; }
   const close = el("button", { type: "button", className: "party-chat-close", textContent: "×", ariaLabel: "Close party chat", title: "Close" });
   close.onclick = closePartyChat;
+  const friends = el("div", { className: "party-friends" },
+    el("div", { className: "party-friends-head" },
+      el("strong", { textContent: "Friends playing now" }),
+      el("span", { className: "hint", textContent: "Loading…" })));
   partyChatPanel = el("section", { className: "party-chat", role: "dialog", ariaLabel: "Party chat" },
-    el("div", { className: "party-chat-head" }, el("strong", { textContent: "Party chat" }), close),
+    el("div", { className: "party-chat-head" },
+      el("strong", { textContent: "Party chat" }),
+      el("button", { className: "party-chat-reset", textContent: "Reset position", title: "Reset floating button position",
+        onclick: () => setChatFabPosition(null) }),
+      close),
+    friends,
     chatWidget());
   document.body.append(partyChatPanel);
+  const fabRect = $("#party-chat-fab")?.getBoundingClientRect();
+  if (fabRect) {
+    partyChatPanel.style.left = `${Math.max(8, Math.min(window.innerWidth - partyChatPanel.offsetWidth - 8, fabRect.left))}px`;
+    partyChatPanel.style.top = `${Math.max(8, fabRect.top - partyChatPanel.offsetHeight - 10)}px`;
+    partyChatPanel.style.right = "auto"; partyChatPanel.style.bottom = "auto";
+  }
   $("#party-chat-fab")?.setAttribute("aria-expanded", "true");
   partyChatPanel.querySelector("input")?.focus();
+  let friendTimer = 0;
+  const drawFriends = async () => {
+    const d = await fetch(`${API}/play/stats`, { cache: "no-store" }).then((r) => r.json()).catch(() => null);
+    const list = (d?.nowPlaying || []).filter((x) => x.cid !== CID);
+    const head = friends.querySelector(".party-friends-head .hint");
+    if (head) head.textContent = list.length ? `${list.length} active` : "No active players";
+    friends.querySelectorAll(".party-friend").forEach((x) => x.remove());
+    for (const x of list) {
+      const playHref = x.sys && x.file
+        ? `#/play/${x.sys}/${x.file.split("/").map(encodeURIComponent).join("/")}` : "#/play";
+      const join = el("a", { className: "btn btn-primary sm", href: playHref, textContent: "Join as P2" });
+      if (x.netplay && x.room) join.onclick = () => LS.set("joinNp", { sys: x.sys, file: x.file, room: x.room, t: Date.now() });
+      else { join.textContent = "Play too"; join.classList.remove("btn-primary"); join.classList.add("btn-ghost"); }
+      const row = el("div", { className: "party-friend" },
+        el("div", { className: "party-friend-meta" },
+          el("span", { className: "live-dot" }),
+          el("strong", { textContent: x.who || "Someone" }),
+          el("small", { textContent: `${x.game || "Playing"}${x.netplay ? " · room open" : ""}` })),
+        el("div", { className: "party-friend-actions" },
+          join,
+          x.watch ? el("a", { className: "btn btn-ghost sm", href: `#/watch/${x.watch}`, textContent: "Watch" }) : null));
+      friends.append(row);
+    }
+    if (partyChatPanel?.isConnected) friendTimer = setTimeout(drawFriends, 5000);
+  };
+  drawFriends();
+  partyChatPanel.addEventListener("remove", () => clearTimeout(friendTimer), { once: true });
 }
 
 async function routeLibrary() {
@@ -4581,6 +4673,7 @@ const toggleDrawer = (open = drawer.hidden) => {
 };
 $("#menu-btn").onclick = (e) => { e.preventDefault(); e.stopPropagation(); toggleDrawer(); };
 $("#party-chat-fab").onclick = openPartyChat;
+initChatFab();
 drawer.addEventListener("click", (e) => { if (e.target.closest("a")) toggleDrawer(false); });
 document.addEventListener("click", (e) => {
   if (!drawer.hidden && !drawer.contains(e.target) && !e.target.closest("#menu-btn")) toggleDrawer(false);

@@ -1193,6 +1193,7 @@ body.lite .pad-row.listening .pr-chip { animation: none; border-style: dashed; }
   z-index: 45; min-height: 42px; padding: 0 16px; border-radius: 22px;
   background: rgba(9,9,20,.92); border: 1px solid var(--cyan); color: var(--cyan);
   font: inherit; font-weight: 800; box-shadow: var(--glow-cyan); cursor: pointer;
+  touch-action: none; user-select: none;
 }
 .party-chat {
   position: fixed; right: max(18px, env(safe-area-inset-right)); bottom: max(70px, calc(env(safe-area-inset-bottom) + 56px));
@@ -1200,9 +1201,25 @@ body.lite .pad-row.listening .pr-chip { animation: none; border-style: dashed; }
   border: 1px solid var(--line-2); border-radius: 14px; background: rgba(9,9,20,.98);
   box-shadow: 0 18px 50px rgba(0,0,0,.55);
 }
-.party-chat-head { display: flex; justify-content: space-between; align-items: center; margin: 0 2px 10px; }
+.party-chat-head { display: flex; justify-content: flex-end; align-items: center; gap: 8px; margin: 0 2px 10px; }
+.party-chat-head strong { margin-right: auto; }
+.party-chat-reset { border: 0; background: transparent; color: var(--dim); font-size: 10px; cursor: pointer; }
 .party-chat-close { border: 0; background: transparent; color: var(--muted); font-size: 24px; line-height: 1; cursor: pointer; }
 .party-chat .chat-log { height: min(42vh, 280px); }
+.party-friends { margin-bottom: 10px; border-bottom: 1px solid var(--line); padding-bottom: 9px; }
+.party-friends-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; margin-bottom: 6px; }
+.party-friend { display: flex; align-items: center; gap: 8px; padding: 7px 0; border-top: 1px solid rgba(255,255,255,.06); }
+.party-friend-meta { display: flex; align-items: center; gap: 5px; min-width: 0; flex: 1; flex-wrap: wrap; }
+.party-friend-meta strong { font-size: 12px; }
+.party-friend-meta small { width: 100%; color: var(--dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.party-friend-actions { display: flex; gap: 4px; flex: 0 0 auto; }
+.party-friend-actions .btn { font-size: 10px; padding: 5px 7px; }
+.chat-drop-zone {
+  position: fixed; left: 50%; bottom: 16px; transform: translateX(-50%); z-index: 70;
+  padding: 12px 28px; border: 2px dashed var(--pink); border-radius: 999px;
+  background: rgba(30,6,25,.94); color: var(--pink); font-weight: 800; pointer-events: none;
+}
+.chat-drop-zone.hot { background: var(--pink); color: #16000f; box-shadow: 0 0 24px rgba(255,51,198,.75); }
 html.playing .party-chat-fab, html.playing .party-chat { display: none; }
 @media (min-width: 1024px) {
   .party-chat-fab { right: 22px; }
