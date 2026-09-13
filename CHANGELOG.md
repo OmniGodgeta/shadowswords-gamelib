@@ -1,5 +1,22 @@
 # Changelog
 
+## 2.95
+- Player 2 no longer ends up on a frozen/black screen: the guest keeps its
+  local canvas visible until the host's stream actually presents frames, and
+  if the stream stalls both sides fall back to input sync with a savestate push.
+- Reopening the app or reloading a hosted game now asks whether to continue
+  hosting the old room, create a new one, or continue single player instead of
+  silently re-hosting.
+- Reorganized the in-game top bar: Netplay actions live under the Netplay menu,
+  all cloud saves (save/load/delete) under one `Saves` submenu, and the
+  remaining tools under a `⋯` menu.
+- Removed EmulatorJS's non-functional three-bar button on Android play.
+- The Netplay sheet and other dialogs now scroll on small screens instead of
+  overflowing the viewport.
+- Desktop emulator scaling is now pixel-crisp by default (smooth/CRT filters
+  opt out) and the boot overlay hides startup artefacts.
+- Play page hero now reads "Roll a join, pass a beer".
+
 ## 2.94
 - Disabled automatic N64 save-state loading and background auto-saving. N64
   state serialization can freeze Chrome and a stale recovery state can restore

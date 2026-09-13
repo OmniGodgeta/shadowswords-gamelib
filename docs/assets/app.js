@@ -206,7 +206,7 @@ function snapshotNetplay(sys, file, name) {
 }
 /* WebRTC netplay — replaces EmulatorJS's broken savestate lockstep.
    Host = player 1, guest = player 2. Inputs ride a datachannel on the tailnet. */
-const NP = { role: null, peerRole: null, room: null, pc: null, dc: null, myP: 0, after: 0, pollT: 0, pollFails: 0, reconnectT: 0, alive: false, pendingIce: [], rxId: null, rxLen: 0, rxGot: 0, rxChunks: [], txBusy: false, syncPromise: null, lastSyncError: "", syncT: 0, sent: 0, recv: 0, inputsSent: 0, inputsApplied: 0, video: false, hostStream: null, mic: null, micTrack: null, micSender: null, remoteAudio: null, pingT: 0, rtt: 0, meReady: false, peerReady: false, micMuted: false };
+const NP = { role: null, peerRole: null, room: null, pc: null, dc: null, myP: 0, after: 0, pollT: 0, pollFails: 0, reconnectT: 0, alive: false, pendingIce: [], rxId: null, rxLen: 0, rxGot: 0, rxChunks: [], txBusy: false, syncPromise: null, lastSyncError: "", syncT: 0, sent: 0, recv: 0, inputsSent: 0, inputsApplied: 0, video: false, hostStream: null, mic: null, micTrack: null, micSender: null, remoteAudio: null, pingT: 0, rtt: 0, meReady: false, peerReady: false, micMuted: false, videoFailed: false };
 
 // Netplay diagnostics: kept in memory and shown in the Netplay sheet so a
 // failure can be read off a phone with no devtools.
@@ -223,7 +223,7 @@ function npIndicator() {
   let text = null;
   const open = NP.dc?.readyState === "open";
   const sync = document.getElementById("np-sync-btn");
-  if (sync) sync.hidden = !(open && NP.role === "host" && !NP.video);
+  if (sync) sync.hidden = !(open && NP.role === "host" && !NP.video && npStateSyncAllowed());
   const ping = (open && NP.rtt) ? ` · ${NP.rtt} ms` : "";
   const ready = (open && NP.peerReady) ? " ✓ ready" : "";
   if (NP.role === "host") text = open ? `● Player 1 · P2 connected${ping}${ready}` : (NP.room ? "○ Player 1 · waiting for P2" : null);
@@ -245,6 +245,12 @@ function npRoomStatus() {
 function npCore(p, i, v) {
   const fn = window.EJS_emulator?.gameManager?.functions?.simulateInput;
   if (typeof fn === "function") fn(p, i, v);
+}
+function npStateSyncAllowed() {
+  // N64 savestates are large and mupen64plus can pause the main thread while
+  // exporting/loading them. Keeping them off the ordered input channel avoids
+  // visible frame skips and delayed controller input during Mario Kart.
+  return window.__playSys !== "n64";
 }
 function npHookInput(tries = 0) {
   const gm = window.EJS_emulator?.gameManager;
@@ -292,12 +298,14 @@ function npBindDc(dc) {
     _npReconnect = 0;
     NP.meReady = false; NP.peerReady = false;
     try { dc.send(JSON.stringify({ t: "ready", r: true, role: NP.role })); NP.meReady = true; } catch (e) { npLog(`ready send failed: ${e?.message || e}`); }
+    // If video already failed before the channel opened, re-send the mode switch.
+    if (NP.videoFailed) try { dc.send(JSON.stringify({ t: "mode", video: false })); } catch { /* */ }
     npHookInput();
     toast(NP.role === "host" ? "Player 1 linked — Player 2 is connected" : "Linked — you are Player 2");
     // The host is the reference. Push its screen to the guest once on link-up,
     // then keep nudging it back in step: without a shared frame clock the two
     // cores drift apart after a few seconds. The guest only ever applies.
-    if (NP.role === "host" && !NP.video) {
+    if (NP.role === "host" && !NP.video && npStateSyncAllowed()) {
       clearInterval(NP.syncT);
       NP.syncT = setInterval(() => { if (NP.dc && NP.dc.readyState === "open") npSendState(); }, 6000);
       setTimeout(() => { if (NP.dc && NP.dc.readyState === "open") npSendState(); }, 1200);
@@ -381,6 +389,22 @@ function npBindDc(dc) {
       }
       NP.peerReady = !!m.r; npIndicator();
     }
+    else if (m.t === "mode") {
+      // The guest could not present the host's video track and switched to its
+      // local core. Drop the video path on the host too and start pushing
+      // savestates so both cores agree, instead of leaving the guest behind.
+      if (m.video === false && NP.role === "host" && NP.video) {
+        NP.video = false;
+        npLog("peer reports stalled video; using input sync");
+        try { NP.hostStream?.getTracks().forEach((t) => t.stop()); } catch { /* */ }
+        NP.hostStream = null;
+        if (npStateSyncAllowed()) {
+          clearInterval(NP.syncT);
+          NP.syncT = setInterval(() => { if (NP.dc && NP.dc.readyState === "open") npSendState(); }, 6000);
+          npSendState();
+        }
+      }
+    }
   };
 }
 async function npSendSig(payload) {
@@ -441,7 +465,10 @@ function npStartHostStream() {
 // renders above the video, so the guest keeps its controls.
 function npShowHostVideo(stream) {
   NP.video = true;
+  NP.videoFailed = false;
   clearInterval(NP.syncT); NP.syncT = 0;
+  let fallbackT = 0;
+  let stallT = 0;
   let v = document.getElementById("np-video");
   if (!v) {
     v = el("video", { id: "np-video", autoplay: true, playsInline: true, muted: true,
@@ -453,12 +480,46 @@ function npShowHostVideo(stream) {
   }
   v.srcObject = stream;
   v.setAttribute("aria-label", "Player 1 game stream — you are Player 2");
+  try { stream.getVideoTracks().forEach((t) => { t.onended = () => showLocalFallback(); }); } catch { /* */ }
+  const cv = document.querySelector("#game canvas");
+  let fellBack = false;
+  const showLocalFallback = () => {
+    if (fellBack) return;
+    if (!NP.video || v.readyState >= 2) return;
+    fellBack = true;
+    clearTimeout(fallbackT); clearInterval(stallT);
+    NP.video = false;
+    v.remove();
+    try { window.EJS_emulator?.setVolume?.(1); } catch { /* */ }
+    if (cv) cv.style.visibility = "";
+    npHookInput();
+    // Tell the host to stop treating its stream as authoritative. Otherwise the
+    // guest would render a local core that never received Player 1's inputs.
+    NP.videoFailed = true;
+    try { NP.dc?.send(JSON.stringify({ t: "mode", video: false })); } catch { /* */ }
+    npLog("host video produced no frame; using local input sync");
+    toast("Remote video stalled — using the local game screen");
+  };
+  v.onplaying = () => {
+    clearTimeout(fallbackT);
+    if (cv) cv.style.visibility = "hidden";
+  };
+  // A track can connect and start, then stall (host tab throttled, GPU capture
+  // hiccup). Keep watching so the guest never stays stuck on a frozen frame
+  // while its inputs still reach the host.
+  let stalled = 0;
+  stallT = setInterval(() => {
+    if (!NP.video || fellBack) return;
+    if (v.readyState >= 2 && !v.paused) { stalled = 0; return; }
+    if (++stalled >= 4) showLocalFallback();
+  }, 1000);
   const autoUnmute = prefs().npAutoUnmute !== false;
   v.play?.().then(() => { if (autoUnmute) v.muted = false; toast(autoUnmute ? "You are Player 2 — playing on Player 1's screen" : "Player 2 — tap the screen to unmute"); })
     .catch(() => { v.muted = true; v.play?.().catch(() => {}); toast("Tap the screen to unmute"); });
   try { window.EJS_emulator?.setVolume?.(0); } catch { /* */ }
-  const cv = document.querySelector("#game canvas");
-  if (cv) cv.style.visibility = "hidden";   // the video covers it anyway
+  // Do not hide the local canvas until the remote video has actually begun
+  // presenting frames. A connected WebRTC track can still be black/stalled.
+  fallbackT = setTimeout(showLocalFallback, 4000);
 }
 // ---- voice chat (mic track on the same RTCPeerConnection) ----------------
 function npRemoteAudioEl() {
@@ -556,7 +617,7 @@ function npStartPc(isHost) {
   NP.pc.onconnectionstatechange = () => {
     npLog(`pc ${NP.pc.connectionState}`);
     npIndicator();
-    if (NP.pc.connectionState === "connected" && NP.role === "host" && !NP.video) setTimeout(() => npSendState(), 300);
+    if (NP.pc.connectionState === "connected" && NP.role === "host" && !NP.video && npStateSyncAllowed()) setTimeout(() => npSendState(), 300);
     if (NP.pc.connectionState === "failed") npLog("peer connection failed; check both devices are on the Tailnet");
   };
   NP.pc.ontrack = (e) => {
@@ -751,7 +812,7 @@ async function npJoin(room) {
 function npResumeAfterBackground() {
   if (!window.__emuUp || !NP.room) return;
   if (NP.dc?.readyState === "open") {
-    if (NP.role === "host" && !NP.video) npSendState();
+    if (NP.role === "host" && !NP.video && npStateSyncAllowed()) npSendState();
     return;
   }
   npLog("resume: reconnecting");
@@ -774,7 +835,7 @@ function npStop() {
   NP.mic = null; NP.micTrack = null; NP.micSender = null; NP.micMuted = false;
   NP.remoteAudio = null;
   clearInterval(NP.pingT); NP.pingT = 0; NP.rtt = 0;
-  NP.hostStream = null; NP.video = false;
+  NP.hostStream = null; NP.video = false; NP.videoFailed = false;
   document.getElementById("np-video")?.remove();
   document.getElementById("np-remote-audio")?.remove();
   document.getElementById("np-ptt")?.remove();
@@ -792,6 +853,39 @@ function npLeave() {
     const s = LS.get("lastSession", null);
     if (s?.np) LS.set("lastSession", { ...s, np: false, role: null, room: null, t: Date.now() });
   } catch { /* */ }
+}
+// Coming back after the app was closed lands us in the last game. If we were
+// the netplay host, ask what to do instead of silently re-hosting the old room.
+function npRecoveryPrompt(sys, file, name, room) {
+  if (document.getElementById("np-recover-overlay")) return;
+  const o = el("div", { id: "np-recover-overlay", className: "np-recover-overlay" });
+  const choose = (fn) => { o.remove(); fn(); };
+  const clearHost = () => {
+    npForgetHost();
+    try {
+      const s = LS.get("lastSession", null);
+      if (s?.np) LS.set("lastSession", { ...s, np: false, role: null, room: null, t: Date.now() });
+    } catch { /* */ }
+  };
+  o.append(el("div", { className: "help-card np-recover-card" },
+    el("h3", { textContent: "Resume netplay?" }),
+    el("p", { className: "hint", textContent: `You were hosting room ${room} for ${name}.` }),
+    el("button", { className: "btn btn-primary", style: "width:100%;margin:6px 0", textContent: "Continue hosting",
+      onclick: () => choose(async () => {
+        if (NP.role || window.__inNetplay) return;
+        try { await npHost({ sys, file, name, reuse: room }); toast("Re-hosting — Player 2 can reconnect"); }
+        catch (e) { toast(`Couldn't re-host: ${e?.message || "server unavailable"}`); npLog(`rehost failed: ${e?.message || e}`); }
+      }) }),
+    el("button", { className: "btn btn-ghost", style: "width:100%;margin:6px 0", textContent: "Create a new room",
+      onclick: () => choose(async () => {
+        if (NP.role || window.__inNetplay) return;
+        try { await npHost({ sys, file, name }); toast("New room created — you are Player 1"); invitePicker({ sys, file, name, watch: window.__watchId }); }
+        catch (e) { toast(`Couldn't create a room: ${e?.message || "server unavailable"}`); npLog(`room create failed: ${e?.message || e}`); }
+      }) }),
+    el("button", { className: "btn btn-ghost", style: "width:100%;margin:6px 0", textContent: "Continue single player",
+      onclick: () => choose(clearHost) }),
+  ));
+  uiRoot().append(o);
 }
 // ---- watch-party over WebRTC (additive; the JPEG stream stays as fallback) ----
 const WNP = { room: null, pc: null, stream: null, after: 0, pollT: 0, alive: false, pendingIce: [] };
@@ -931,7 +1025,7 @@ function openNetplaySheet(sys, file, name) {
         try {
           if (!NP.room) { await npHost({ sys, file, name }); toast("Room created — you are Player 1"); }
           const sb = document.getElementById("np-sync-btn");
-          if (sb && !NP.video) { sb.hidden = false; sb.onclick = resyncNetplay; }
+          if (sb && !NP.video && npStateSyncAllowed()) { sb.hidden = false; sb.onclick = resyncNetplay; }
           window.__playPing?.(false);
           invitePicker({ sys, file, name, watch: window.__watchId });
         } catch (e) { toast(`Couldn't create a room: ${e?.message || "server unavailable"}`); npLog(`room create failed: ${e?.message || e}`); }
@@ -958,7 +1052,7 @@ function openNetplaySheet(sys, file, name) {
     kids.push(el("div", { className: "np-join-box" },
       el("strong", { textContent: "Join Player 1" }), roomInput, joinRoom, joinStatus));
   }
-  if (NP.role === "host" && !NP.video) {
+  if (NP.role === "host" && !NP.video && npStateSyncAllowed()) {
     kids.push(el("button", { className: "btn btn-ghost", style: "width:100%;margin:6px 0", textContent: "Sync screens",
       onclick: () => { o.remove(); resyncNetplay(); } }));
   }
@@ -1038,6 +1132,7 @@ function openNetplaySheet(sys, file, name) {
 }
 async function resyncNetplay() {
   if (NP.video) { toast("Not needed — P2 mirrors your screen"); return; }
+  if (!npStateSyncAllowed()) { toast("N64 live input sync is active; savestate sync is disabled to prevent frame skips"); return; }
   if (NP.role !== "host") { toast("Only the host can sync"); return; }
   if (!NP.dc || NP.dc.readyState !== "open") { toast("Netplay isn't linked yet"); return; }
   if (await npSendState(true)) toast("Sent your screen to P2");
@@ -1049,6 +1144,7 @@ async function resyncNetplay() {
 async function npSendState(manual = false) {
   const gm = window.EJS_emulator?.gameManager;
   const fail = (reason) => { NP.lastSyncError = reason; npLog(`sync skip: ${reason}`); return false; };
+  if (!npStateSyncAllowed()) return fail("N64 savestate sync disabled for live input stability");
   if (NP.role !== "host") return fail("only Player 1 can sync");
   if (!gm?.getState) return fail("emulator state export is unavailable");
   if (!NP.dc || NP.dc.readyState !== "open") return fail("data channel is not open");
@@ -2323,7 +2419,7 @@ async function routePlay() {
   const frag = document.createDocumentFragment();
   frag.append(hero({
     mod: "hero-top play-hero",
-    title: "Play in your browser",
+    title: "Roll a join, pass a beer",
     desc: `${total.toLocaleString()} games across ${playable.length} systems, emulated right here. Pick a console below, or drop in a ROM from your device.`,
     art: await spotlightArt(24),
     actions: [
@@ -2727,21 +2823,24 @@ async function routePlayGame(sys, romParam, resume = false) {
   const syncBtn = el("button", { className: "pbtn", id: "np-sync-btn", textContent: "Sync", title: "Force both players onto this screen (host only)", hidden: true });
   const invBtn = el("button", { className: "pbtn", id: "inv-btn", textContent: "Invite", title: "Invite someone who's online", hidden: true });
   const npOpenBtn = el("button", { className: "pbtn np-menu-action", textContent: "Room & connection", title: "Open netplay room controls" });
-  const npMenu = el("div", { className: "np-menu", hidden: true },
-    npOpenBtn, invBtn, watchBtn, syncBtn);
+  const npMenu = el("div", { className: "np-menu", hidden: true }, npOpenBtn, invBtn, watchBtn, syncBtn);
   const npGroup = el("div", { className: "player-control-group np-group" }, npBtn, npMenu);
   const transportGroup = el("div", { className: "player-control-group", role: "group", ariaLabel: "Playback controls" }, rwBtn, ffBtn);
-  const saveGroup = el("div", { className: "player-control-group save-group", role: "group", ariaLabel: "Save controls" }, saveBtn, saveAsBtn, loadBtn);
-  const flagBtn = el("button", { className: "pbtn", id: "flag-btn", textContent: "⚑", title: "Report a problem with this game" });
-  const padLayoutBtn = el("button", { className: "pbtn", id: "pad-layout-btn", textContent: "Pad", title: "Touch pad size, opacity and position", hidden: true });
+  const saveMenuBtn = el("button", { className: "pbtn save-menu-btn", textContent: "☁ Saves", title: "Save and load cloud states" });
+  const saveMenu = el("div", { className: "save-menu", hidden: true }, saveBtn, saveAsBtn, loadBtn);
+  const saveGroup = el("div", { className: "player-control-group save-group", role: "group", ariaLabel: "Save controls" }, saveMenuBtn, saveMenu);
+  const flagBtn = el("button", { className: "pbtn", id: "flag-btn", textContent: "⚑ Report", title: "Report a problem with this game" });
+  const padLayoutBtn = el("button", { className: "pbtn", id: "pad-layout-btn", textContent: "Pad layout", title: "Touch pad size, opacity and position", hidden: true });
+  const moreBtn = el("button", { className: "pbtn more-menu-btn", textContent: "⋯", title: "More controls" });
+  const moreMenu = el("div", { className: "more-menu", hidden: true }, ctrlBtn, padLayoutBtn, noteBtn, flagBtn);
+  const moreGroup = el("div", { className: "player-control-group more-group" }, moreBtn, moreMenu);
   if (sys !== "upload") flagBtn.onclick = () => reportGame(sys, file, romName);
   else flagBtn.hidden = true;
   const shell = el("div", { className: "player" + (IN_APP ? " in-app-player" : "") },
     el("div", { className: "player-chrome" },
       el("div", { className: "player-bar" },
         el("button", { type: "button", className: "pbtn exit", textContent: "‹ Exit", onclick: (e) => { e.preventDefault(); exitPlayer(); } }),
-        transportGroup, saveGroup, npGroup,
-        ctrlBtn, noteBtn, flagBtn, padLayoutBtn),
+        transportGroup, saveGroup, npGroup, moreGroup),
       el("div", { className: "title", id: "player-title", textContent: "Loading…" })),
     el("div", { className: "player-stage" },
       el("div", { id: "game" }), loadEl));
@@ -2760,12 +2859,13 @@ async function routePlayGame(sys, romParam, resume = false) {
         onclick: (e) => { e.preventDefault(); e.stopPropagation(); showChrome(); } }),
       el("button", { type: "button", className: "fab-pad", title: "Hide or show touch controls",
         onclick: (e) => { e.preventDefault(); e.stopPropagation(); toggleTouchPad(); } }),
-      el("button", { type: "button", className: "fab-ctrl", textContent: "🎮", title: "Controller setup",
-        onclick: (e) => { e.preventDefault(); e.stopPropagation(); controlsPanel(core); } }));
+    );
   }
   document.body.append(shell);
   shell.addEventListener("click", (e) => {
     if (!npGroup.contains(e.target)) npMenu.hidden = true;
+    if (!saveGroup.contains(e.target)) saveMenu.hidden = true;
+    if (!moreGroup.contains(e.target)) moreMenu.hidden = true;
   });
   view.replaceChildren();
 
@@ -2820,6 +2920,7 @@ async function routePlayGame(sys, romParam, resume = false) {
     loadState: true, screenshot: true, cheat: true, gamepad: true, netplay: false,
     exitEmulation: true };
   const vf = prefs().videoFilter;
+  document.documentElement.dataset.vf = vf;
   const requestedWebgl = new URLSearchParams(location.search).get("ejs-webgl");
   window.EJS_defaultOptions = Object.assign(
     { rewindEnabled: "enabled" },
@@ -3045,18 +3146,18 @@ async function routePlayGame(sys, romParam, resume = false) {
           && Date.now() - (session.t || 0) < 15 * 60 * 1000) {
         setTimeout(() => autoJoinNetplay(session.room), 1400);
       }
-      // We were hosting this game before a reload/background — re-host the same
-      // room (server `reuse`) so P2 can reconnect instead of us becoming P2.
+      // We were hosting this game before a reload/background — offer to keep
+      // the same room (server `reuse`), start a fresh one, or go single player,
+      // instead of silently re-hosting and pulling P2 into a stale room.
       const hostHint = LS.get("hostNp", null);
       const recoverySession = LS.get("lastSession", null);
       if (recoverySession?.np === true && recoverySession?.role === "host"
           && hostHint && hostHint.room && hostHint.sys === sys
           && (!hostHint.file || hostHint.file === file)
           && Date.now() - (hostHint.t || 0) < 15 * 60 * 1000) {
-        setTimeout(async () => {
+        setTimeout(() => {
           if (NP.role || window.__inNetplay) return;
-          try { await npHost({ sys, file, name: romName, reuse: hostHint.room }); toast("Re-hosting — P2 can reconnect"); }
-          catch { /* */ }
+          npRecoveryPrompt(sys, file, romName, hostHint.room);
         }, 1600);
       }
     }
@@ -3119,6 +3220,17 @@ async function routePlayGame(sys, romParam, resume = false) {
     npBtn.onclick = (e) => {
       e.stopPropagation();
       npMenu.hidden = !npMenu.hidden;
+      saveMenu.hidden = true; moreMenu.hidden = true;
+    };
+    saveMenuBtn.onclick = (e) => {
+      e.stopPropagation();
+      saveMenu.hidden = !saveMenu.hidden;
+      npMenu.hidden = true; moreMenu.hidden = true;
+    };
+    moreBtn.onclick = (e) => {
+      e.stopPropagation();
+      moreMenu.hidden = !moreMenu.hidden;
+      npMenu.hidden = true; saveMenu.hidden = true;
     };
     const tips = notesFor(sys, file, romName);
     if (tips.length) {
@@ -3133,26 +3245,24 @@ async function routePlayGame(sys, romParam, resume = false) {
       };
     }
     window.__playSys = sys; window.__playFile = file;
-    if (np && sys !== "upload") {
-      npBtn.hidden = false;
-      invBtn.hidden = false;
-      invBtn.onclick = () => invitePicker({ sys, file, name: romName, watch: window.__watchId });
-    }
     if (sys !== "upload") {
+      if (np) npBtn.hidden = false;
       invBtn.hidden = false;
       invBtn.onclick = () => invitePicker({ sys, file, name: romName, watch: window.__watchId });
     }
     if (key) {
       saveBtn.hidden = false;
+      saveBtn.textContent = "☁ Save state";
       saveBtn.onclick = cloudSave;
       saveBtn.oncontextmenu = (e) => { e.preventDefault(); cloudSaveAs(); };
-      saveAsBtn.hidden = false; saveAsBtn.onclick = cloudSaveAs;
-      loadBtn.hidden = false; loadBtn.textContent = "☁ Saves"; loadBtn.onclick = () => cloudLoad();
+      saveAsBtn.hidden = false; saveAsBtn.textContent = "＋ Save to slot"; saveAsBtn.onclick = cloudSaveAs;
+      loadBtn.hidden = false; loadBtn.textContent = "☁ Load state"; loadBtn.onclick = () => cloudLoad();
       loadBtn.title = "Load or delete cloud saves";
       saveAsBtn.title = "Save to a named slot";
-      const deleteBtn = el("button", { className: "pbtn", id: "cloud-delete", textContent: "🗑", title: "Delete all cloud saves for this game" });
+      const deleteBtn = el("button", { className: "pbtn", id: "cloud-delete", textContent: "🗑 Delete cloud saves", title: "Delete all cloud saves for this game" });
       deleteBtn.onclick = deleteCloudSaves;
-      saveGroup.append(deleteBtn);
+      saveMenu.append(deleteBtn);
+      saveMenuBtn.hidden = false;
       // never auto-load a save once netplay is (or will be) on — that puts the
       // host in-game while the guest is still on the title screen.
       // N64 auto-resume is disabled because a stale/partial recovery state can

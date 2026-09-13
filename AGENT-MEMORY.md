@@ -6,6 +6,30 @@ agent can pick up context without re-deriving it. Read `AGENTS.md` first, then
 this. (Netplay internals: `NETPLAY-UI-CONTRACT.md`. Roadmap split:
 `FEATURE-BACKLOG.md`.)
 
+## Session 2026-09-13 — netplay freeze + in-game chrome cleanup
+- Symptom: after invite → accept, the acceptor (Player 2) could still control
+  its character but its screen froze. Root cause: host-authoritative video hid
+  the guest's local canvas and relied on the WebRTC video track, which can
+  connect but never present a frame (or stall). Cache version `2.95` keeps the
+  local canvas visible until the video actually plays, and if it stalls the
+  guest sends `{t:"mode",video:false}` so the host also drops video and starts
+  savestate sync; both then run input-echo. The old fallback showed a local
+  core that had received no P1 inputs, so it was still frozen.
+- Reopening the app/reloading a hosted game now shows `npRecoveryPrompt`
+  (continue hosting / new room / single player) instead of silently re-hosting.
+  `hostNp` + `lastSession.np/role=host` still gate it to a fresh 15 min window.
+- In-game bar is now Exit · rewind/FF · `☁ Saves` menu · Netplay menu · `⋯`
+  menu. Saves (save/slot/load/delete) are one submenu; controller, pad layout,
+  note and report moved under `⋯`. Netplay actions unchanged.
+- EmulatorJS's native top-right three-bar button (`.ejs_virtualGamepad_open`)
+  is hidden in-app only; it toggled EJS's own pad menu and looked dead.
+- `#help-overlay` (used by the Netplay sheet and help) is now a scrollable
+  flex overlay with a bounded `.help-card`, so phone users can reach the lower
+  buttons. Menu popovers get `max-height` + `overflow-y` on coarse pointers.
+- Browser rendering: `.player-load`/`.player-stage` are solid black and the
+  canvas is `image-rendering: pixelated` unless the smooth/CRT filter is set,
+  reducing boot artefacts and scaling shimmer.
+
 ## Session 2026-09-13 — N64 save-state regression
 
 - Cache version `2.94` disables N64 automatic recovery loads and background

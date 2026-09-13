@@ -77,3 +77,17 @@ the sync/link is still being stabilised.
   fallback when capture fails.
 - Emulator load failure now offers **Retry** (and CDN fallback) — restyle the
   `#player-load` retry button if needed.
+
+## Applied 2.95 (toolbar + freeze)
+- Top bar is Exit · rewind/FF · `☁ Saves` submenu · Netplay submenu · `⋯`
+  submenu. `#np-btn`, `#inv-btn`, `#np-sync-btn` still exist; Invite/Sync/Watch
+  are inside `.np-menu`, saves inside `.save-menu`, the rest inside `.more-menu`.
+  Keep `#player`, `#game`, `window.SSMusic` shapes.
+- Guest video fallback: the guest's local canvas stays visible until the host
+  stream presents a frame; on stall the guest sends `{t:"mode",video:false}` and
+  the host drops video and pushes a savestate. Do not re-hide the canvas before
+  `#np-video` fires `playing`, or the guest sees a frozen screen again.
+- `npRecoveryPrompt` replaces silent re-hosting after an app reopen/reload.
+- In-app `.ejs_virtualGamepad_open` is hidden (`display:none`) — it only toggles
+  EJS's own pad menu and appeared dead on Android.
+
