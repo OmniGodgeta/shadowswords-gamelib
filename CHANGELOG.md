@@ -1,5 +1,13 @@
 # Changelog
 
+## 2.92
+- Normal invited guests are now clearly labeled as **Playing as P2** instead
+  of being confused with watch-only spectators.
+- Player 2 input forwarding now reports send/apply counters in diagnostics and
+  preserves Player 1's original emulator input path.
+- Host game streams request detail-preserving delivery up to 8 Mbps at 60 FPS
+  without intercepting Player 2 touch controls.
+
 ## 2.91
 - Normal game launches no longer create a hidden Netplay room or show
   “Waiting for P2”; rooms are created only when Netplay/Invite is explicitly

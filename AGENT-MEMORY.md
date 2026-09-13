@@ -49,6 +49,16 @@ this. (Netplay internals: `NETPLAY-UI-CONTRACT.md`. Roadmap split:
   prior role was explicitly host.
 - Add `x-ssw-client` to CORS allow-headers if changing the server CORS policy.
 
+## Session 2026-09-13 — Player 2 role and controls
+
+- Cache version `2.92` distinguishes normal invited guests from watch-only
+  spectators: the normal netplay badge says `Playing as P2`.
+- Host-stream input now calls the original host emulator handler for P1 and
+  forwards P2 inputs explicitly, with sent/applied input counters in the
+  diagnostics panel.
+- Host video tracks request detail-preserving delivery up to 8 Mbps/60 FPS;
+  the guest stream no longer intercepts touch input.
+
 ## Session 2026-09-13 — media reliability and diagnostics
 
 - Added track-level search, genre filtering, persistent music favorites, volume

@@ -206,7 +206,7 @@ function snapshotNetplay(sys, file, name) {
 }
 /* WebRTC netplay — replaces EmulatorJS's broken savestate lockstep.
    Host = player 1, guest = player 2. Inputs ride a datachannel on the tailnet. */
-const NP = { role: null, room: null, pc: null, dc: null, myP: 0, after: 0, pollT: 0, pollFails: 0, alive: false, pendingIce: [], rxId: null, rxLen: 0, rxGot: 0, rxChunks: [], txBusy: false, syncT: 0, sent: 0, recv: 0, video: false, hostStream: null, mic: null, micTrack: null, micSender: null, remoteAudio: null, pingT: 0, rtt: 0, meReady: false, peerReady: false, micMuted: false };
+const NP = { role: null, room: null, pc: null, dc: null, myP: 0, after: 0, pollT: 0, pollFails: 0, alive: false, pendingIce: [], rxId: null, rxLen: 0, rxGot: 0, rxChunks: [], txBusy: false, syncT: 0, sent: 0, recv: 0, inputsSent: 0, inputsApplied: 0, video: false, hostStream: null, mic: null, micTrack: null, micSender: null, remoteAudio: null, pingT: 0, rtt: 0, meReady: false, peerReady: false, micMuted: false };
 
 // Netplay diagnostics: kept in memory and shown in the Netplay sheet so a
 // failure can be read off a phone with no devtools.
@@ -227,7 +227,7 @@ function npIndicator() {
   const ping = (open && NP.rtt) ? ` · ${NP.rtt} ms` : "";
   const ready = (open && NP.peerReady) ? " ✓ ready" : "";
   if (NP.role === "host") text = open ? `● P2 connected${ping}${ready}` : (NP.room ? "○ Waiting for P2" : null);
-  else if (NP.role === "guest") text = open ? `● Watching P1${ping}${ready}` : "○ Connecting…";
+  else if (NP.role === "guest") text = open ? `● Playing as P2${ping}${ready}` : "○ Connecting as P2…";
   let b = document.getElementById("np-live");
   if (!text) { b?.remove(); return; }
   if (!b) {
@@ -265,12 +265,16 @@ function npHookInput(tries = 0) {
       // Host-authoritative: only the host simulates. The host applies its own
       // P1 presses locally; the guest forwards its presses to the host and
       // applies nothing (it just renders the host's stream).
-      if (me === 0) npCore(0, i, v);
-      else { try { NP.dc.send(JSON.stringify({ t: "i", p: 1, i, v })); } catch { /* */ } }
+      if (me === 0) orig(0, i, v);
+      else {
+        try { NP.dc.send(JSON.stringify({ t: "i", p: 1, i, v })); NP.inputsSent++; }
+        catch (e) { npLog(`input send failed: ${e?.message || e}`); }
+      }
       return;
     }
     npCore(me, i, v);
-    try { NP.dc.send(JSON.stringify({ t: "i", p: me, i, v })); } catch { /* */ }
+    try { NP.dc.send(JSON.stringify({ t: "i", p: me, i, v })); NP.inputsSent++; }
+    catch (e) { npLog(`input send failed: ${e?.message || e}`); }
   };
 }
 function npBindDc(dc) {
@@ -356,7 +360,7 @@ function npBindDc(dc) {
       return;
     }
     let m; try { m = JSON.parse(e.data); } catch { return; }
-    if (m.t === "i") npCore(m.p, m.i, m.v);
+    if (m.t === "i") { npCore(m.p, m.i, m.v); NP.inputsApplied++; }
     else if (m.t === "sc") {
       if (!Number.isSafeInteger(m.n) || m.n <= 0 || m.n > 64 * 1024 * 1024) {
         npLog(`state rejected: invalid size ${m.n}`); return;
@@ -406,7 +410,17 @@ function npStartHostStream() {
     if (!stream || !stream.getTracks().length) { npLog("host stream: capture failed"); return; }
     const vt = stream.getVideoTracks()[0];
     const at = stream.getAudioTracks()[0];
-    if (vt) NP.pc.addTrack(vt, new MediaStream([vt]));   // video-only stream for #np-video
+    if (vt) {
+      vt.contentHint = "detail";
+      const sender = NP.pc.addTrack(vt, new MediaStream([vt])); // video-only stream for #np-video
+      try {
+        const p = sender.getParameters();
+        p.degradationPreference = "maintain-resolution";
+        p.encodings = [{ ...(p.encodings?.[0] || {}), maxBitrate: 8000000, maxFramerate: 60, scaleResolutionDownBy: 1 }];
+        sender.setParameters(p).then(() => npLog("host video quality set to 8 Mbps / 60 FPS"))
+          .catch((e) => npLog(`host video quality unchanged: ${e?.message || e}`));
+      } catch (e) { npLog(`host video quality unchanged: ${e?.message || e}`); }
+    }
     if (at) NP.pc.addTrack(at);                          // game audio → remote <audio>
     NP.hostStream = stream;
     NP.video = true;
@@ -422,15 +436,16 @@ function npShowHostVideo(stream) {
   let v = document.getElementById("np-video");
   if (!v) {
     v = el("video", { id: "np-video", autoplay: true, playsInline: true, muted: true,
-      style: "position:absolute;inset:0;width:100%;height:100%;object-fit:contain;background:#000;z-index:1" });
+      style: "position:absolute;inset:0;width:100%;height:100%;object-fit:contain;background:#000;z-index:1;pointer-events:none" });
     v.setAttribute("playsinline", "");
     const stage = document.querySelector(".player-stage") || document.querySelector(".player") || document.body;
     stage.append(v);
     v.onclick = () => { v.muted = false; v.play?.().catch(() => {}); };
   }
   v.srcObject = stream;
+  v.setAttribute("aria-label", "Player 1 game stream — you are Player 2");
   const autoUnmute = prefs().npAutoUnmute !== false;
-  v.play?.().then(() => { if (autoUnmute) v.muted = false; toast(autoUnmute ? "You are Player 2 — playing on P1's screen" : "Player 2 — tap the screen to unmute"); })
+  v.play?.().then(() => { if (autoUnmute) v.muted = false; toast(autoUnmute ? "You are Player 2 — playing on Player 1's screen" : "Player 2 — tap the screen to unmute"); })
     .catch(() => { v.muted = true; v.play?.().catch(() => {}); toast("Tap the screen to unmute"); });
   try { window.EJS_emulator?.setVolume?.(0); } catch { /* */ }
   const cv = document.querySelector("#game canvas");
@@ -990,7 +1005,7 @@ function openNetplaySheet(sys, file, name) {
   const diag = el("details", { style: "margin-top:12px" },
     el("summary", { className: "hint", style: "cursor:pointer", textContent: "Diagnostics" }),
     el("p", { className: "hint", style: "font-size:11px;opacity:.8;margin:8px 0 2px",
-      textContent: `role=${NP.role || "-"} mode=${NP.video ? "host-video" : "input-echo"} pc=${NP.pc?.connectionState || "-"} ice=${NP.pc?.iceConnectionState || "-"} dc=${NP.dc?.readyState || "-"} room=${NP.room || "-"} rtt=${NP.rtt || "-"}ms sent=${NP.sent} recv=${NP.recv}` }));
+      textContent: `role=${NP.role || "-"} mode=${NP.video ? "player-stream" : "input-echo"} pc=${NP.pc?.connectionState || "-"} ice=${NP.pc?.iceConnectionState || "-"} dc=${NP.dc?.readyState || "-"} room=${NP.room || "-"} rtt=${NP.rtt || "-"}ms states=${NP.sent}/${NP.recv} inputs=${NP.inputsSent}/${NP.inputsApplied}` }));
   if (window.__npLast) diag.append(el("p", { className: "hint", style: "font-size:11px;opacity:.6", textContent: "last: " + window.__npLast }));
   kids.push(diag);
   kids.push(el("button", { className: "btn btn-ghost", style: "width:100%;margin:8px 0 0", textContent: "Close", onclick: () => o.remove() }));
