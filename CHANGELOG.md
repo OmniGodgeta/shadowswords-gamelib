@@ -1,5 +1,12 @@
 # Changelog
 
+## 2.79
+- Disabled host-video negotiation for Nintendo 64 netplay, which is more
+  reliable with local input/state synchronization on Android WebView and
+  heavier N64 canvas workloads.
+- Added signaling send and offer errors to netplay diagnostics.
+- Fixed floating-chat presence polling so it stops after the panel closes.
+
 ## 2.78
 - Improved netplay room creation errors with actionable server/status details.
 - Added a visible room code and explicit Join room control to the Netplay

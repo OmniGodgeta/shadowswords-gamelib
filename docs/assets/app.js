@@ -358,8 +358,11 @@ function npBindDc(dc) {
 }
 async function npSendSig(payload) {
   if (!NP.room) return;
-  await fetch(`${API}/np/sig`, { method: "POST", headers: { "content-type": "application/json", ...authHdr() },
-    body: JSON.stringify({ room: NP.room, from: CID, payload }) }).catch(() => {});
+  try {
+    const r = await fetch(`${API}/np/sig`, { method: "POST", headers: { "content-type": "application/json", ...authHdr() },
+      body: JSON.stringify({ room: NP.room, from: CID, payload }) });
+    if (!r.ok) npLog(`signal send HTTP ${r.status}`);
+  } catch (e) { npLog(`signal send failed: ${e?.message || e}`); }
 }
 function npSendLocalSdp() {
   const d = NP.pc && NP.pc.localDescription;
@@ -371,6 +374,10 @@ function npSendLocalSdp() {
 // guest sees and hears the host's game (perfect sync, guest lag ≈ 1 RTT).
 function npStartHostStream() {
   NP.video = false;
+  // N64's heavier WebGL canvas and Android WebView video decode make the
+  // host-video path unreliable. Input/state sync keeps both mupen cores
+  // local and avoids a second media negotiation before the data channel opens.
+  if (window.__playSys === "n64") { npLog("N64 host video disabled; using input/state sync"); return; }
   try {
     const canvas = document.querySelector("#game canvas");
     if (!canvas) { npLog("host stream: no canvas"); return; }
@@ -533,7 +540,8 @@ function npStartPc(isHost) {
     npStartHostStream();     // canvas + tapped game audio, added before the offer
     const dc = NP.pc.createDataChannel("np", { ordered: true });
     npBindDc(dc);
-    NP.pc.createOffer().then((o) => NP.pc.setLocalDescription(o)).then(sendSdpSoon);
+    NP.pc.createOffer().then((o) => NP.pc.setLocalDescription(o)).then(sendSdpSoon)
+      .catch((e) => npLog(`offer failed: ${e?.message || e}`));
   } else {
     NP.pc.ondatachannel = (e) => npBindDc(e.channel);
   }
@@ -1934,6 +1942,7 @@ function openPartyChat() {
   partyChatPanel.querySelector("input")?.focus();
   let friendTimer = 0;
   const drawFriends = async () => {
+    if (!partyChatPanel?.isConnected) { clearTimeout(friendTimer); return; }
     const d = await fetch(`${API}/play/stats`, { cache: "no-store" }).then((r) => r.json()).catch(() => null);
     const list = (d?.nowPlaying || []).filter((x) => x.cid !== CID);
     const head = friends.querySelector(".party-friends-head .hint");
@@ -1955,10 +1964,9 @@ function openPartyChat() {
           x.watch ? el("a", { className: "btn btn-ghost sm", href: `#/watch/${x.watch}`, textContent: "Watch" }) : null));
       friends.append(row);
     }
-    if (partyChatPanel?.isConnected) friendTimer = setTimeout(drawFriends, 5000);
+      if (partyChatPanel?.isConnected) friendTimer = setTimeout(drawFriends, 5000);
   };
   drawFriends();
-  partyChatPanel.addEventListener("remove", () => clearTimeout(friendTimer), { once: true });
 }
 
 async function routeLibrary() {

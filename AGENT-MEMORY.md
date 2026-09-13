@@ -58,6 +58,16 @@ this. (Netplay internals: `NETPLAY-UI-CONTRACT.md`. Roadmap split:
 - Guest joins validate the room first and retry WebRTC signaling up to six
   times with visible status messages. Cache version is `2.78`.
 
+## Session 2026-09-13 — N64 netplay reliability audit
+
+- Verified the live signaling service, N64 metadata, Mario Kart 64 ROM, and
+  `mupen64plus_next` core assets are reachable.
+- N64 now skips host canvas-video negotiation and uses the existing local
+  input/state-sync path, avoiding the heavier WebRTC media setup that was
+  leaving Android guests stuck at Connecting. Cache version is `2.79`.
+- Signaling send/offer failures are now recorded in the Netplay diagnostics.
+- Floating-chat presence polling exits cleanly once its panel is closed.
+
 ---
 
 ## Session 2026-09-12 — final handoff recovery
