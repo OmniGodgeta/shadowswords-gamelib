@@ -6,6 +6,12 @@ agent can pick up context without re-deriving it. Read `AGENTS.md` first, then
 this. (Netplay internals: `NETPLAY-UI-CONTRACT.md`. Roadmap split:
 `FEATURE-BACKLOG.md`.)
 
+## Session 2026-09-13 — browser-only overlay flicker
+- Reproduced the site in a real-GPU Chromium (`/usr/bin/chromium --remote-debugging-port=9222` on the Wayland display) and captured the N64 canvas over time. The browser-only difference over the game is `.scanlines`: a fixed full-screen `mix-blend-mode: multiply` overlay at z-index 100, **above** `.player` (z 60). The app hides it (`html.in-app .scanlines`), the browser did not. Cache version `2.97` adds `html.playing .scanlines { display: none }`; the emulator's own CRT filter covers the look.
+- Also throttled `invitePoll` (was every 3s, even in-game) to ~12s while `__emuUp`; it was the only 2-3s main-thread timer during play.
+- N64 specifics: forcing WebGL2 for N64 (`?ejs-webgl=enabled`) renders static/garbage on this RTX 5070 + ANGLE, confirming the AGENTS §15 note; WebGL1 (`mupen64plus_next-legacy`) is correct. A/B of `image-rendering: pixelated` vs `auto` showed no meaningful difference, so pixelated stays.
+- If flicker persists, capture with CDP: `Page.captureScreenshot` at ~20Hz and diff `meanBrightness` (see the throwaway `/tmp/rv-*.mjs` harness approach). A live Chrome needs `--remote-debugging-port`; without it there is no way to inspect.
+
 ## Session 2026-09-13 — playback buttons, Play page trim, GPU artefact hunt
 - Removed the `.player-bar` rewind/fast-forward buttons (`#ff-btn`, `#rw-btn`).
   R2/L2 playback is unchanged: `pollGameplayPad` reads gamepad buttons from

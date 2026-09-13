@@ -1,5 +1,14 @@
 # Changelog
 
+## 2.97
+- Fixed browser-only flicker/artefacts over the game canvas: the full-screen
+  `.scanlines` overlay (`mix-blend-mode: multiply`, above the player) is now
+  hidden while a game runs, matching the Android app. The emulator's own
+  "CRT / scanlines" filter still provides the retro look.
+- Netplay invite polling now backs off while a game is running instead of
+  firing every 3 seconds, removing a periodic main-thread fetch that could
+  drop frames on heavy cores like N64.
+
 ## 2.96
 - Removed the rewind/fast-forward buttons from the in-game bar. R2/L2 still
   fast-forward and slow-motion by default, and Controller setup now has a

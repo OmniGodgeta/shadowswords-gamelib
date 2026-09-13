@@ -62,6 +62,10 @@ button { font: inherit; color: inherit; background: none; border: 0; cursor: poi
     repeating-linear-gradient(90deg, rgba(31,230,255,.03) 0 2px, rgba(255,43,208,.03) 2px 4px);
   mix-blend-mode: multiply; opacity: .55;
 }
+/* A full-screen multiply blend above the WebGL canvas flickers/artefacts on
+   some desktop GPUs (the Android app already hides it). The emulator's own
+   "CRT / scanlines" filter covers the look, so drop the overlay while playing. */
+html.playing .scanlines { display: none; }
 
 h1, h2, h3 { letter-spacing: -.01em; }
 

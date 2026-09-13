@@ -3399,8 +3399,13 @@ function presenceTick() {
     body: JSON.stringify({ cid: CID, who: AUTH.user?.display || prefs().netplayName || null, idle: true }),
   }).then((r) => r.json()).then(handlePingReply).catch(() => {});
 }
+let _inviteGameTick = 0;
 function invitePoll() {
   if (!SELF_HOSTED && !API) return;
+  // Polling every 3s while a heavy core is running adds a periodic main-thread
+  // fetch+parse that can drop a frame. Slow it down during play; the native
+  // wrapper does its own background polling.
+  if (window.__emuUp && (_inviteGameTick++ % 4) !== 0) return;
   fetch(`${API}/play/invites?cid=${encodeURIComponent(CID)}`, { headers: authHdr(), cache: "no-store" })
     .then((r) => r.json()).then((d) => handlePingReply({ invites: d.invites || [] })).catch(() => {});
 }
