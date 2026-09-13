@@ -92,6 +92,9 @@ this. (Netplay internals: `NETPLAY-UI-CONTRACT.md`. Roadmap split:
   refresh room activity and `/play/ping bye` did not remove host rooms. Client
   polls now include the CID, and both tracked and live server copies remove
   host rooms on exit. Cache version is `2.84`.
+- Isolated Chromium reproduced N64 core initialization stalling at
+  “Decompress Game Core” with no canvas. Version `2.85` adds a desktop-only
+  `webgl2Enabled: "disabled"` fallback; Android keeps WebGL2.
 
 ---
 

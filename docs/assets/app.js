@@ -2709,6 +2709,10 @@ async function routePlayGame(sys, romParam, resume = false) {
   const vf = prefs().videoFilter;
   window.EJS_defaultOptions = Object.assign(
     { rewindEnabled: "enabled" },
+    // Some desktop GPU/WebGL2 combinations render mupen64plus_next with
+    // corrupted tiles or never finish core initialization. Android's
+    // WebView path is known-good, so keep its WebGL2 default unchanged.
+    sys === "n64" && !IN_APP ? { webgl2Enabled: "disabled" } : {},
     vf === "crt" ? { shader: "crt-aperture.glslp" }
       : vf === "smooth" ? { shader: "bicubic.glslp" } : {});
   window.EJS_color = "#1fe6ff";

@@ -1,5 +1,10 @@
 # Changelog
 
+## 2.85
+- Added a desktop-only WebGL1 fallback for Nintendo 64 to avoid corrupted
+  mupen64plus_next rendering and core initialization failures on affected
+  desktop GPU/WebGL2 combinations. Android retains its working WebGL2 path.
+
 ## 2.84
 - Added signaling heartbeats so active rooms remain present while the host or
   guest is polling.
