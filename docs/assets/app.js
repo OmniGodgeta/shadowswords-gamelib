@@ -1324,6 +1324,7 @@ const PREF_DEFAULTS = {
   lite: false, autoResume: true, musicShuffle: false, videoFilter: "pixel",
   region: "", playingToasts: true, confirmOverwrite: false, previewSound: true,
   netplay: true, netplayName: "", npAutoUnmute: true, npHostByDefault: true, npVoice: false, npPTT: false,
+  ffPadButton: 7, slowPadButton: 6,
 };
 const AUTH = { token: LS.get("auth", null), user: null };
 const authHdr = () => AUTH.token ? { "x-ssw-auth": AUTH.token } : {};
@@ -1563,10 +1564,10 @@ function heroShowcase(vids, { title, desc, actions, mod = "" }) {
     soundBtn);
 
   const body = el("div", { className: "hero-body" },
-    el("p", { className: "hero-kicker", textContent: "retroverse" }),
-    el("h1", { className: "hero-title", textContent: title }),
-    el("p", { className: "hero-desc", textContent: desc }),
-    el("div", { className: "hero-actions" }, ...actions.map((a) =>
+    title && el("p", { className: "hero-kicker", textContent: "retroverse" }),
+    title && el("h1", { className: "hero-title", textContent: title }),
+    desc && el("p", { className: "hero-desc", textContent: desc }),
+    actions?.length && el("div", { className: "hero-actions" }, ...actions.map((a) =>
       el("a", { className: "btn " + (a.primary ? "btn-primary" : "btn-ghost"),
         href: a.href || "javascript:void 0", onclick: a.onClick || null, textContent: a.label }))));
 
@@ -2435,23 +2436,22 @@ async function routePlay() {
   frag.append(previewAnchor);
   fetch("data/gamevideos.json").then((r) => r.json()).then((vids) => {
     if (token !== state.render || !Array.isArray(vids) || !vids.length) return;
-    previewAnchor.replaceWith(heroShowcase(vids, {
-      title: "Preview the floor",
-      desc: "Scrub through gameplay previews, switch to box art, and jump straight into a game.",
-      actions: [{ label: "Browse all previews", href: "#/browse" }],
-      mod: "play-preview",
-    }));
+    previewAnchor.replaceWith(heroShowcase(vids, { mod: "play-preview" }));
   }).catch(() => {});
-  frag.append(el("section", { className: "shelf play-tools" },
-    el("div", { className: "shelf-head" },
-      el("h2", { textContent: "Choose how to play" }),
-      el("span", { className: "count", textContent: `${playable.length} systems` })),
-    el("p", { className: "shelf-note hint", textContent: "Pick a console, browse the full library, or load a ROM from your device." }),
-    el("div", { className: "play-tools-row" },
-      el("div", { className: "play-upload" }, dropzone()),
-      el("div", { className: "hero-actions" },
-        el("a", { className: "btn btn-ghost", href: "#/browse", textContent: "Browse all games" }),
-        el("a", { className: "btn btn-ghost", href: "#/netplay", textContent: "Netplay guide" })))));
+  // The hero's "Pick a ROM file" button drives this input. The visible dropzone
+  // card was redundant; dropping a file anywhere on the page still loads it.
+  const romDrop = dropzone();
+  romDrop.hidden = true;
+  frag.append(romDrop);
+  if (!window.__romDropBound) {
+    window.__romDropBound = true;
+    ["dragover", "dragenter"].forEach((e) => document.addEventListener(e, (ev) => ev.preventDefault()));
+    document.addEventListener("drop", (ev) => {
+      ev.preventDefault();
+      const f = ev.dataTransfer?.files?.[0];
+      if (f) startUpload(f);
+    });
+  }
   frag.append(el("div", { className: "shelf" },
     el("div", { className: "shelf-head" }, el("h2", { textContent: "Playable consoles" }),
       el("span", { className: "count", textContent: `${playable.length}` })),
@@ -2466,8 +2466,7 @@ async function routePlay() {
       el("div", { className: "shelf-head" }, el("h2", { textContent: "Friends & chat" })),
       el("p", { className: "shelf-note hint", textContent: "No one is playing right now. Start a game, then invite a friend from the room controls." }),
       el("div", { className: "hero-actions" },
-        el("a", { className: "btn btn-primary", href: "#/lounge", textContent: "Open Lounge chat" }),
-        el("a", { className: "btn btn-ghost", href: "#/netplay", textContent: "Netplay guide" }))));
+        el("a", { className: "btn btn-primary", href: "#/lounge", textContent: "Open Lounge chat" }))));
   }).catch(() => {});
 }
 
@@ -2815,8 +2814,6 @@ async function routePlayGame(sys, romParam, resume = false) {
   const saveAsBtn = el("button", { className: "pbtn", id: "cloud-save-as", textContent: "＋", title: "Save to a named slot", hidden: true });
   const loadBtn = el("button", { className: "pbtn", id: "cloud-load", textContent: "☁ Load", title: "Load a save slot", hidden: true });
   const ctrlBtn = el("button", { className: "pbtn", id: "ctrl-btn", textContent: "🎮", title: "Controller setup — see & remap buttons", hidden: true });
-  const ffBtn = el("button", { className: "pbtn", id: "ff-btn", textContent: "⏩", title: "Fast-forward", hidden: true });
-  const rwBtn = el("button", { className: "pbtn", id: "rw-btn", textContent: "⏪", title: "Hold to rewind", hidden: true });
   const watchBtn = el("button", { className: "pbtn", id: "watch-btn", textContent: "Watch", title: "Start a watch party — others on the tailnet can spectate", hidden: true });
   const noteBtn = el("button", { className: "note-chip", textContent: "Note", title: "Tips for this game", hidden: true });
   const npBtn = el("button", { className: "pbtn", id: "np-btn", textContent: "Netplay", title: "Host or join a netplay room for this game", hidden: true });
@@ -2825,7 +2822,6 @@ async function routePlayGame(sys, romParam, resume = false) {
   const npOpenBtn = el("button", { className: "pbtn np-menu-action", textContent: "Room & connection", title: "Open netplay room controls" });
   const npMenu = el("div", { className: "np-menu", hidden: true }, npOpenBtn, invBtn, watchBtn, syncBtn);
   const npGroup = el("div", { className: "player-control-group np-group" }, npBtn, npMenu);
-  const transportGroup = el("div", { className: "player-control-group", role: "group", ariaLabel: "Playback controls" }, rwBtn, ffBtn);
   const saveMenuBtn = el("button", { className: "pbtn save-menu-btn", textContent: "☁ Saves", title: "Save and load cloud states" });
   const saveMenu = el("div", { className: "save-menu", hidden: true }, saveBtn, saveAsBtn, loadBtn);
   const saveGroup = el("div", { className: "player-control-group save-group", role: "group", ariaLabel: "Save controls" }, saveMenuBtn, saveMenu);
@@ -2840,7 +2836,7 @@ async function routePlayGame(sys, romParam, resume = false) {
     el("div", { className: "player-chrome" },
       el("div", { className: "player-bar" },
         el("button", { type: "button", className: "pbtn exit", textContent: "‹ Exit", onclick: (e) => { e.preventDefault(); exitPlayer(); } }),
-        transportGroup, saveGroup, npGroup, moreGroup),
+        saveGroup, npGroup, moreGroup),
       el("div", { className: "title", id: "player-title", textContent: "Loading…" })),
     el("div", { className: "player-stage" },
       el("div", { id: "game" }), loadEl));
@@ -2924,12 +2920,12 @@ async function routePlayGame(sys, romParam, resume = false) {
   const requestedWebgl = new URLSearchParams(location.search).get("ejs-webgl");
   window.EJS_defaultOptions = Object.assign(
     { rewindEnabled: "enabled" },
-    // Some desktop GPU/WebGL2 combinations render mupen64plus_next with
-    // corrupted tiles or never finish core initialization. Android's
-    // WebView path is known-good, so keep its WebGL2 default unchanged.
-    sys === "n64" && !IN_APP
-      ? { webgl2Enabled: requestedWebgl === "enabled" ? "enabled" : "disabled" }
-      : {},
+    // Desktop GPUs that flicker or render corrupted tiles with EmulatorJS's
+    // WebGL2 path (mupen64plus_next is the known-bad case, but it can affect
+    // any core) fall back to WebGL1/2D by default in the browser. The Android
+    // WebView path is known-good, so it keeps WebGL2. Opt back in with
+    // ?ejs-webgl=enabled.
+    (!IN_APP && requestedWebgl !== "enabled") ? { webgl2Enabled: "disabled" } : {},
     vf === "crt" ? { shader: "crt-aperture.glslp" }
       : vf === "smooth" ? { shader: "bicubic.glslp" } : {});
   window.EJS_color = "#1fe6ff";
@@ -2950,7 +2946,7 @@ async function routePlayGame(sys, romParam, resume = false) {
   if (key && wantResume) {
     try { hasCloudSave = (await fetch(slotUrl("auto"), { method: "HEAD", headers: authHdr() })).ok; } catch { /* offline */ }
   }
-  const putSlot = async (slot) => {
+  const putSlot = async (slot, { shot = true } = {}) => {
     const gm = window.EJS_emulator?.gameManager;
     if (!gm || !key) return false;
     let body;
@@ -2970,15 +2966,18 @@ async function routePlayGame(sys, romParam, resume = false) {
     hasCloudSave = true;
     lastSaveAt = Date.now();
     lastSaveError = "";
-      const canvas = document.querySelector("#game canvas");
-      if (canvas && canvas.toBlob) {
-        canvas.toBlob((blob) => {
-          if (!blob) return;
-          fetch(slotUrl(slot) + "&shot=1", { method: "PUT", keepalive: true,
-            headers: { "content-type": "image/jpeg", ...tokenHdr(), ...authHdr() }, body: blob }).catch(() => {});
-        }, "image/jpeg", 0.72);
-      }
-      LS.set("lastCloudSave", { at: lastSaveAt, sys, file, slot });
+    // Thumbnail capture reads the WebGL canvas back to the CPU, which stalls
+    // the GPU for a frame. Only do it for an explicit save; a periodic
+    // auto-save would be a visible hitch otherwise.
+    const canvas = shot && document.querySelector("#game canvas");
+    if (canvas && canvas.toBlob) {
+      canvas.toBlob((blob) => {
+        if (!blob) return;
+        fetch(slotUrl(slot) + "&shot=1", { method: "PUT", keepalive: true,
+          headers: { "content-type": "image/jpeg", ...tokenHdr(), ...authHdr() }, body: blob }).catch(() => {});
+      }, "image/jpeg", 0.72);
+    }
+    LS.set("lastCloudSave", { at: lastSaveAt, sys, file, slot });
       return true;
     } catch (e) {
       lastSaveError = e.message || "Server unreachable";
@@ -3057,7 +3056,7 @@ async function routePlayGame(sys, romParam, resume = false) {
   // N64 getState() can block the browser while serializing its large core
   // memory. Never run it in lifecycle/background timers or while netplay is
   // active; N64 saves remain available only through an explicit user action.
-  const autoSave = () => n64 ? false : putSlot("auto");
+  const autoSave = () => n64 ? false : putSlot("auto", { shot: false });
   window.__emuAutoSave = autoSave;
 
   // play-stats ping + local playtime accounting
@@ -3089,14 +3088,13 @@ async function routePlayGame(sys, romParam, resume = false) {
     clearTimeout(bootTimer);
     console.error("RetroVerse emulator did not start", { sys, file, reason });
     const retry = el("button", { className: "btn btn-primary", style: "margin-top:12px",
-      textContent: sys === "n64" && !IN_APP && requestedWebgl !== "enabled"
-        ? "Retry N64 with WebGL2" : "Retry emulator",
+      textContent: !IN_APP && requestedWebgl !== "enabled" ? "Retry with WebGL2" : "Retry emulator",
       onclick: async () => {
         retry.disabled = true;
         retry.textContent = "Retrying…";
         await idbDelIn("romcache", cacheKey).catch(() => {});
         const q = new URLSearchParams(location.search);
-        if (sys === "n64" && !IN_APP && requestedWebgl !== "enabled") q.set("ejs-webgl", "enabled");
+        if (!IN_APP && requestedWebgl !== "enabled") q.set("ejs-webgl", "enabled");
         const query = q.toString();
         location.replace(location.pathname + (query ? "?" + query : "") + location.hash);
       } });
@@ -3120,7 +3118,6 @@ async function routePlayGame(sys, romParam, resume = false) {
       const emu = window.EJS_emulator;
       if (emu?.gameManager?.toggleFastForward) emu.gameManager.toggleFastForward(0);
       if (emu) emu.isFastForward = false;
-      ffBtn.classList.remove("on");
     } catch { /* */ }
     ptStart = Date.now();
     ping(true);
@@ -3165,23 +3162,6 @@ async function routePlayGame(sys, romParam, resume = false) {
     window.__emuAutoSaveT = key && !n64 ? setInterval(autoSave, 15000) : 0;
     ctrlBtn.hidden = false;
     ctrlBtn.onclick = () => controlsPanel(core);
-    ffBtn.hidden = false;
-    ffBtn.onclick = () => {
-      const emu = window.EJS_emulator;
-      if (!emu?.gameManager?.toggleFastForward) return;
-      emu.isFastForward = !emu.isFastForward;
-      emu.gameManager.toggleFastForward(emu.isFastForward ? 1 : 0);
-      ffBtn.classList.toggle("on", !!emu.isFastForward);
-      ffBtn.title = emu.isFastForward ? "Fast-forward on" : "Fast-forward";
-    };
-    rwBtn.hidden = false;
-    const rewind = (on) => {
-      const gm = window.EJS_emulator?.gameManager;
-      if (!gm) return;
-      if (typeof gm.simulateInput === "function") gm.simulateInput(0, 28, on ? 1 : 0);
-    };
-    rwBtn.onpointerdown = (e) => { e.preventDefault(); rewind(true); };
-    rwBtn.onpointerup = rwBtn.onpointerleave = () => rewind(false);
     watchBtn.hidden = false;
     watchBtn.onclick = async () => {
       if (window.__watchId) {
@@ -3516,7 +3496,7 @@ function controlsPanel(core) {
   const wasPlaying = !emu.paused;
   try { emu.pause(true); } catch { /* */ }
 
-  let player = 0, listening = null;
+  let player = 0, listening = null, listeningPad = null;
   let prevBtns = [], padIndex = null, rafId = 0;
   const active = {};                         // slot -> Set<source>
   const face = FACE_LBL[core] || ["B", "A", "Y", "X"];
@@ -3544,7 +3524,7 @@ function controlsPanel(core) {
   const apply = () => { try { emu.setupKeys(); emu.checkGamepadInputs(); emu.saveSettings(); } catch { /* */ } render(); };
   const bind = (id, k, v) => { const c = ctrls()[player]; c[id] = Object.assign({}, c[id]); c[id][k] = v; listening = null; apply(); };
   const begin = (id, slot) => { listening = { id, label: lbl[slot] || slot }; render(); };
-  const cancel = () => { listening = null; render(); };
+  const cancel = () => { listening = null; listeningPad = null; render(); };
   // EmulatorJS stores .value as a numeric keyCode — pretty-print it
   const KEY_SHORT = { "up arrow": "↑", "down arrow": "↓", "left arrow": "←", "right arrow": "→",
     space: "Space", enter: "Enter", backspace: "⌫", shift: "Shift", ctrl: "Ctrl", alt: "Alt", tab: "Tab", escape: "Esc" };
@@ -3558,6 +3538,7 @@ function controlsPanel(core) {
     for (const [slot, id] of Object.entries(SLOT_ID)) if (c[id] && c[id].value2 === label) return slot;
     return STD_SLOT[stdIndex] || null;
   };
+  const padBtnName = (i) => { const l = EJS_STD_LABEL[i]; return l ? padGlyph(l) : `Button ${i}`; };
 
   const onKey = (e, down) => {
     if (listening && down) {
@@ -3571,7 +3552,7 @@ function controlsPanel(core) {
     for (const [slot, id] of Object.entries(SLOT_ID)) if (c[id] && c[id].value === e.keyCode) setSlot(slot, down, "key");
   };
   const kd = (e) => onKey(e, true), ku = (e) => onKey(e, false);
-  const esc = (e) => { if (e.key === "Escape" && listening) { e.preventDefault(); e.stopPropagation(); cancel(); } };
+  const esc = (e) => { if (e.key === "Escape" && (listening || listeningPad)) { e.preventDefault(); e.stopPropagation(); cancel(); } };
 
   const poll = () => {
     const pads = navigator.getGamepads ? [...navigator.getGamepads()] : [];
@@ -3581,9 +3562,14 @@ function controlsPanel(core) {
       gp.buttons.forEach((b, i) => { const s = padSlot(i); if (s) setSlot(s, b.pressed || b.value > 0.35, "pad"); });
       const ax = gp.axes || [];
       tilt("ls", ax[0] || 0, ax[1] || 0); tilt("rs", ax[2] || 0, ax[3] || 0);
-      if (listening) {
-        const i = gp.buttons.findIndex((b, j) => (b.pressed || b.value > 0.5) && !prevBtns[j]);
-        if (i >= 0 && EJS_STD_LABEL[i]) bind(listening.id, "value2", EJS_STD_LABEL[i]);
+      const pressed = gp.buttons.findIndex((b, j) => (b.pressed || b.value > 0.5) && !prevBtns[j]);
+      if (listening && pressed >= 0 && EJS_STD_LABEL[pressed]) bind(listening.id, "value2", EJS_STD_LABEL[pressed]);
+      else if (listeningPad && pressed >= 0) {
+        const which = listeningPad; listeningPad = null;
+        setPref(which === "fast" ? "ffPadButton" : "slowPadButton", pressed);
+        loadPadBinds();
+        _playbackPad = { fast: false, slow: false };
+        render();
       }
       prevBtns = gp.buttons.map((b) => b.pressed || b.value > 0.5);
     }
@@ -3601,6 +3587,14 @@ function controlsPanel(core) {
   const mapWrap = el("div", { className: "pad-map" });
   const hint = el("div", { className: "pad-hint" });
   const panel = el("div", { id: "ctrl-panel", onclick: (e) => { if (e.target.id === "ctrl-panel") close(); } });
+
+  // RetroVerse playback shortcuts are not EmulatorJS controls, so they get
+  // their own capture: click, then press a controller button.
+  const playbackRow = (which, label, idx) => el("div", { className: "pad-row" + (listeningPad === which ? " listening" : "") },
+    el("span", { className: "pr-name", textContent: label }),
+    el("button", { className: "pr-chip pad", title: "Click, then press a controller button",
+      textContent: listeningPad === which ? "press…" : padBtnName(idx),
+      onclick: () => { listening = null; listeningPad = which; render(); } }));
 
   function render() {
     svgWrap.innerHTML = padSvg(lbl, showSet);
@@ -3623,14 +3617,20 @@ function controlsPanel(core) {
             el("button", { className: "pr-chip pad" + (c.value2 ? "" : " empty"), title: "Gamepad — click, then press a button",
               textContent: c.value2 ? padGlyph(c.value2) : "—", onclick: () => begin(id, slot) }));
         }))),
+      el("div", { className: "pad-grp" },
+        el("h4", { textContent: "Playback (RetroVerse)" }),
+        playbackRow("fast", "Fast-forward", PAD_BINDS.ff),
+        playbackRow("slow", "Slow motion", PAD_BINDS.slow)),
       el("div", { className: "pad-acts" },
         el("button", { className: "btn btn-ghost sm", textContent: "Reset to defaults",
           onclick: () => { try { emu.controls = JSON.parse(JSON.stringify(emu.defaultControllers)); } catch { /* */ } apply(); toast("Controls reset to defaults"); } }),
         el("button", { className: "btn btn-primary sm", textContent: "Done", onclick: close })));
     hint.textContent = listening
       ? `Press a key or controller button for “${listening.label}” — Esc to cancel`
-      : "Press buttons on your controller to see them light up. Click any button to rebind it.";
-    hint.classList.toggle("live", !!listening);
+      : listeningPad
+        ? `Press a controller button for ${listeningPad === "fast" ? "fast-forward" : "slow motion"} — Esc to cancel`
+        : "Press buttons on your controller to see them light up. Click any button to rebind it.";
+    hint.classList.toggle("live", !!(listening || listeningPad));
   }
 
   panel.append(el("div", { className: "ctrl-card" },
@@ -5257,6 +5257,17 @@ function moveFocus(dir) {
 }
 let _padRAF = 0; const _padPrev = {};
 let _playbackPad = { fast: false, slow: false };
+// Fast-forward / slow-motion gamepad buttons. Default R2 (7) and L2 (6); the
+// controller-setup panel can rebind either. Cached because pollGameplayPad runs
+// every animation frame and prefs() hits localStorage.
+const PAD_BINDS = { ff: 7, slow: 6 };
+function loadPadBinds() {
+  const p = prefs();
+  PAD_BINDS.ff = Number.isInteger(p.ffPadButton) ? p.ffPadButton : 7;
+  PAD_BINDS.slow = Number.isInteger(p.slowPadButton) ? p.slowPadButton : 6;
+}
+addEventListener("ssw-prefs", loadPadBinds);
+loadPadBinds();
 function setPlaybackPadMode(mode, on) {
   const gm = window.EJS_emulator?.gameManager;
   if (!gm) return;
@@ -5279,8 +5290,8 @@ function pollGameplayPad() {
   const gp = [...(navigator.getGamepads ? navigator.getGamepads() : [])].find(Boolean);
   if (!gp) return;
   const trigger = (b) => typeof b?.value === "number" ? b.value > 0.65 : !!b?.pressed;
-  const fast = trigger(gp.buttons[7]);
-  const slow = trigger(gp.buttons[6]);
+  const fast = trigger(gp.buttons[PAD_BINDS.ff]);
+  const slow = trigger(gp.buttons[PAD_BINDS.slow]);
   if (fast !== _playbackPad.fast) { _playbackPad.fast = fast; setPlaybackPadMode("fast", fast); }
   if (slow !== _playbackPad.slow) { _playbackPad.slow = slow; setPlaybackPadMode("slow", slow); }
 }

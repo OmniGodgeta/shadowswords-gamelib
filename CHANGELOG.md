@@ -1,5 +1,19 @@
 # Changelog
 
+## 2.96
+- Removed the rewind/fast-forward buttons from the in-game bar. R2/L2 still
+  fast-forward and slow-motion by default, and Controller setup now has a
+  **Playback** section to assign fast-forward/slow motion to any controller
+  button.
+- Desktop browsers now default to EmulatorJS's WebGL1/2D renderer instead of
+  WebGL2, avoiding GPU-specific flicker/artefacts; add `?ejs-webgl=enabled` to
+  opt back in. The Android app keeps WebGL2.
+- Cloud auto-saves no longer capture a canvas thumbnail (that readback stalled
+  the GPU every interval); thumbnails are now only taken on an explicit save.
+- Play page trimmed: removed the duplicate "Preview the floor" heading, the
+  "Choose how to play" block, and the extra Netplay-guide / Browse-all-games
+  buttons. Picking or dropping a ROM still works from the hero.
+
 ## 2.95
 - Player 2 no longer ends up on a frozen/black screen: the guest keeps its
   local canvas visible until the host's stream actually presents frames, and

@@ -6,6 +6,30 @@ agent can pick up context without re-deriving it. Read `AGENTS.md` first, then
 this. (Netplay internals: `NETPLAY-UI-CONTRACT.md`. Roadmap split:
 `FEATURE-BACKLOG.md`.)
 
+## Session 2026-09-13 — playback buttons, Play page trim, GPU artefact hunt
+- Removed the `.player-bar` rewind/fast-forward buttons (`#ff-btn`, `#rw-btn`).
+  R2/L2 playback is unchanged: `pollGameplayPad` reads gamepad buttons from
+  `PAD_BINDS` (defaults 7/6) via `loadPadBinds()`, which caches `prefs()` and
+  refreshes on `ssw-prefs`. Controller setup has a "Playback (RetroVerse)"
+  group that captures the next controller button for `ffPadButton`/
+  `slowPadButton`. Fast-forward/slow are RetroVerse features, not EmulatorJS
+  controls, so they use their own capture (`listeningPad`), not `listening`.
+- Desktop browser now defaults to `webgl2Enabled: "disabled"` (WebGL1/2D) for
+  all cores; `?ejs-webgl=enabled` opts back in. Rationale: the documented
+  desktop WebGL2 corruption/flicker, and the Android WebView (WebGL2) is
+  known-good. The boot-failure retry button now says "Retry with WebGL2".
+- Found via a headless CDP trace of a NES game: the only periodic canvas
+  readback was our own cloud-save thumbnail (`canvas.toBlob` in `putSlot`),
+  which forces a GPU ReadPixels stall each auto-save. `putSlot` now takes
+  `{shot}` and auto-save passes `shot:false`; thumbnails are manual-save only.
+- Play page: dropped the `play-tools` ("Choose how to play") section and the
+  showcase's title/desc/actions. `heroShowcase` now renders title/desc/actions
+  only when supplied. The ROM input lives in a hidden `dropzone()` and a
+  one-time document drop handler preserves drag-and-drop.
+- NOTE: a live Chrome without `--remote-debugging-port` can't be inspected.
+  To reproduce GPU artefacts, relaunch Chrome with the flag and attach at
+  `http://127.0.0.1:9222`.
+
 ## Session 2026-09-13 — netplay freeze + in-game chrome cleanup
 - Symptom: after invite → accept, the acceptor (Player 2) could still control
   its character but its screen froze. Root cause: host-authoritative video hid
