@@ -6,6 +6,19 @@ agent can pick up context without re-deriving it. Read `AGENTS.md` first, then
 this. (Netplay internals: `NETPLAY-UI-CONTRACT.md`. Roadmap split:
 `FEATURE-BACKLOG.md`.)
 
+## Session 2026-09-13 — in-game party chat + RA connection test
+- `openPartyChat()` now mounts via `uiRoot()` (was `document.body`) so the
+  panel renders above a fullscreen game. `html.playing` hides only
+  `.party-chat-fab`, not `.party-chat`. Added `💬 Chat & party` to the in-game
+  `⋯` menu (`chatBtn`). This is how a player opens chat/call/watch during a game.
+- Listeners can become talkers: `partyUpgradeToTalk()` tears the listener peers
+  down and rejoins with a mic (`partyJoinCall(false)`), renegotiating tracks.
+- RetroAchievements `raSettingsForm()` has a "Test connection" button;
+  `raTest()` hits `API_GetUserProfile.php?u=&y=` — RA sends CORS `*`, so no
+  server proxy is needed. 401 = bad creds. In-game unlocks remain blocked
+  (no cheevos in the self-hosted EJS build). Next: a game's achievement list
+  needs the RA game id from the ROM MD5 (`dorequest.php?r=gameid&m=`).
+
 ## Session 2026-09-13 — party calls, per-console graphics, mic handshake
 - **Mic fix (2.99)**: `npGetMic` retried once after 1.8s, so answering the
   Android permission dialog late showed "denied". It now retries up to 6 times

@@ -1,5 +1,15 @@
 # Changelog
 
+## 3.1
+- Party chat and the voice-call panel are now reachable **during a game** from
+  the `⋯` menu (`💬 Chat & party`) and mount inside the player so they render
+  above the fullscreen canvas.
+- Listeners can upgrade to talking mid-call (`🎙 Use microphone`), rebuilding
+  their peer connections with a mic track.
+- RetroAchievements settings gained a **Test connection** button; it verifies
+  your username + web API key against retroachievements.org and shows your
+  points/rank (in-game unlock popups still need a cheevos-capable emulator).
+
 ## 3.0
 - **Party calls**: the Chat window can start or join a multi-peer voice party
   (server room + WebRTC mesh). Watchers can join as listeners, members see a

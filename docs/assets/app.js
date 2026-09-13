@@ -2422,6 +2422,12 @@ async function partyLeaveCall() {
   partyNotifyApp(false, false);
   partyRenderUI();
 }
+// Listener -> talker: rebuild the peers with a mic track.
+async function partyUpgradeToTalk() {
+  await partyLeaveCall();
+  await partyJoinCall(false);
+  partyRenderUI();
+}
 async function partyLeave() {
   await partyLeaveCall();
   if (PARTY.id) { try { await partyPost("/party/leave", { id: PARTY.id, cid: CID }); } catch { /* */ } }
@@ -2561,6 +2567,10 @@ function renderPartyCall(box) {
         onclick: () => partyJoinCall(false).catch((e) => toast(`Couldn't join: ${e.message}`)) }));
       kids.push(el("button", { className: "btn btn-ghost sm", textContent: "Join as listener",
         onclick: () => partyJoinCall(true).catch(() => {}) }));
+    } else if (PARTY.watcher) {
+      kids.push(el("button", { className: "btn btn-ghost sm", textContent: "🎙 Use microphone",
+        title: "Leave the listener mode and start talking",
+        onclick: () => partyUpgradeToTalk().catch(() => {}) }));
     } else {
       kids.push(el("button", { className: "btn " + (PARTY.muted ? "btn-primary" : "btn-ghost") + " sm",
         textContent: PARTY.muted ? "🔇 Unmute" : "🎙 Mute", onclick: () => partyToggleMute() }));
@@ -2589,7 +2599,9 @@ function openPartyChat() {
     friends,
     chatWidget());
   renderPartyCall(_partyCallBox);
-  document.body.append(partyChatPanel);
+  // Mount inside the player during a game so it renders above the fullscreen
+  // canvas; uiRoot() falls back to <body> otherwise.
+  uiRoot().append(partyChatPanel);
   const fabRect = $("#party-chat-fab")?.getBoundingClientRect();
   if (fabRect) {
     partyChatPanel.style.left = `${Math.max(8, Math.min(window.innerWidth - partyChatPanel.offsetWidth - 8, fabRect.left))}px`;
@@ -3247,6 +3259,7 @@ async function routePlayGame(sys, romParam, resume = false) {
   const ctrlBtn = el("button", { className: "pbtn", id: "ctrl-btn", textContent: "Input settings", title: "Controller, keyboard and touch-pad settings", hidden: true });
   const raBtn = el("button", { className: "pbtn", id: "ra-btn", textContent: "🏆 Achievements", title: "RetroAchievements settings", hidden: true });
   const gfxBtn = el("button", { className: "pbtn", id: "gfx-btn", textContent: "🖼 Graphics", title: "Per-console graphics filter", hidden: true });
+  const chatBtn = el("button", { className: "pbtn", id: "chat-btn", textContent: "💬 Chat & party", title: "Party chat, voice call and watch invites", hidden: true });
   const watchBtn = el("button", { className: "pbtn", id: "watch-btn", textContent: "Watch", title: "Start a watch party — others on the tailnet can spectate", hidden: true });
   const noteBtn = el("button", { className: "note-chip", textContent: "Note", title: "Tips for this game", hidden: true });
   const npBtn = el("button", { className: "pbtn", id: "np-btn", textContent: "Netplay", title: "Host or join a netplay room for this game", hidden: true });
@@ -3260,7 +3273,7 @@ async function routePlayGame(sys, romParam, resume = false) {
   const saveGroup = el("div", { className: "player-control-group save-group", role: "group", ariaLabel: "Save controls" }, saveMenuBtn, saveMenu);
   const flagBtn = el("button", { className: "pbtn", id: "flag-btn", textContent: "⚑ Report", title: "Report a problem with this game" });
   const moreBtn = el("button", { className: "pbtn more-menu-btn", textContent: "⋯", title: "More controls" });
-  const moreMenu = el("div", { className: "more-menu", hidden: true }, ctrlBtn, gfxBtn, raBtn, noteBtn, flagBtn);
+  const moreMenu = el("div", { className: "more-menu", hidden: true }, ctrlBtn, gfxBtn, raBtn, chatBtn, noteBtn, flagBtn);
   const moreGroup = el("div", { className: "player-control-group more-group" }, moreBtn, moreMenu);
   if (sys !== "upload") flagBtn.onclick = () => reportGame(sys, file, romName);
   else flagBtn.hidden = true;
@@ -3565,6 +3578,8 @@ async function routePlayGame(sys, romParam, resume = false) {
     raBtn.onclick = () => { moreMenu.hidden = true; raPanel(); };
     gfxBtn.hidden = false;
     gfxBtn.onclick = () => { moreMenu.hidden = true; gfxPanel(sys); };
+    chatBtn.hidden = false;
+    chatBtn.onclick = () => { moreMenu.hidden = true; openPartyChat(); };
     rememberSession({ sys, file, name: romName });
     window.__npSnapT = setInterval(() => snapshotNetplay(sys, file, romName), 4000);
     try { window.SSPlay && window.SSPlay.postMessage("1"); } catch { /* */ }
@@ -5083,6 +5098,9 @@ function raSettingsForm() {
   const key = el("input", { type: "password", placeholder: "Web API key", autocomplete: "off",
     value: p.raKey || "", style: "width:180px" });
   key.onchange = () => setPref("raKey", key.value.trim());
+  const status = el("div", { className: "hint ra-status" });
+  const test = el("button", { className: "btn btn-ghost sm", textContent: "Test connection",
+    onclick: () => raTest(test, status) });
   return el("div", {},
     el("label", { className: "set-row" }, en,
       el("div", {}, el("div", { textContent: "RetroAchievements" }),
@@ -5090,7 +5108,30 @@ function raSettingsForm() {
     el("label", { className: "set-row" }, user, el("div", {}, el("div", { textContent: "RA username" }))),
     el("label", { className: "set-row" }, key,
       el("div", {}, el("div", { textContent: "RA web API key" }),
-        el("div", { className: "hint", textContent: "From retroachievements.org → Settings → Keys" }))));
+        el("div", { className: "hint", textContent: "From retroachievements.org → Settings → Keys" }))),
+    el("div", { className: "ra-test" }, test, status));
+}
+// RetroAchievements' web API sends CORS `*`, so the device can verify its own
+// credentials. In-game unlocks still need a cheevos-capable emulator.
+async function raTest(btn, status) {
+  const p = prefs();
+  if (!p.raUser || !p.raKey) { status.textContent = "Enter your username and web API key first."; return; }
+  btn.disabled = true; status.textContent = "Checking…";
+  try {
+    const url = `https://retroachievements.org/API/API_GetUserProfile.php?u=${encodeURIComponent(p.raUser)}&y=${encodeURIComponent(p.raKey)}`;
+    const r = await fetch(url, { cache: "no-store" });
+    if (r.status === 401) { status.textContent = "Username or web API key was rejected."; return; }
+    if (!r.ok) { status.textContent = `RetroAchievements returned HTTP ${r.status}.`; return; }
+    const d = await r.json();
+    const name = d.User || p.raUser;
+    const pts = d.TotalPoints ?? 0;
+    const rank = d.Rank != null ? ` · rank ${d.Rank}` : "";
+    status.textContent = `Connected as ${name} · ${pts} points${rank}`;
+  } catch (e) {
+    status.textContent = `Couldn't reach RetroAchievements: ${e?.message || e}`;
+  } finally {
+    btn.disabled = false;
+  }
 }
 function raPanel() {
   const o = el("div", { id: "help-overlay", onclick: (e) => { if (e.target.id === "help-overlay") o.remove(); } },

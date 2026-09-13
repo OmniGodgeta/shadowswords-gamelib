@@ -97,17 +97,23 @@ floating bubble); **RetroAchievements = web login now + cheevos unlocks after**;
   party call in a headless WebView owned by `PartyService`, hand the call over
   from the Activity when it backgrounds, and expose the bubble's mute via the
   service. This is the remaining native work.
-- ⏳ Watcher can't upgrade to talking without rejoining; add a "Use mic" action.
-- ⏳ Party calls during a game: the `#np-*` netplay voice and the party voice are
-  separate; unify so a watcher joining a netplay session joins the same call.
+- ✅ Watcher → talker: `🎙 Use microphone` rebuilds the peers with a mic track.
+- ✅ In-game access: `💬 Chat & party` in the `⋯` menu shows the panel above the
+  game (mounted via `uiRoot()`).
+- ⏳ Unify the netplay `#np-*` voice with the party call so a watcher joining a
+  netplay session lands on the same call.
+- ⏳ Add the party id to the watch/invite payloads so a "watch" invite can also
+  drop the guest onto the call.
 
 ### B. RetroAchievements
 - Done: `raSettingsForm()` (prefs `raEnabled/raUser/raKey`) in profile Settings
-  and the in-game Achievements panel.
-- Next: verify credentials against the RA web API; then, for in-game unlocks,
-  either adopt an EmulatorJS build with `cheevos` or wire rcheevos wasm. The
-  self-hosted `stable` EJS has no cheevos code, so this is the blocker. Popups
-  render via a `uiRoot()` overlay (`raToast({title,desc,points,icon})`).
+  and the in-game Achievements panel, plus a **Test connection** button
+  (`raTest()` → `API_GetUserProfile.php`; RA sends CORS `*`, no proxy needed).
+- Next: list a game's achievements (needs the RA game id from the ROM MD5:
+  `dorequest.php?r=gameid&m=<md5>`, then `API_GetGameInfoAndUserProgress.php`).
+- In-game unlocks/popups still need a cheevos-capable emulator build (the
+  self-hosted `stable` EJS has none) or rcheevos wasm. Render popups via a
+  `uiRoot()` overlay (`raToast({title,desc,points,icon})`).
 
 ### C. Per-console graphics — started
 - ✅ `gfxFilterFor(sys)`/`saveGfxFilter()` (LS `gfxPresets`, like padPresets),
