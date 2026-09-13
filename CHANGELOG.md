@@ -1,5 +1,12 @@
 # Changelog
 
+## 2.78
+- Improved netplay room creation errors with actionable server/status details.
+- Added a visible room code and explicit Join room control to the Netplay
+  sheet for phones and browsers.
+- Extended Player 2 signaling retries and validates room availability before
+  starting WebRTC.
+
 ## 2.77
 - Reorganized the Play landing page so active players appear immediately
   after the main actions, followed by the preview slider and a compact

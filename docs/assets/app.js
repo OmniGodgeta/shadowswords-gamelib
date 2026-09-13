@@ -587,8 +587,11 @@ function npPoll() {
     }).finally(() => { if (NP.alive) NP.pollT = setTimeout(npPoll, 500); });
 }
 async function npHost({ sys, file, name, reuse }) {
-  const d = await fetch(`${API}/np/room`, { method: "POST", headers: { "content-type": "application/json", ...authHdr() },
-    body: JSON.stringify({ sys, file, name, cid: CID, reuse: reuse || undefined }) }).then((r) => r.json());
+  const response = await fetch(`${API}/np/room`, { method: "POST", headers: { "content-type": "application/json", ...authHdr() },
+    body: JSON.stringify({ sys, file, name, cid: CID, reuse: reuse || undefined }) });
+  let d = null;
+  try { d = await response.json(); } catch { /* handled below */ }
+  if (!response.ok || !d?.id) throw new Error(d?.error || `Room server returned HTTP ${response.status}`);
   NP.room = d.id; NP.role = "host"; NP.myP = 0; NP.after = 0; NP.alive = true;
   window.__npRoom = d.id;
   // Remember we are the host so a reload/background re-hosts instead of
@@ -642,6 +645,10 @@ function npWaitLinked(ms = 25000) {
 async function npJoin(room) {
   if (!room) throw new Error("no room");
   if (NP.room === room && NP.dc && NP.dc.readyState === "open") return;
+  const check = await fetch(`${API}/np/sig?room=${encodeURIComponent(room)}`, { cache: "no-store" });
+  let info = null;
+  try { info = await check.json(); } catch { /* handled below */ }
+  if (!check.ok || !info?.sys || !info?.file) throw new Error(info?.error || `Room unavailable (HTTP ${check.status})`);
   npStop();
   npForgetHost();   // we are the guest now — don't re-host on next load
   NP.room = room; NP.role = "guest"; NP.myP = 1; NP.after = 0; NP.alive = true;
@@ -758,10 +765,22 @@ function wnpStartWatch(room, onStream) {
 }
 async function autoJoinNetplay(wantRoom) {
   if (!wantRoom) { toast("Host hasn't created a room yet — they need to tap Netplay first"); return; }
-  try { await npJoin(wantRoom); return; } catch { /* retry once */ }
-  npLog("join failed — retrying");
-  try { toast("Link failed — retrying as Player 2…"); await npJoin(wantRoom); }
-  catch { toast("Couldn't link — host should tap Netplay, then Invite again"); }
+  let lastError = null;
+  for (let attempt = 1; attempt <= 6; attempt++) {
+    try {
+      await npJoin(wantRoom);
+      toast("Connected as Player 2");
+      return;
+    } catch (e) {
+      lastError = e;
+      npLog(`join attempt ${attempt}/6 failed: ${e?.message || e}`);
+      if (attempt < 6) {
+        toast(`Connecting as Player 2… retry ${attempt}/5`);
+        await new Promise((resolve) => setTimeout(resolve, 1200 * attempt));
+      }
+    }
+  }
+  toast(`Couldn't connect as Player 2: ${lastError?.message || "timeout"}`);
 }
 function acceptInvite(inv) {
   const room = inv.room;
@@ -795,6 +814,9 @@ function openNetplaySheet(sys, file, name) {
         : " Sharing inputs (best-effort sync).")
     : (NP.room ? "Room is up — Player 2 taps Join room from the invite." : "Create a room, then invite someone online.");
   const kids = [el("h3", { textContent: "Netplay" }), el("p", { className: "hint", textContent: status })];
+  if (NP.room && NP.role === "host") {
+    kids.push(el("p", { className: "np-room-code", textContent: `Room code: ${NP.room}`, title: "Give this code to Player 2" }));
+  }
 
   if (!linked && NP.role === "host" && NP.video) {
     kids.push(el("p", { className: "hint", style: "font-size:11px;opacity:.7", textContent: "Streaming is on — waiting for P2 to reconnect." }));
@@ -811,8 +833,29 @@ function openNetplaySheet(sys, file, name) {
           if (sb && !NP.video) { sb.hidden = false; sb.onclick = resyncNetplay; }
           ping(false);
           invitePicker({ sys, file, name, watch: window.__watchId });
-        } catch { toast("Couldn't create a room"); }
+        } catch (e) { toast(`Couldn't create a room: ${e?.message || "server unavailable"}`); npLog(`room create failed: ${e?.message || e}`); }
       } }));
+  }
+  if (!linked && NP.role !== "host") {
+    const roomInput = el("input", { className: "chat-input", placeholder: "Paste room code", inputMode: "text", spellcheck: false });
+    const joinRoom = el("button", { className: "btn btn-ghost", style: "width:100%;margin:6px 0", textContent: "Join room" });
+    const joinStatus = el("p", { className: "hint", style: "font-size:11px;min-height:1.2em" });
+    const doJoin = async () => {
+      const room = roomInput.value.trim();
+      if (!/^[0-9a-f]{4,32}$/i.test(room)) { joinStatus.textContent = "Enter the room code shown by Player 1."; return; }
+      joinRoom.disabled = true; joinStatus.textContent = "Checking room…";
+      try {
+        o.remove();
+        await autoJoinNetplay(room);
+      } catch (e) {
+        joinRoom.disabled = false;
+        joinStatus.textContent = e.message || "Could not join room.";
+      }
+    };
+    joinRoom.onclick = doJoin;
+    roomInput.onkeydown = (e) => { if (e.key === "Enter") doJoin(); };
+    kids.push(el("div", { className: "np-join-box" },
+      el("strong", { textContent: "Join Player 1" }), roomInput, joinRoom, joinStatus));
   }
   if (NP.role === "host" && !NP.video) {
     kids.push(el("button", { className: "btn btn-ghost", style: "width:100%;margin:6px 0", textContent: "Sync screens",

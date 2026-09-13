@@ -49,6 +49,15 @@ this. (Netplay internals: `NETPLAY-UI-CONTRACT.md`. Roadmap split:
 - Added `play-hero`, `play-preview`, and `play-tools` responsive styles to
   keep the page compact and usable on mobile. Cache version is `2.77`.
 
+## Session 2026-09-13 — netplay room/join diagnostics
+
+- Netplay room creation now validates non-2xx and malformed responses rather
+  than hiding them behind “Couldn't create a room”.
+- The Netplay sheet shows the host's room code and provides an explicit Join
+  room field for guests.
+- Guest joins validate the room first and retry WebRTC signaling up to six
+  times with visible status messages. Cache version is `2.78`.
+
 ---
 
 ## Session 2026-09-12 — final handoff recovery

@@ -1226,6 +1226,13 @@ body.lite .pad-row.listening .pr-chip { animation: none; border-style: dashed; }
 .party-friend-meta small { width: 100%; color: var(--dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .party-friend-actions { display: flex; gap: 4px; flex: 0 0 auto; }
 .party-friend-actions .btn { font-size: 10px; padding: 5px 7px; }
+.np-room-code {
+  margin: 10px 0; padding: 10px; border: 1px dashed var(--cyan); border-radius: 8px;
+  color: var(--cyan); font: 800 16px/1.2 ui-monospace, monospace; letter-spacing: .12em;
+  text-align: center; user-select: all;
+}
+.np-join-box { margin: 12px 0 4px; padding-top: 10px; border-top: 1px solid var(--line); }
+.np-join-box strong { display: block; margin-bottom: 6px; }
 .chat-drop-zone {
   position: fixed; left: 50%; bottom: 16px; transform: translateX(-50%); z-index: 70;
   padding: 12px 28px; border: 2px dashed var(--pink); border-radius: 999px;
