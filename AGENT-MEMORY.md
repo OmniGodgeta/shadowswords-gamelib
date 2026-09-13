@@ -68,6 +68,11 @@ this. (Netplay internals: `NETPLAY-UI-CONTRACT.md`. Roadmap split:
 - Signaling send/offer failures are now recorded in the Netplay diagnostics.
 - Floating-chat presence polling exits cleanly once its panel is closed.
 
+## Session 2026-09-13 — in-game toolbar alignment
+
+- Desktop `.player-bar` controls are centered with a desktop-only media query;
+  touch devices retain the existing scrollable layout. Cache version is `2.80`.
+
 ---
 
 ## Session 2026-09-12 — final handoff recovery

@@ -1,5 +1,9 @@
 # Changelog
 
+## 2.80
+- Centered the desktop in-game toolbar while retaining horizontally scrollable
+  left-aligned controls on touch devices.
+
 ## 2.79
 - Disabled host-video negotiation for Nintendo 64 netplay, which is more
   reliable with local input/state synchronization on Android WebView and

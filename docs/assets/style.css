@@ -566,6 +566,9 @@ body.lite .shelf-track > .tile, body.lite .tile-grid > .tile { animation: none; 
   transition: box-shadow .12s, border-color .12s;
 }
 .player-bar .pbtn:hover { border-color: var(--cyan); box-shadow: var(--glow-cyan); }
+@media (min-width: 721px) {
+  .player-bar { justify-content: center; }
+}
 
 /* ---- favorite heart ---- */
 .heart {
