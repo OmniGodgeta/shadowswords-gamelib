@@ -1,5 +1,14 @@
 # Changelog
 
+## 2.91
+- Normal game launches no longer create a hidden Netplay room or show
+  “Waiting for P2”; rooms are created only when Netplay/Invite is explicitly
+  used.
+- Room recovery now requires an explicitly active host session, preventing
+  stale update-era `hostNp` data from re-hosting games.
+- Authentication rate limiting now uses the browser's stable client ID when
+  available, avoiding one shared Tailnet/proxy address throttling every user.
+
 ## 2.90
 - Netplay state synchronization now uses identified transfers with
   backpressure, preventing large savestates from overflowing the WebRTC data

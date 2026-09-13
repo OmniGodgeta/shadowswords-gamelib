@@ -1200,7 +1200,7 @@ async function apiAuth(action, body) {
   try {
     r = await fetch(`${API}/auth/${action}`, {
       method: action === "me" ? "GET" : "POST",
-      headers: { "content-type": "application/json", ...authHdr() },
+      headers: { "content-type": "application/json", "x-ssw-client": CID, ...authHdr() },
       body: action === "me" ? undefined : JSON.stringify(body || {}),
     });
   } catch {
@@ -2956,23 +2956,15 @@ async function routePlayGame(sys, romParam, resume = false) {
       // We were hosting this game before a reload/background — re-host the same
       // room (server `reuse`) so P2 can reconnect instead of us becoming P2.
       const hostHint = LS.get("hostNp", null);
-      if (hostHint && hostHint.room && hostHint.sys === sys
+      const recoverySession = LS.get("lastSession", null);
+      if (recoverySession?.np === true && recoverySession?.role === "host"
+          && hostHint && hostHint.room && hostHint.sys === sys
           && (!hostHint.file || hostHint.file === file)
           && Date.now() - (hostHint.t || 0) < 15 * 60 * 1000) {
         setTimeout(async () => {
           if (NP.role || window.__inNetplay) return;
           try { await npHost({ sys, file, name: romName, reuse: hostHint.room }); toast("Re-hosting — P2 can reconnect"); }
           catch { /* */ }
-        }, 1600);
-      } else if (prefs().npHostByDefault !== false && np && sys !== "upload") {
-        // Every normal launch advertises a ready Player 1 room, so the
-        // "Join" action on Home and Play never depends on a second setup step.
-        setTimeout(async () => {
-          if (NP.role || window.__inNetplay || !window.__emuUp) return;
-          try {
-            await npHost({ sys, file, name: romName });
-            ping(false);
-          } catch { /* room creation is retried from the Netplay sheet */ }
         }, 1600);
       }
     }

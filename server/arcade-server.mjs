@@ -127,7 +127,7 @@ const MIME = {
 };
 const CORS = {
   "access-control-allow-origin": "*",
-  "access-control-allow-headers": "range, content-type, x-ssw-token, x-ssw-auth",
+  "access-control-allow-headers": "range, content-type, x-ssw-token, x-ssw-auth, x-ssw-client",
   "access-control-allow-methods": "GET, HEAD, POST, PUT, DELETE, OPTIONS",
 };
 
@@ -1031,12 +1031,14 @@ async function jellyfinProxy(req, res, rest, u) {
 }
 
 // ---- rate limiting + optional write token ------------------------------
-const rl = new Map();   // ip -> [timestamps]
-function rateLimited(req, res, max, windowMs) {
-  const ip = (req.headers["x-forwarded-for"] || "").split(",")[0].trim()
+const rl = new Map();   // client identity -> [timestamps]
+function rateLimited(req, res, max, windowMs, scope = "default") {
+  const client = String(req.headers["x-ssw-client"] || "").match(/^[a-z0-9_-]{8,80}$/i)?.[0]
+    || (req.headers["x-forwarded-for"] || "").split(",")[0].trim()
     || req.socket.remoteAddress || "?";
-  const t = now(), arr = (rl.get(ip) || []).filter((x) => x > t - windowMs);
-  arr.push(t); rl.set(ip, arr);
+  const key = `${scope}:${client}`;
+  const t = now(), arr = (rl.get(key) || []).filter((x) => x > t - windowMs);
+  arr.push(t); rl.set(key, arr);
   if (rl.size > 5000) for (const [k, v] of rl) if (!v.some((x) => x > t - 60000)) rl.delete(k);
   if (arr.length > max) { res.writeHead(429, { ...CORS, "retry-after": "30" }).end("slow down"); return true; }
   return false;
@@ -1058,7 +1060,7 @@ function proxyToNetplay(req, res) {
 }
 
 const server = http.createServer(async (req, res) => {
-  if (req.method === "OPTIONS") { res.writeHead(204, { ...CORS, "access-control-max-age": "86400", "access-control-allow-headers": "range, content-type, x-ssw-token, x-ssw-auth" }).end(); return; }
+  if (req.method === "OPTIONS") { res.writeHead(204, { ...CORS, "access-control-max-age": "86400" }).end(); return; }
 
   {
     const u0 = new URL(req.url, "http://x");
@@ -1071,8 +1073,8 @@ const server = http.createServer(async (req, res) => {
     }
 
     // ---- auth ----
-    if (P === "/auth/register" && req.method === "POST") { if (rateLimited(req, res, 10, 60000)) return; authRegister(req, res); return; }
-    if (P === "/auth/login" && req.method === "POST") { if (rateLimited(req, res, 12, 60000)) return; authLogin(req, res); return; }
+    if (P === "/auth/register" && req.method === "POST") { if (rateLimited(req, res, 10, 60000, "auth")) return; authRegister(req, res); return; }
+    if (P === "/auth/login" && req.method === "POST") { if (rateLimited(req, res, 12, 60000, "auth")) return; authLogin(req, res); return; }
     if (P === "/auth/me" && req.method === "GET") { authMe(req, res); return; }
     if (P === "/auth/update" && req.method === "POST") { if (rateLimited(req, res, 20, 60000)) return; authUpdate(req, res); return; }
     const pp = P.match(/^\/u\/([^/]+)$/);

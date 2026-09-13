@@ -37,6 +37,18 @@ this. (Netplay internals: `NETPLAY-UI-CONTRACT.md`. Roadmap split:
   WebRTC bufferedAmount backpressure, bounded receive sizes, and visible state
   send/apply diagnostics.
 
+## Session 2026-09-13 — auth throttle and phantom rooms
+
+- The auth limiter previously keyed requests by the first `x-forwarded-for`
+  address. Behind a shared reverse proxy this could make all users receive
+  `slow down` after one client's attempts. Version `2.91` sends the existing
+  per-browser CID as `x-ssw-client` and scopes auth limits to that client.
+- Normal launches were also creating a Netplay room automatically, which made
+  a fresh update appear to be waiting for P2. Version `2.91` removes implicit
+  room creation and only resumes hosting when `lastSession.np=true` and the
+  prior role was explicitly host.
+- Add `x-ssw-client` to CORS allow-headers if changing the server CORS policy.
+
 ## Session 2026-09-13 — media reliability and diagnostics
 
 - Added track-level search, genre filtering, persistent music favorites, volume
