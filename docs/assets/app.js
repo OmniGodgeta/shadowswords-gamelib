@@ -581,7 +581,10 @@ function npPoll() {
       if (!d || d.error) return;
       NP.pollFails = 0;
       NP.after = d.after || NP.after;
-      for (const m of (d.msgs || [])) await npHandleSig(m);
+      for (const m of (d.msgs || [])) {
+        try { await npHandleSig(m); }
+        catch (e) { npLog(`signalling message ignored: ${e?.message || e}`); }
+      }
     }).catch((e) => {
       if (!NP.alive) return;
       NP.pollFails++;
@@ -667,8 +670,14 @@ async function npJoin(room) {
   npPoll();
   npIndicator();
   toast("Connecting as Player 2…");
-  await npWaitLinked();
-  npLog("linked");
+  try {
+    await npWaitLinked();
+    npLog("linked");
+  } catch (e) {
+    npLog(`join link failed: ${e?.message || e}`);
+    npStop();
+    throw e;
+  }
 }
 function npResumeAfterBackground() {
   if (!window.__emuUp || !NP.room) return;
@@ -788,6 +797,12 @@ async function autoJoinNetplay(wantRoom) {
       }
     }
   }
+  npStop();
+  try { localStorage.removeItem("ssw:joinNp"); } catch { /* */ }
+  try {
+    const session = LS.get("lastSession", null);
+    if (session?.role === "guest" && session.room === wantRoom) localStorage.removeItem("ssw:lastSession");
+  } catch { /* */ }
   toast(`Couldn't connect as Player 2: ${lastError?.message || "timeout"}`);
 }
 function acceptInvite(inv) {
@@ -2677,7 +2692,10 @@ async function routePlayGame(sys, romParam, resume = false) {
   if (sys !== "upload") pushRecent(sys, file, romName, gm && gm.img);
 
   window.EJS_player = "#game";
-  window.EJS_core = core;
+  // Metadata uses short system aliases, while EmulatorJS expects the
+  // libretro core identifier. Passing "n64" directly makes browser boots
+  // fail even though mupen64plus_next is available.
+  window.EJS_core = EJS_LIBRETRO[core] || core;
   window.EJS_gameUrl = romUrl;
   window.EJS_gameName = romName;
   const ejsBase = emuData();

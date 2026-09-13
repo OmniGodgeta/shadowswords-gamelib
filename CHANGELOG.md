@@ -1,5 +1,13 @@
 # Changelog
 
+## 2.83
+- Fixed browser N64 boot configuration by translating the `n64` metadata alias
+  to the verified `mupen64plus_next` EmulatorJS core.
+- Guest netplay retries now tear down failed peer connections and clear stale
+  guest session hints instead of reconnecting indefinitely after reloads.
+- Signaling message errors are isolated so one stale SDP/ICE message cannot
+  abort the entire polling loop.
+
 ## 2.82
 - Reset emulator speed after the core is actually ready, ensuring the
   fast-forward fix applies to N64 and other cores.

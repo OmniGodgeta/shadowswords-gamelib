@@ -84,6 +84,10 @@ this. (Netplay internals: `NETPLAY-UI-CONTRACT.md`. Roadmap split:
   when no watch-party ID exists. Cache version is `2.81`.
 - The speed reset is also performed from `EJS_onGameStart`, after the emulator
   instance exists; cache version is now `2.82`.
+- Browser N64 boot now maps the metadata alias `n64` to
+  `mupen64plus_next`. Failed guest joins close the peer and clear stale guest
+  recovery hints; signaling message failures no longer stop polling. Cache
+  version is `2.83`.
 
 ---
 
