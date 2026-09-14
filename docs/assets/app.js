@@ -1137,10 +1137,12 @@ function wnpStartWatch(room, onStream) {
 }
 async function autoJoinNetplay(wantRoom) {
   if (!wantRoom) { toast("Host hasn't created a room yet — they need to tap Netplay first"); return; }
+  NP.joining = true;
   let lastError = null;
   for (let attempt = 1; attempt <= 6; attempt++) {
     try {
       await npJoin(wantRoom);
+      NP.joining = false;
       toast("Connected as Player 2");
       return;
     } catch (e) {
@@ -1152,6 +1154,7 @@ async function autoJoinNetplay(wantRoom) {
       }
     }
   }
+  NP.joining = false;
   npStop();
   try { localStorage.removeItem("ssw:joinNp"); } catch { /* */ }
   try {
@@ -1217,6 +1220,18 @@ function openNetplaySheet(sys, file, name) {
       } }));
   }
   // Joining is invite/presence only — no room-code box (removed by request).
+  if (!linked && NP.role === "host") {
+    kids.push(el("button", { className: "btn btn-ghost", style: "width:100%;margin:6px 0", textContent: "Retry connection",
+      title: "Send a fresh offer if Player 2 is stuck connecting",
+      onclick: async () => {
+        try { NP.pc?.close(); } catch { /* */ }
+        NP.pc = null; NP.dc = null;
+        npStartPc(true);
+        npIndicator();
+        toast("Sent a fresh offer — waiting for Player 2");
+        npLog("host retry: re-offered");
+      } }));
+  }
   if (NP.role === "host" && !NP.video && npStateSyncAllowed()) {
     kids.push(el("button", { className: "btn btn-ghost", style: "width:100%;margin:6px 0", textContent: "Sync screens",
       onclick: () => { o.remove(); resyncNetplay(); } }));
@@ -3717,13 +3732,10 @@ async function routePlayGame(sys, romParam, resume = false) {
       setTimeout(() => autoJoinNetplay(joinHint.room), 1400);
     } else {
       let willJoinOrRecover = false;
-      const session = LS.get("lastSession", null);
-      if (session?.role === "guest" && session.room
-          && session.sys === sys && (!session.file || session.file === file)
-          && Date.now() - (session.t || 0) < 15 * 60 * 1000) {
-        willJoinOrRecover = true;
-        setTimeout(() => autoJoinNetplay(session.room), 1400);
-      }
+      // NOTE: we deliberately do NOT auto-rejoin as Player 2 from lastSession.
+      // That used to drag a player who started the game solo back into an old
+      // P2 seat ("stuck at controller 2"). In-session drops still reconnect via
+      // npScheduleReconnect; a fresh invite always comes through joinNp.
       // We were hosting this game before a reload/background — offer to keep
       // the same room (server `reuse`), start a fresh one, or go single player,
       // instead of silently re-hosting and pulling P2 into a stale room.
@@ -3741,9 +3753,11 @@ async function routePlayGame(sys, romParam, resume = false) {
       }
       // Open a room automatically so a friend tapping Join on Home actually
       // reaches this game (toggle "Let friends join my games" in Netplay).
+      // Never do this while a join is already under way — that would race the
+      // guest into hosting its own room and strand the original host.
       if (!willJoinOrRecover && np && sys !== "upload" && prefs().npOpen !== false) {
         setTimeout(() => {
-          if (NP.role || window.__inNetplay || LS.get("joinNp")) return;
+          if (NP.role || window.__inNetplay || NP.joining || LS.get("joinNp")) return;
           npHost({ sys, file, name: romName }).catch(() => {});
         }, 2600);
       }

@@ -1,5 +1,18 @@
 # Changelog
 
+## 3.8
+- **Fixed invites never connecting / host stuck on "Waiting for P2"**: the
+  auto-open-room feature (3.7) could race an in-progress join, making the guest
+  open its own room and strand the host. Auto-open now backs off while a join is
+  running (`NP.joining`) or a join is pending, and never competes with an
+  invite.
+- **Fixed being dragged into Player 2 while playing alone**: removed the
+  automatic guest re-join from the last session (it pulled a solo player back
+  into an old P2 seat). In-session drops still auto-reconnect; fresh joins only
+  happen from an invite or Home. 
+- Added a **Retry connection** action on the host's Netplay sheet (re-sends the
+  offer when P2 is stuck).
+
 ## 3.7
 - **Joining now works from Home / invites on both platforms**: a game
   auto-opens a room when it starts ("Let friends join my games", on by default),

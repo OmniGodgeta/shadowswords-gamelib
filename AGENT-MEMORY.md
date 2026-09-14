@@ -6,6 +6,24 @@ agent can pick up context without re-deriving it. Read `AGENTS.md` first, then
 this. (Netplay internals: `NETPLAY-UI-CONTRACT.md`. Roadmap split:
 `FEATURE-BACKLOG.md`.)
 
+## Session 2026-09-13 — join regression (auto-open race) + solo P2 bug
+- Owner: invites "only load the emulator", host stuck on "Waiting for P2", and a
+  friend playing solo got pulled back to P2; host saw "Netplay disconnected".
+- **Root cause**: the 3.7 auto-open-room race. The guest's `EJS_onGameStart`
+  scheduled auto-host ~2.6s in, which could fire while the join was starting and
+  make the guest host its own room, stranding the original host. Guarded with
+  `NP.joining` (set for the whole `autoJoinNetplay`) plus the existing
+  `LS.get("joinNp")` check.
+- **Solo P2 bug**: removed the `lastSession.role === "guest"` auto-rejoin in
+  `EJS_onGameStart`. That re-pulled anyone who opened the same game solo back
+  into an old P2 seat. In-session drops still use `npScheduleReconnect`; new
+  joins only come from `joinNp` (invite / Home).
+- Added a host "Retry connection" button (`npStartPc(true)` re-offer).
+- Reproduced with two isolated headless peers: host auto-opens, guest loads the
+  game solo first, then joins via `?join=<room>` — both reach `__inNetplay` and
+  sync states. So signaling + join logic are fine; real-device failures are
+  ICE/network. Diagnostics now show `cands=` (see 3.7).
+
 ## Session 2026-09-13 — join reliability, ICE diagnostics, controller layout
 - **Diagnosed "Connecting as P2"** with two isolated headless peers (ports
   9333/9334): the join works end to end (dc open, states applied), and a manual
