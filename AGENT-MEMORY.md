@@ -6,6 +6,14 @@ agent can pick up context without re-deriving it. Read `AGENTS.md` first, then
 this. (Netplay internals: `NETPLAY-UI-CONTRACT.md`. Roadmap split:
 `FEATURE-BACKLOG.md`.)
 
+## Session 2026-09-13 — remove paste-to-join
+- Owner: joining must be invite/presence only, no code pasting. Removed the
+  room-code input from `openNetplaySheet` (the `np-join-box`), the whole
+  "Join with a room code" section + `joinRoom` from `routeNetplay`, and the
+  party-code input from `renderPartyCall`. Also dropped the host's room-code
+  display. `autoJoinNetplay`/`npJoin` are still used by `acceptInvite`,
+  `routeWatch`, and the `?join=` router link, so invite links still work.
+
 ## Session 2026-09-13 — netplay lag + presence join + Android cold-start invite
 - Owner: friend saw the host's stream but it was laggy; Android→Android join
   failed; and while waiting for P2 the presence card showed "Play too".

@@ -1,5 +1,11 @@
 # Changelog
 
+## 3.6
+- Removed the "paste a room code" join UI everywhere (Netplay sheet, Netplay
+  page, party call). Joining is now invite- or presence-driven only: accept the
+  invite / notification, or tap Join on the Home page. The host's room-code
+  display is gone too since there is nothing to paste.
+
 ## 3.5
 - **Netplay lag**: input/state sync is now the default (`npMode: "input"`) so
   Player 2's inputs reach Player 1 in ~1 RTT instead of waiting on the host's

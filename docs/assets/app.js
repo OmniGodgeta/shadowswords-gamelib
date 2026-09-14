@@ -1179,11 +1179,8 @@ function openNetplaySheet(sys, file, name) {
     ? `Linked — you are ${role}.` + (NP.video
         ? (NP.role === "host" ? " P2 is watching your screen." : " You're watching P1's screen.")
         : " Sharing inputs (best-effort sync).")
-    : (NP.room ? "Room is up — Player 2 taps Join room from the invite." : "Create a room, then invite someone online.");
+    : (NP.room ? "Room is up — invite someone; they join from the invite or Home." : "Create a room, then invite someone online.");
   const kids = [el("h3", { textContent: "Netplay" }), el("p", { className: "hint", textContent: status })];
-  if (NP.room && NP.role === "host") {
-    kids.push(el("p", { className: "np-room-code", textContent: `Room code: ${NP.room}`, title: "Give this code to Player 2" }));
-  }
 
   if (!linked && NP.role === "host" && NP.video) {
     kids.push(el("p", { className: "hint", style: "font-size:11px;opacity:.7", textContent: "Streaming is on — waiting for P2 to reconnect." }));
@@ -1203,27 +1200,7 @@ function openNetplaySheet(sys, file, name) {
         } catch (e) { toast(`Couldn't create a room: ${e?.message || "server unavailable"}`); npLog(`room create failed: ${e?.message || e}`); }
       } }));
   }
-  if (!linked && NP.role !== "host") {
-    const roomInput = el("input", { className: "chat-input", placeholder: "Paste room code", inputMode: "text", spellcheck: false });
-    const joinRoom = el("button", { className: "btn btn-ghost", style: "width:100%;margin:6px 0", textContent: "Join room" });
-    const joinStatus = el("p", { className: "hint", style: "font-size:11px;min-height:1.2em" });
-    const doJoin = async () => {
-      const room = roomInput.value.trim();
-      if (!/^[0-9a-f]{4,32}$/i.test(room)) { joinStatus.textContent = "Enter the room code shown by Player 1."; return; }
-      joinRoom.disabled = true; joinStatus.textContent = "Checking room…";
-      try {
-        o.remove();
-        await autoJoinNetplay(room);
-      } catch (e) {
-        joinRoom.disabled = false;
-        joinStatus.textContent = e.message || "Could not join room.";
-      }
-    };
-    joinRoom.onclick = doJoin;
-    roomInput.onkeydown = (e) => { if (e.key === "Enter") doJoin(); };
-    kids.push(el("div", { className: "np-join-box" },
-      el("strong", { textContent: "Join Player 1" }), roomInput, joinRoom, joinStatus));
-  }
+  // Joining is invite/presence only — no room-code box (removed by request).
   if (NP.role === "host" && !NP.video && npStateSyncAllowed()) {
     kids.push(el("button", { className: "btn btn-ghost", style: "width:100%;margin:6px 0", textContent: "Sync screens",
       onclick: () => { o.remove(); resyncNetplay(); } }));
@@ -2651,16 +2628,9 @@ function renderPartyCall(box) {
   const inCall = !!PARTY.id && PARTY.members.some((m) => m.cid === CID);
   const kids = [el("div", { className: "party-call-head" }, el("strong", { textContent: "Voice party" }))];
   if (!PARTY.id) {
-    const codeIn = el("input", { className: "chat-input", placeholder: "Party code", maxLength: 32 });
     kids.push(el("button", { className: "btn btn-primary sm", textContent: "Start a voice party",
       onclick: () => partyCreateStart().catch((e) => toast(`Couldn't start: ${e.message}`)) }));
-    kids.push(el("div", { className: "party-call-join" }, codeIn,
-      el("button", { className: "btn btn-ghost sm", textContent: "Join", onclick: () => {
-        const id = codeIn.value.trim();
-        if (/^[0-9a-f]{4,32}$/i.test(id)) partyJoin(id).catch((e) => toast(`Couldn't join: ${e.message}`));
-        else toast("Enter a valid party code");
-      } })));
-    kids.push(el("p", { className: "hint", textContent: "Calls stay up while this page is open (and on Android, when the app is closed)." }));
+    kids.push(el("p", { className: "hint", textContent: "Calls stay up while this page is open (and on Android, when the app is closed). Join from an invite." }));
   } else {
     kids.push(el("div", { className: "party-call-code" },
       el("span", { className: "hint", textContent: "Party code" }),
@@ -3062,33 +3032,15 @@ async function routeNetplay() {
   const status = el("p", { className: "hint", textContent: np ? "Checking the netplay server…" : "Netplay is turned off in Settings." });
   const steps = el("ol", { className: "np-steps" },
     el("li", { textContent: "You and a friend both open the same game on the tailnet." }),
-    el("li", { textContent: "Click Netplay in the top bar (or the globe in the emulator menu)." }),
-    el("li", { textContent: "One person creates a room; the other hits Join. Same ROM, same core — that's it." }));
-  const roomInput = el("input", { className: "chat-input", placeholder: "Paste a room code", inputMode: "text", spellcheck: false });
-  const roomStatus = el("p", { className: "hint", textContent: "Room codes expire when the host has been away for 30 minutes." });
-  const joinRoom = async () => {
-    const room = roomInput.value.trim();
-    if (!/^[0-9a-f]{4,32}$/i.test(room)) { roomStatus.textContent = "Enter a valid room code."; roomStatus.style.color = "var(--pink)"; return; }
-    try {
-      const d = await fetch(`${API}/np/sig?room=${encodeURIComponent(room)}`, { cache: "no-store" }).then((r) => {
-        if (!r.ok) throw new Error("Room expired or unavailable");
-        return r.json();
-      });
-      if (!d.sys || !d.file) throw new Error("Room has no game");
-      LS.set("joinNp", { sys: d.sys, file: d.file, room, t: Date.now() });
-      location.hash = `#/play/${d.sys}/${d.file.split("/").map(encodeURIComponent).join("/")}`;
-    } catch (e) { roomStatus.textContent = e.message; roomStatus.style.color = "var(--pink)"; }
-  };
-  roomInput.onkeydown = (e) => { if (e.key === "Enter") joinRoom(); };
+    el("li", { textContent: "Click Netplay in the top bar, then Create room." }),
+    el("li", { textContent: "Invite them — they accept from the notification or the Home page." }));
   view.replaceChildren(el("section", { className: "pane", style: "max-width:720px;margin:0 auto;padding:28px var(--pad) 60px" },
     el("div", { className: "big-emoji", textContent: "🌐" }),
     el("h1", { textContent: "Play with a friend" }),
-    el("p", { textContent: "Netplay is peer-to-peer on the tailnet. Host taps Netplay (Player 1), then Invite. Guest taps Join room and is Player 2. No savestate freeze on every input." }),
+    el("p", { textContent: "Netplay is peer-to-peer on the tailnet. Host taps Netplay (Player 1), then invites. Guests join from the invite or from the Home page — no codes to copy." }),
     status, steps,
     el("p", { className: "hint", textContent: "Works great for NES, SNES, Genesis, GB/GBA, and most 2D systems. Heavier cores (N64, PSX, NDS) are laggy unless you're on a fast local link." }),
-    el("h2", { textContent: "Join with a room code", style: "margin-top:24px" }),
-    el("div", { className: "chat-row" }, roomInput, el("button", { className: "btn btn-primary", textContent: "Join", onclick: joinRoom })),
-    roomStatus,
+    el("p", { className: "hint", textContent: "Room codes expire when the host has been away for 30 minutes." }),
     el("div", { style: "display:flex;gap:10px;flex-wrap:wrap;margin-top:18px" },
       el("a", { className: "btn btn-primary", href: "#/play", textContent: "Pick a game" }),
       el("a", { className: "btn btn-ghost", href: "#/profile", textContent: "Netplay name & settings" }))));
