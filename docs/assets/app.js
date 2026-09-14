@@ -1987,7 +1987,12 @@ function tileGrid(container, list, shown, opts = {}) {
 function joinPresence(x) {
   if (!x?.netplay || !x.room) return false;
   LS.set("joinNp", { sys: x.sys, file: x.file, room: x.room, t: Date.now() });
-  if (window.__emuUp && window.__playSys === x.sys && window.__playFile === x.file) {
+  // Only take the direct-join shortcut when we are genuinely in this game
+  // (a canvas exists). A stale `__emuUp` used to make Android try to join from
+  // the Home page without ever loading the game.
+  const inGame = window.__emuUp && window.__playSys === x.sys && window.__playFile === x.file
+    && !!document.querySelector(".player #game canvas");
+  if (inGame) {
     autoJoinNetplay(x.room);
     return true;
   }
@@ -3878,7 +3883,7 @@ async function routePlayGame(sys, romParam, resume = false) {
         }, 2600);
       }
     }
-    window.__emuHeartbeat = setInterval(() => { ping(false); flushPlaytime(); }, 15000);
+    window.__emuHeartbeat = setInterval(() => { ping(false); flushPlaytime(); try { window.__watchAlive?.(); } catch { /* */ } }, 15000);
     window.__emuAutoSaveT = key && !n64 ? setInterval(autoSave, 15000) : 0;
     watchBtn.hidden = false;
     // Start (or re-copy) the watch party. `silent` skips the clipboard/toast so
@@ -3926,6 +3931,15 @@ async function routePlayGame(sys, romParam, resume = false) {
     };
     watchBtn.onclick = () => startWatchParty(false);
     window.__sswStartWatch = (silent) => startWatchParty(!!silent);
+    // If the server ever drops the watch room (restart, prune), recreate it so
+    // "Watch" from Home keeps working instead of 404ing.
+    window.__watchAlive = async () => {
+      if (!window.__watchId || prefs().npWatch === false) return;
+      try {
+        const r = await fetch(`${API}/watch/${window.__watchId}`, { cache: "no-store" });
+        if (!r.ok) { window.__watchId = null; wnpStop(); await startWatchParty(true); }
+      } catch { /* offline */ }
+    };
     npOpenBtn.onclick = () => { npMenu.hidden = true; openNetplaySheet(sys, file, romName); };
     syncBtn.onclick = () => { npMenu.hidden = true; resyncNetplay(); };
     npBtn.onclick = (e) => {
@@ -4029,6 +4043,7 @@ function emuCleanup() {
   try { delete window.__playPing; } catch { /* */ }
   try { delete window.__sswStartWatch; } catch { window.__sswStartWatch = null; }
   try { delete window.__sswShowChrome; } catch { /* */ }
+  try { delete window.__watchAlive; } catch { /* */ }
   try { npStop(); } catch { /* */ }
   try { window.SSPlay && window.SSPlay.postMessage("0"); } catch { /* */ }
   try { screen.orientation.unlock(); } catch { /* */ }

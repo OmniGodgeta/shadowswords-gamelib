@@ -1,5 +1,13 @@
 # Changelog
 
+## 3.13
+- Watch rooms now live up to **30 minutes** and are refreshed by viewer polls and
+  the host's presence ping, plus the host recreates its watch room if the server
+  ever drops it. Fixes "This party ended." while the host is still playing.
+- Home **Join as P2** no longer takes the "already in this game" shortcut from a
+  stale emulator flag (which made Android try to join from Home without loading
+  the game); it requires an actual game canvas.
+
 ## 3.12
 - Fixed watch parties dropping with **"This party ended."** while the host was
   still playing: quiet watch mode doesn't upload frames, so the server pruned

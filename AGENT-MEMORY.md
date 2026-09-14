@@ -6,6 +6,21 @@ agent can pick up context without re-deriving it. Read `AGENTS.md` first, then
 this. (Netplay internals: `NETPLAY-UI-CONTRACT.md`. Roadmap split:
 `FEATURE-BACKLOG.md`.)
 
+## Session 2026-09-13 — watch lifetime + Android Home-join
+- "This party ended." persisted after the first fix because quiet watch mode
+  uploads no frames and any prune removed the room for good (the host kept
+  advertising a dead id). Server: watch entries now live 30 min, refresh on
+  viewer GET and on the host's `/play/ping` (`body.watch`), and the host client
+  has `window.__watchAlive` (called from the 15s heartbeat) that recreates the
+  room if `/watch/<id>` 404s.
+- Home `joinPresence()` now requires `.player #game canvas` before taking the
+  direct-join shortcut — a stale `__emuUp` on Android made it "join" from Home
+  without loading the game.
+- **Still to verify on a device**: Android Home "Join as P2". If it persists,
+  get the Android Netplay → Diagnostics `cands/pc/ice/dc` line; the join is
+  invite/room driven now, so a missing/expired room or ICE is the remaining
+  explanation.
+
 ## Session 2026-09-13 — watch player chrome + "party ended" fix
 - **"This party ended."** while the host was still playing: quiet/auto watch mode
   (3.10+) uploads no JPEG frames, so `w.at` was never refreshed and `pruneWatch`

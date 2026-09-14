@@ -547,7 +547,7 @@ const WATCH_MAX = 400 * 1024;
 function pruneWatch() {
   // A host in quiet watch mode does not upload frames, so allow a longer gap;
   // viewers and the host's presence ping keep `at` fresh.
-  const cut = now() - 90000;
+  const cut = now() - 30 * 60 * 1000;
   for (const [id, w] of WATCH) if (w.at < cut) WATCH.delete(id);
 }
 setInterval(pruneWatch, 8000).unref?.();
