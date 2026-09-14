@@ -1,5 +1,20 @@
 # Changelog
 
+## 3.7
+- **Joining now works from Home / invites on both platforms**: a game
+  auto-opens a room when it starts ("Let friends join my games", on by default),
+  so the presence card shows **Join as P2** instead of "Play too" and tapping it
+  actually joins. If you are already in that game it joins directly (the hash
+  wouldn't change).
+- Diagnosed the "Connecting as P2" stall: signaling relays correctly, so it is
+  ICE/datachannel. The Netplay diagnostics line now reports ICE candidate types
+  (`cands=srflx×2,host×1,…`) so a failure is readable.
+- **Optional TURN relay** in Settings (URL/username/password) for when direct
+  ICE can't cross a network.
+- **Input settings** now covers analog sticks (Left/Right stick X±/Y±) and has a
+  **Controller layout** selector (Auto / Xbox / PlayStation) that relabels the
+  buttons and shoulders.
+
 ## 3.6
 - Removed the "paste a room code" join UI everywhere (Netplay sheet, Netplay
   page, party call). Joining is now invite- or presence-driven only: accept the

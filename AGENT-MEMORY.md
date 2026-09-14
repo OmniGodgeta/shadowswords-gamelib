@@ -6,6 +6,26 @@ agent can pick up context without re-deriving it. Read `AGENTS.md` first, then
 this. (Netplay internals: `NETPLAY-UI-CONTRACT.md`. Roadmap split:
 `FEATURE-BACKLOG.md`.)
 
+## Session 2026-09-13 — join reliability, ICE diagnostics, controller layout
+- **Diagnosed "Connecting as P2"** with two isolated headless peers (ports
+  9333/9334): the join works end to end (dc open, states applied), and a manual
+  `/np/room` + `/np/sig` exchange relays host↔guest correctly. So a real-device
+  stall is ICE/datachannel, not signaling. Added `cands=` (candidate types) to
+  the Netplay diagnostics line.
+- **Why "Join now" only booted the game**: the host wasn't advertising a room
+  (only `__inNetplay`, set when a peer connects), so presence showed "Play too".
+  `npOpen` (default true) now auto-creates a room ~2.6s into game start unless a
+  join/recovery is pending; the ping already advertises `__npRoom`. Presence and
+  the party panel use `joinPresence(x)` which, when already in that game, calls
+  `autoJoinNetplay` directly instead of relying on a hash change.
+- **TURN**: `iceServers()` (STUN + optional `npTurnUrl/User/Pass` prefs) used by
+  every `RTCPeerConnection` (netplay, watch, party). Fields are in Settings.
+- **Controller config**: EJS control ids 16-23 are the analog axes
+  (`LEFT_STICK_X:+1` … `RIGHT_STICK_Y:-1`). `SLOT_ID` now includes them,
+  `ANALOG_SLOTS` renders keyboard-only rows with a read-only "analog" chip, and
+  the Input settings panel gained Left/Right stick groups. Added `padLayout`
+  (auto/xbox/playstation) + a selector; `padGlyph(v, layout)` relabels.
+
 ## Session 2026-09-13 — remove paste-to-join
 - Owner: joining must be invite/presence only, no code pasting. Removed the
   room-code input from `openNetplaySheet` (the `np-join-box`), the whole

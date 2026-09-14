@@ -68,6 +68,20 @@ const NETPLAY_ICE = [
   { urls: "stun:stun.l.google.com:19302" },
   { urls: "stun:stun.cloudflare.com:3478" },
 ];
+// Optional TURN relay (Settings → Netplay relay). On a tailnet a coturn on the
+// host gives a guaranteed low-latency path when direct ICE fails (mDNS private
+// candidates don't cross the tailnet).
+function iceServers() {
+  const list = [...NETPLAY_ICE];
+  const p = prefs();
+  if (p.npTurnUrl) {
+    const t = { urls: p.npTurnUrl };
+    if (p.npTurnUser) t.username = p.npTurnUser;
+    if (p.npTurnPass) t.credential = p.npTurnPass;
+    list.push(t);
+  }
+  return list;
+}
 // stable numeric id per game — EmulatorJS netplay requires a number, and 4.2.3
 // hides the globe unless this is set. FNV-1a → 31-bit so it stays a real JS int.
 function gameIdNum(sys, file) {
@@ -246,7 +260,7 @@ function snapshotNetplay(sys, file, name) {
 }
 /* WebRTC netplay — replaces EmulatorJS's broken savestate lockstep.
    Host = player 1, guest = player 2. Inputs ride a datachannel on the tailnet. */
-const NP = { role: null, peerRole: null, room: null, pc: null, dc: null, myP: 0, after: 0, pollT: 0, pollFails: 0, reconnectT: 0, alive: false, pendingIce: [], rxId: null, rxLen: 0, rxGot: 0, rxChunks: [], txBusy: false, syncPromise: null, lastSyncError: "", syncT: 0, sent: 0, recv: 0, inputsSent: 0, inputsApplied: 0, video: false, hostStream: null, mic: null, micTrack: null, micSender: null, remoteAudio: null, pingT: 0, rtt: 0, meReady: false, peerReady: false, micMuted: false, videoFailed: false };
+const NP = { role: null, peerRole: null, room: null, pc: null, dc: null, myP: 0, after: 0, pollT: 0, pollFails: 0, reconnectT: 0, alive: false, pendingIce: [], rxId: null, rxLen: 0, rxGot: 0, rxChunks: [], txBusy: false, syncPromise: null, lastSyncError: "", syncT: 0, sent: 0, recv: 0, inputsSent: 0, inputsApplied: 0, video: false, hostStream: null, mic: null, micTrack: null, micSender: null, remoteAudio: null, pingT: 0, rtt: 0, meReady: false, peerReady: false, micMuted: false, videoFailed: false, iceCand: {} };
 
 // Netplay diagnostics: kept in memory and shown in the Netplay sheet so a
 // failure can be read off a phone with no devtools.
@@ -764,10 +778,12 @@ function npUpdatePtt() {
   }
 }
 function npStartPc(isHost) {
-  NP.pc = new RTCPeerConnection({ iceServers: NETPLAY_ICE });
+  NP.iceCand = {};
+  NP.pc = new RTCPeerConnection({ iceServers: iceServers() });
   NP.pc.onicecandidate = (e) => {
     if (!e.candidate) { npLog("ice gathering complete"); return; }
     const c = e.candidate;
+    NP.iceCand[c.type || "?"] = (NP.iceCand[c.type || "?"] || 0) + 1;
     npLog(`ice cand ${c.type || "?"} ${c.protocol || ""} ${c.address || ""}`);
     npSendSig({ ice: c.toJSON?.() || c });
   };
@@ -1097,7 +1113,7 @@ async function wnpStartHost() {
   const d = await fetch(`${API}/np/room`, { method: "POST", headers: { "content-type": "application/json", ...authHdr() },
     body: JSON.stringify({ sys: window.__playSys, file: window.__playFile, name: document.title, cid: CID, watch: true }) }).then((r) => r.json());
   WNP.room = d.id; WNP.after = 0; WNP.alive = true;
-  WNP.pc = new RTCPeerConnection({ iceServers: NETPLAY_ICE });
+  WNP.pc = new RTCPeerConnection({ iceServers: iceServers() });
   WNP.pc.onicecandidate = (e) => { if (e.candidate) wnpSendSig({ ice: e.candidate }); };
   let stream = null;
   try {
@@ -1114,7 +1130,7 @@ async function wnpStartHost() {
 }
 function wnpStartWatch(room, onStream) {
   WNP.room = room; WNP.after = 0; WNP.alive = true;
-  WNP.pc = new RTCPeerConnection({ iceServers: NETPLAY_ICE });
+  WNP.pc = new RTCPeerConnection({ iceServers: iceServers() });
   WNP.pc.onicecandidate = (e) => { if (e.candidate) wnpSendSig({ ice: e.candidate }); };
   WNP.pc.ontrack = (e) => onStream((e.streams && e.streams[0]) || new MediaStream([e.track]));
   wnpPoll();
@@ -1266,6 +1282,7 @@ function openNetplaySheet(sys, file, name) {
   };
   kids.push(el("div", { style: "margin-top:10px;padding-top:10px;border-top:1px solid var(--line,#232330)" },
     prefRow("Auto-unmute P2's video", "npAutoUnmute"),
+    prefRow("Let friends join my games", "npOpen"),
     el("button", { className: "btn btn-ghost", style: "width:100%;margin:6px 0", textContent: "🎚 Sound settings (mic mode, noise cancelling, voice polish)",
       onclick: () => { o.remove(); soundPanel(); } }),
     prefRow("I usually host", "npHostByDefault")));
@@ -1273,7 +1290,7 @@ function openNetplaySheet(sys, file, name) {
   const diag = el("details", { style: "margin-top:12px" },
     el("summary", { className: "hint", style: "cursor:pointer", textContent: "Diagnostics" }),
     el("p", { className: "hint", style: "font-size:11px;opacity:.8;margin:8px 0 2px",
-      textContent: `role=${NP.role || "-"} peer=${NP.peerRole || "-"} mode=${NP.video ? "player-stream" : "input-echo"} pc=${NP.pc?.connectionState || "-"} ice=${NP.pc?.iceConnectionState || "-"} dc=${NP.dc?.readyState || "-"} room=${NP.room || "-"} rtt=${NP.rtt || "-"}ms states=${NP.sent}/${NP.recv} inputs=${NP.inputsSent}/${NP.inputsApplied} sync=${NP.lastSyncError || "ok"}` }));
+      textContent: `role=${NP.role || "-"} peer=${NP.peerRole || "-"} mode=${NP.video ? "player-stream" : "input-echo"} pc=${NP.pc?.connectionState || "-"} ice=${NP.pc?.iceConnectionState || "-"} cands=${Object.entries(NP.iceCand || {}).map(([k, v]) => `${k}×${v}`).join(",") || "-"} dc=${NP.dc?.readyState || "-"} room=${NP.room || "-"} rtt=${NP.rtt || "-"}ms states=${NP.sent}/${NP.recv} inputs=${NP.inputsSent}/${NP.inputsApplied} sync=${NP.lastSyncError || "ok"}` }));
   if (window.__npLast) diag.append(el("p", { className: "hint", style: "font-size:11px;opacity:.6", textContent: "last: " + window.__npLast }));
   kids.push(diag);
   kids.push(el("button", { className: "btn btn-ghost", style: "width:100%;margin:8px 0 0", textContent: "Close", onclick: () => o.remove() }));
@@ -1477,7 +1494,8 @@ const PREF_DEFAULTS = {
   ffPadButton: 7, slowPadButton: 6, pttPadButton: -1,
   ffKey: "", slowKey: "", pttKey: "",
   micMode: "open", noiseLevel: "light", voiceFx: "none",
-  npMode: "input",
+  npMode: "input", npOpen: true, npTurnUrl: "", npTurnUser: "", npTurnPass: "",
+  padLayout: "auto",
   raEnabled: false, raUser: "", raKey: "",
 };
 const AUTH = { token: LS.get("auth", null), user: null };
@@ -1933,6 +1951,18 @@ function tileGrid(container, list, shown, opts = {}) {
   container.replaceChildren(...parts);
 }
 
+// A presence "Join" action. Sets the pending join, and if we're already in that
+// exact game the hash won't change (so EJS_onGameStart won't re-run) — join
+// directly instead. Returns true when it handled the navigation.
+function joinPresence(x) {
+  if (!x?.netplay || !x.room) return false;
+  LS.set("joinNp", { sys: x.sys, file: x.file, room: x.room, t: Date.now() });
+  if (window.__emuUp && window.__playSys === x.sys && window.__playFile === x.file) {
+    autoJoinNetplay(x.room);
+    return true;
+  }
+  return false;
+}
 function livePeopleShelf(live, title = "On the floor") {
   const cards = live.map((x) => {
     const playHref = x.sys && x.file
@@ -1943,9 +1973,7 @@ function livePeopleShelf(live, title = "On the floor") {
       el("div", { className: "live-sys", textContent: x.sys ? sysName(x.sys) : "" }),
       el("div", { className: "live-acts" },
         el("a", { className: "btn btn-primary sm", href: playHref,
-          onclick: x.netplay && x.room
-            ? () => { LS.set("joinNp", { sys: x.sys, file: x.file, room: x.room, t: Date.now() }); }
-            : null,
+          onclick: x.netplay && x.room ? (e) => { if (joinPresence(x)) e.preventDefault(); } : null,
           textContent: x.netplay && x.room ? "Join as P2" : "Play too" }),
         x.watch
           ? el("a", { className: "btn btn-ghost sm", href: `#/watch/${x.watch}`, textContent: "Watch" })
@@ -2561,7 +2589,7 @@ function partySendSig(to, payload) {
 function partyPeerFor(cid) {
   let pc = PARTY.pcs.get(cid);
   if (pc) return pc;
-  pc = new RTCPeerConnection({ iceServers: NETPLAY_ICE });
+  pc = new RTCPeerConnection({ iceServers: iceServers() });
   pc.onicecandidate = (e) => { if (e.candidate) partySendSig(cid, { ice: e.candidate.toJSON?.() || e.candidate }); };
   pc.ontrack = (e) => {
     let a = document.getElementById("party-audio-" + cid);
@@ -2710,7 +2738,7 @@ function openPartyChat() {
       const playHref = x.sys && x.file
         ? `#/play/${x.sys}/${x.file.split("/").map(encodeURIComponent).join("/")}` : "#/play";
       const join = el("a", { className: "btn btn-primary sm", href: playHref, textContent: "Join as P2" });
-      if (x.netplay && x.room) join.onclick = () => LS.set("joinNp", { sys: x.sys, file: x.file, room: x.room, t: Date.now() });
+      if (x.netplay && x.room) join.onclick = (e) => { if (joinPresence(x)) e.preventDefault(); };
       else { join.textContent = "Play too"; join.classList.remove("btn-primary"); join.classList.add("btn-ghost"); }
       const row = el("div", { className: "party-friend" },
         el("div", { className: "party-friend-meta" },
@@ -3688,10 +3716,12 @@ async function routePlayGame(sys, romParam, resume = false) {
       LS.set("joinNp", null);
       setTimeout(() => autoJoinNetplay(joinHint.room), 1400);
     } else {
+      let willJoinOrRecover = false;
       const session = LS.get("lastSession", null);
       if (session?.role === "guest" && session.room
           && session.sys === sys && (!session.file || session.file === file)
           && Date.now() - (session.t || 0) < 15 * 60 * 1000) {
+        willJoinOrRecover = true;
         setTimeout(() => autoJoinNetplay(session.room), 1400);
       }
       // We were hosting this game before a reload/background — offer to keep
@@ -3703,10 +3733,19 @@ async function routePlayGame(sys, romParam, resume = false) {
           && hostHint && hostHint.room && hostHint.sys === sys
           && (!hostHint.file || hostHint.file === file)
           && Date.now() - (hostHint.t || 0) < 15 * 60 * 1000) {
+        willJoinOrRecover = true;
         setTimeout(() => {
           if (NP.role || window.__inNetplay) return;
           npRecoveryPrompt(sys, file, romName, hostHint.room);
         }, 1600);
+      }
+      // Open a room automatically so a friend tapping Join on Home actually
+      // reaches this game (toggle "Let friends join my games" in Netplay).
+      if (!willJoinOrRecover && np && sys !== "upload" && prefs().npOpen !== false) {
+        setTimeout(() => {
+          if (NP.role || window.__inNetplay || LS.get("joinNp")) return;
+          npHost({ sys, file, name: romName }).catch(() => {});
+        }, 2600);
       }
     }
     window.__emuHeartbeat = setInterval(() => { ping(false); flushPlaytime(); }, 15000);
@@ -4002,9 +4041,14 @@ const EJS_STD_LABEL = { 0: "BUTTON_1", 1: "BUTTON_2", 2: "BUTTON_3", 3: "BUTTON_
 // gamepad standard button index -> diagram slot
 const STD_SLOT = { 0: "fd", 1: "fr", 2: "fl", 3: "fu", 4: "lb", 5: "rb", 6: "lt", 7: "rt",
   8: "se", 9: "st", 10: "ls", 11: "rs", 12: "du", 13: "dd", 14: "dl", 15: "dr" };
-// diagram slot -> EmulatorJS RetroPad button id
+// diagram slot -> EmulatorJS RetroPad button id (16-23 are analog stick axes)
 const SLOT_ID = { du: 4, dd: 5, dl: 6, dr: 7, fu: 9, fr: 8, fd: 0, fl: 1,
-  lb: 10, rb: 11, lt: 12, rt: 13, ls: 14, rs: 15, se: 2, st: 3 };
+  lb: 10, rb: 11, lt: 12, rt: 13, ls: 14, rs: 15, se: 2, st: 3,
+  "lsx+": 16, "lsx-": 17, "lsy+": 18, "lsy-": 19,
+  "rsx+": 20, "rsx-": 21, "rsy+": 22, "rsy-": 23 };
+// Analog axes follow the physical sticks automatically; only their keyboard
+// fallback is user-bindable.
+const ANALOG_SLOTS = new Set(["lsx+", "lsx-", "lsy+", "lsy-", "rsx+", "rsx-", "rsy+", "rsy-"]);
 // EJS_core -> face-button labels [bottom, right, left, top]
 const FACE_LBL = {
   nes: ["B", "A"], fds: ["B", "A"], gb: ["B", "A"], gba: ["B", "A"], segaMS: ["1", "2"],
@@ -4017,10 +4061,17 @@ const FACE_LBL = {
 const CORE_SHOULDERS = new Set(["snes", "nds", "gba", "n64", "psx", "3do", "jaguar", "segaMD", "segaCD", "sega32x", "amiga", "c64", "coleco"]);
 const CORE_TRIGGERS = new Set(["nds", "psx", "3do", "n64"]);
 const CORE_STICKS = new Set(["nds", "psx", "3do", "n64"]);
-const padGlyph = (v) => ({ BUTTON_1: "A", BUTTON_2: "B", BUTTON_3: "X", BUTTON_4: "Y", SELECT: "Sel", START: "Start",
-  LEFT_TOP_SHOULDER: "LB", RIGHT_TOP_SHOULDER: "RB", LEFT_BOTTOM_SHOULDER: "LT", RIGHT_BOTTOM_SHOULDER: "RT",
-  LEFT_STICK: "L3", RIGHT_STICK: "R3", DPAD_UP: "▲", DPAD_DOWN: "▼", DPAD_LEFT: "◀", DPAD_RIGHT: "▶" }[v]
-  || (v || "").replace(/_/g, " "));
+const padGlyph = (v, layout) => {
+  const ps = (layout || prefs().padLayout || "auto") === "playstation";
+  const map = ps
+    ? { BUTTON_1: "✕", BUTTON_2: "○", BUTTON_3: "□", BUTTON_4: "△", SELECT: "Share", START: "Options",
+        LEFT_TOP_SHOULDER: "L1", RIGHT_TOP_SHOULDER: "R1", LEFT_BOTTOM_SHOULDER: "L2", RIGHT_BOTTOM_SHOULDER: "R2",
+        LEFT_STICK: "L3", RIGHT_STICK: "R3", DPAD_UP: "▲", DPAD_DOWN: "▼", DPAD_LEFT: "◀", DPAD_RIGHT: "▶" }
+    : { BUTTON_1: "A", BUTTON_2: "B", BUTTON_3: "X", BUTTON_4: "Y", SELECT: "View", START: "Menu",
+        LEFT_TOP_SHOULDER: "LB", RIGHT_TOP_SHOULDER: "RB", LEFT_BOTTOM_SHOULDER: "LT", RIGHT_BOTTOM_SHOULDER: "RT",
+        LEFT_STICK: "L3", RIGHT_STICK: "R3", DPAD_UP: "▲", DPAD_DOWN: "▼", DPAD_LEFT: "◀", DPAD_RIGHT: "▶" };
+  return map[v] || (v || "").replace(/_/g, " ");
+};
 
 function padSvg(lbl, showSet) {
   const on = (s) => showSet.has(s);
@@ -4058,14 +4109,20 @@ function controlsPanel(core, sys) {
   const face = FACE_LBL[core] || ["B", "A", "Y", "X"];
   const lbl = { du: "Up", dd: "Down", dl: "Left", dr: "Right",
     fd: face[0] || "", fr: face[1] || "", fl: face[2] || "", fu: face[3] || "",
-    lb: "L", rb: "R", lt: "L2", rt: "R2", ls: "L3", rs: "R3", se: "Select", st: "Start" };
+    lb: "L", rb: "R", lt: "L2", rt: "R2", ls: "L3", rs: "R3", se: "Select", st: "Start",
+    "lsx+": "X +", "lsx-": "X −", "lsy+": "Y +", "lsy-": "Y −",
+    "rsx+": "X +", "rsx-": "X −", "rsy+": "Y +", "rsy-": "Y −" };
 
   const rows = [{ g: "D-Pad", s: ["du", "dd", "dl", "dr"] },
     { g: "Buttons", s: ["fd", "fr", "fl", "fu"].filter((x) => lbl[x]) }];
   if (CORE_SHOULDERS.has(core)) {
     rows.push({ g: "Shoulders", s: CORE_TRIGGERS.has(core) ? ["lb", "rb", "lt", "rt"] : ["lb", "rb"] });
   }
-  if (CORE_STICKS.has(core)) rows.push({ g: "Stick press", s: ["ls", "rs"] });
+  if (CORE_STICKS.has(core)) {
+    rows.push({ g: "Left stick (analog)", s: ["lsx+", "lsx-", "lsy+", "lsy-"] });
+    rows.push({ g: "Right stick (analog)", s: ["rsx+", "rsx-", "rsy+", "rsy-"] });
+    rows.push({ g: "Stick press", s: ["ls", "rs"] });
+  }
   rows.push({ g: "System", s: ["st", "se"] });
   const showSet = new Set(rows.flatMap((r) => r.s));
 
@@ -4176,14 +4233,27 @@ function controlsPanel(core, sys) {
       el("div", { className: "pad-players" }, ...[0, 1, 2, 3].map((p) =>
         el("button", { className: "pp" + (p === player ? " on" : ""), textContent: "P" + (p + 1),
           onclick: () => { player = p; render(); } }))),
+      el("label", { className: "pad-layout-row" }, (() => {
+        const s = el("select", {}, ...[["auto", "Auto"], ["xbox", "Xbox"], ["playstation", "PlayStation"]]
+          .map(([v, t]) => el("option", { value: v, textContent: t, selected: (prefs().padLayout || "auto") === v })));
+        s.onchange = () => { setPref("padLayout", s.value); render(); };
+        return s;
+      })(), el("span", { className: "hint", textContent: "Controller layout" })),
       ...rows.map((r) => el("div", { className: "pad-grp" }, el("h4", { textContent: r.g }),
         ...r.s.map((slot) => {
           const id = SLOT_ID[slot], c = (ctrls()[player] && ctrls()[player][id]) || {};
           const isL = listening && listening.id === id;
+          const kbd = el("button", { className: "pr-chip kbd" + (c.value ? "" : " empty"), title: "Keyboard — click, then press a key",
+            textContent: isL ? "press…" : kc(c.value), onclick: () => begin(id, slot) });
+          if (ANALOG_SLOTS.has(slot)) {
+            // Analog follows the physical stick; show the mapping read-only.
+            return el("div", { className: "pad-row" + (isL ? " listening" : "") },
+              el("span", { className: "pr-name", textContent: lbl[slot] || slot }), kbd,
+              el("span", { className: "pr-chip pad readonly", title: "Maps automatically from your controller's analog stick",
+                textContent: (c.value2 || "").split(":")[0] ? "analog" : "—" }));
+          }
           return el("div", { className: "pad-row" + (isL ? " listening" : "") },
-            el("span", { className: "pr-name", textContent: lbl[slot] || slot }),
-            el("button", { className: "pr-chip kbd" + (c.value ? "" : " empty"), title: "Keyboard — click, then press a key",
-              textContent: isL ? "press…" : kc(c.value), onclick: () => begin(id, slot) }),
+            el("span", { className: "pr-name", textContent: lbl[slot] || slot }), kbd,
             el("button", { className: "pr-chip pad" + (c.value2 ? "" : " empty"), title: "Gamepad — click, then press a button",
               textContent: c.value2 ? padGlyph(c.value2) : "—", onclick: () => begin(id, slot) }));
         }))),
@@ -5337,6 +5407,20 @@ function settingsCard() {
         return el("label", { className: "set-row" }, inp,
           el("div", {}, el("div", { textContent: "Netplay name" }),
             el("div", { className: "hint", textContent: "Shown to the other player when you host or join a room" })));
+      })(),
+      (() => {
+        const mk = (key, ph, hint) => {
+          const inp = el("input", { type: key === "npTurnPass" ? "password" : "text", placeholder: ph,
+            value: p[key] || "", style: "width:180px", autocomplete: "off" });
+          inp.onchange = () => setPref(key, inp.value.trim());
+          return el("label", { className: "set-row" }, inp,
+            el("div", {}, el("div", { textContent: ph }), hint && el("div", { className: "hint", textContent: hint })));
+        };
+        return el("div", {},
+          el("p", { className: "hint", style: "margin:10px 0 0", textContent: "Netplay relay (optional) — a TURN server on the tailnet helps when direct peer-to-peer ICE fails." }),
+          mk("npTurnUrl", "TURN URL", "e.g. turn:shadow-1.tail51f9d6.ts.net:3478"),
+          mk("npTurnUser", "TURN username", ""),
+          mk("npTurnPass", "TURN password", ""));
       })(),
       toggle("musicShuffle", "Shuffle albums by default", "Start an album shuffled when you hit Play"),
       toggle("previewSound", "Game sound on home previews", "Play each showcase clip's own audio"),

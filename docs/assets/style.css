@@ -495,6 +495,9 @@ body.lite .shelf-track > .tile, body.lite .tile-grid > .tile { animation: none; 
 .gfx-opt:hover { border-color: var(--cyan); }
 .gfx-opt.on { border-color: var(--cyan); box-shadow: var(--glow-cyan); }
 .gfx-opt .hint { margin:0; }
+.pad-layout-row { display: flex; align-items: center; gap: 8px; margin: 4px 0 8px; }
+.pad-layout-row select { font-size: 12px; padding: 5px 8px; }
+.pr-chip.readonly { opacity: .7; cursor: default; }
 .grid-tools input, .grid-tools select { font-size:12px; padding:7px 9px; }
 .grid-tools { gap: 7px; flex-wrap: wrap; }
 .movie-filter { background: rgba(16,16,28,.72); color: var(--text); border-color: var(--line-2); }
