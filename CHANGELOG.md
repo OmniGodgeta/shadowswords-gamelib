@@ -1,5 +1,14 @@
 # Changelog
 
+## 3.14
+- **N64 netplay drift fixed**: savestate sync was disabled for N64 (to avoid the
+  stalls its large states can cause), so the guest's own core drifted and never
+  caught up — the classic "P2 stuck on character select while P1 is in game,
+  but P2's inputs still work" symptom. State sync now runs for every system,
+  with a longer 10s interval on N64, and the **Sync screens** button is back.
+- N64 can also **mirror the host's screen** now (Netplay mode → "Mirror my
+  screen (video)") for drift-free play if the savestate sync feels jumpy.
+
 ## 3.13
 - Watch rooms now live up to **30 minutes** and are refreshed by viewer polls and
   the host's presence ping, plus the host recreates its watch room if the server

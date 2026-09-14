@@ -311,11 +311,14 @@ function npCore(p, i, v) {
   if (typeof fn === "function") fn(p, i, v);
 }
 function npStateSyncAllowed() {
-  // N64 savestates are large and mupen64plus can pause the main thread while
-  // exporting/loading them. Keeping them off the ordered input channel avoids
-  // visible frame skips and delayed controller input during Mario Kart.
-  return window.__playSys !== "n64";
+  // Savestate sync keeps the two local cores from drifting apart (input-echo
+  // alone diverges within seconds). It used to be disabled for N64 because its
+  // large states can briefly stall the core, but without it N64 guests fell
+  // behind and never caught up. Sync everywhere; N64 uses a longer interval.
+  return true;
 }
+// How often the host re-pushes its savestate. N64 states are big, so less often.
+function npSyncEvery() { return window.__playSys === "n64" ? 10000 : 6000; }
 function npHookInput(tries = 0) {
   const gm = window.EJS_emulator?.gameManager;
   // A guest that joins while the ROM is still booting has no gameManager yet;
@@ -371,7 +374,7 @@ function npBindDc(dc) {
     // cores drift apart after a few seconds. The guest only ever applies.
     if (NP.role === "host" && !NP.video && npStateSyncAllowed()) {
       clearInterval(NP.syncT);
-      NP.syncT = setInterval(() => { if (NP.dc && NP.dc.readyState === "open") npSendState(); }, 6000);
+      NP.syncT = setInterval(() => { if (NP.dc && NP.dc.readyState === "open") npSendState(); }, npSyncEvery());
       setTimeout(() => { if (NP.dc && NP.dc.readyState === "open") npSendState(); }, 1200);
     }
     // Renegotiate only after the link is up (adding/removing the mic track
@@ -464,7 +467,7 @@ function npBindDc(dc) {
         NP.hostStream = null;
         if (npStateSyncAllowed()) {
           clearInterval(NP.syncT);
-          NP.syncT = setInterval(() => { if (NP.dc && NP.dc.readyState === "open") npSendState(); }, 6000);
+          NP.syncT = setInterval(() => { if (NP.dc && NP.dc.readyState === "open") npSendState(); }, npSyncEvery());
           npSendState();
         }
       }
@@ -490,10 +493,11 @@ function npSendLocalSdp() {
 function npStartHostStream() {
   NP.video = false;
   // Input/state sync is the default: both cores run locally so the guest's
-  // input latency is ~1 RTT (the host mirror is re-synced periodically).
+  // input latency is ~1 RTT (the host re-pushes its savestate periodically).
   // Mirroring the host's screen (video) is opt-in because encode + decode adds
-  // noticeable lag, and N64/Android cannot handle the extra media path.
-  if (window.__playSys === "n64" || prefs().npMode !== "video") {
+  // lag; it is now allowed for N64 too (the watch stream proves phones decode
+  // WebRTC video fine).
+  if (prefs().npMode !== "video") {
     npLog("host video off; using low-latency input/state sync");
     return;
   }
@@ -1329,7 +1333,6 @@ function openNetplaySheet(sys, file, name) {
 }
 async function resyncNetplay() {
   if (NP.video) { toast("Not needed — P2 mirrors your screen"); return; }
-  if (!npStateSyncAllowed()) { toast("N64 live input sync is active; savestate sync is disabled to prevent frame skips"); return; }
   if (NP.role !== "host") { toast("Only the host can sync"); return; }
   if (!NP.dc || NP.dc.readyState !== "open") { toast("Netplay isn't linked yet"); return; }
   if (await npSendState(true)) toast("Sent your screen to P2");
@@ -1341,7 +1344,6 @@ async function resyncNetplay() {
 async function npSendState(manual = false) {
   const gm = window.EJS_emulator?.gameManager;
   const fail = (reason) => { NP.lastSyncError = reason; npLog(`sync skip: ${reason}`); return false; };
-  if (!npStateSyncAllowed()) return fail("N64 savestate sync disabled for live input stability");
   if (NP.role !== "host") return fail("only Player 1 can sync");
   if (!gm?.getState) return fail("emulator state export is unavailable");
   if (!NP.dc || NP.dc.readyState !== "open") return fail("data channel is not open");

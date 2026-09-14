@@ -6,6 +6,20 @@ agent can pick up context without re-deriving it. Read `AGENTS.md` first, then
 this. (Netplay internals: `NETPLAY-UI-CONTRACT.md`. Roadmap split:
 `FEATURE-BACKLOG.md`.)
 
+## Session 2026-09-14 — N64 netplay drift (state sync re-enabled)
+- Owner: P2 joined and controlled, but after a few seconds the phone stayed on
+  character select while the PC was in game (N64 Smash). Root cause: the 2.94-era
+  `npStateSyncAllowed()` returned false for N64, so input-echo ran with no
+  resync and the guest's own core drifted forever. Guest inputs still reached
+  the host, hence "controls work but screen is behind".
+- Fix: `npStateSyncAllowed()` now always true; added `npSyncEvery()`
+  (n64 → 10000ms, else 6000ms) used for the host's resync interval; removed the
+  resync guards; the **Sync screens** button shows for N64 again. N64 host video
+  is also allowed now when `npMode === "video"` (phones decode the watch stream,
+  so the old N64 video ban is lifted for the opt-in path).
+- If N64 savestate sync feels stuttery (multi-MB states), the escape hatch is
+  Netplay mode → "Mirror my screen (video)".
+
 ## Session 2026-09-13 — watch lifetime + Android Home-join
 - "This party ended." persisted after the first fix because quiet watch mode
   uploads no frames and any prune removed the room for good (the host kept
