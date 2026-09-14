@@ -3811,15 +3811,20 @@ async function routePlayGame(sys, romParam, resume = false) {
         watchBtn.textContent = "Live";
         watchBtn.classList.add("on");
         ping(false);
-        const grab = () => document.querySelector("#game canvas");
-        window.__watchT = setInterval(() => {
-          const c = grab();
-          if (!c || !window.__watchId || !c.toBlob) return;
-          c.toBlob((blob) => {
-            if (!blob) return;
-            fetch(`${API}/watch/${window.__watchId}/frame`, { method: "PUT", body: blob, keepalive: true }).catch(() => {});
-          }, "image/jpeg", 0.55);
-        }, 160);
+        // The JPEG frame loop is only a fallback for browsers without WebRTC.
+        // In silent (auto) mode skip it: canvas.toBlob every 160ms hammers the
+        // host's GPU, and watchers get the WebRTC stream anyway.
+        if (!silent) {
+          const grab = () => document.querySelector("#game canvas");
+          window.__watchT = setInterval(() => {
+            const c = grab();
+            if (!c || !window.__watchId || !c.toBlob) return;
+            c.toBlob((blob) => {
+              if (!blob) return;
+              fetch(`${API}/watch/${window.__watchId}/frame`, { method: "PUT", body: blob, keepalive: true }).catch(() => {});
+            }, "image/jpeg", 0.55);
+          }, 160);
+        }
         return window.__watchId;
       } catch { if (!silent) toast("Couldn't start a watch party"); return null; }
     };

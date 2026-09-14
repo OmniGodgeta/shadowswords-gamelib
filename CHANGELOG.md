@@ -1,5 +1,10 @@
 # Changelog
 
+## 3.10
+- The auto "watchable" mode no longer runs the 160ms canvas→JPEG capture (that
+  readback janked the host). Watchers get the WebRTC stream; the JPEG loop only
+  runs for an explicitly started watch party, where it is the fallback.
+
 ## 3.9
 - **Watch-only for non-players**: a host is now automatically watchable
   ("Let friends watch", on by default), so the Home card shows **Watch** and
