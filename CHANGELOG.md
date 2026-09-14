@@ -1,5 +1,12 @@
 # Changelog
 
+## 3.11
+- Every host starts a watch party automatically (`npWatch`, on by default), so
+  the Home card shows a working **Watch** and friends can spectate with no
+  controls. Removed the dead "Watch unavailable" button (it was confusing — a
+  friend who isn't streaming simply shows no Watch). If the WebRTC capture
+  fails, the JPEG fallback still starts so watching keeps working.
+
 ## 3.10
 - The auto "watchable" mode no longer runs the 160ms canvas→JPEG capture (that
   readback janked the host). Watchers get the WebRTC stream; the JPEG loop only

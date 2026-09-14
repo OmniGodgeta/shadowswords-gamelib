@@ -925,6 +925,8 @@ async function npHost({ sys, file, name, reuse }) {
   npStartPc(true);
   npPoll();
   npIndicator();
+  // Any host is watchable by default so non-players can spectate (no controls).
+  if (prefs().npWatch !== false) { try { window.__sswStartWatch?.(true); } catch { /* */ } }
   return d.id;
 }
 function npForgetHost() { try { localStorage.removeItem("ssw:hostNp"); } catch { /* */ } }
@@ -2003,11 +2005,9 @@ function livePeopleShelf(live, title = "On the floor") {
         el("a", { className: "btn btn-primary sm", href: playHref,
           onclick: x.netplay && x.room ? (e) => { if (joinPresence(x)) e.preventDefault(); } : null,
           textContent: x.netplay && x.room ? "Join as P2" : "Play too" }),
-        x.watch
-          ? el("a", { className: "btn btn-ghost sm", href: `#/watch/${x.watch}`, textContent: "Watch" })
-          : x.netplay && x.room
-            ? el("span", { className: "btn btn-ghost sm disabled", title: "The player has not started a watch party", textContent: "Watch unavailable" })
-            : null));
+        // Only offer Watch when the player is actually streaming; a dead
+        // "Watch unavailable" button was confusing.
+        x.watch ? el("a", { className: "btn btn-ghost sm", href: `#/watch/${x.watch}`, textContent: "Watch" }) : null));
   });
   return el("section", { className: "shelf" },
     el("div", { className: "shelf-head" },
@@ -3811,10 +3811,10 @@ async function routePlayGame(sys, romParam, resume = false) {
         watchBtn.textContent = "Live";
         watchBtn.classList.add("on");
         ping(false);
-        // The JPEG frame loop is only a fallback for browsers without WebRTC.
-        // In silent (auto) mode skip it: canvas.toBlob every 160ms hammers the
-        // host's GPU, and watchers get the WebRTC stream anyway.
-        if (!silent) {
+        // The JPEG frame loop is a fallback for browsers without WebRTC. In
+        // silent (auto) mode skip it unless the WebRTC capture failed, since
+        // canvas.toBlob every 160ms hammers the host's GPU.
+        if (!silent || !room) {
           const grab = () => document.querySelector("#game canvas");
           window.__watchT = setInterval(() => {
             const c = grab();

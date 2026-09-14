@@ -11,6 +11,9 @@ this. (Netplay internals: `NETPLAY-UI-CONTRACT.md`. Roadmap split:
   it silently after auto-open hosting and after an explicit "Create room", when
   `npWatch` (default true) is on. Presence then has `x.watch` so the **Watch**
   action (watch-only, no controls) works for solo players too.
+- 3.10: the silent/auto watchable mode skips the 160ms canvas→JPEG loop (it was
+  a GPU readback stall on the host); watchers use the WebRTC stream. The JPEG
+  loop still runs for an explicit "Start watch party".
 - `syncEjsMenuBar()` toggles `.ejs_menu_bar_hidden` to match the top toolbar
   (desktop = always visible; in-app = with `.show-chrome`). An 800ms interval
   (`window.__ejsBarT`) re-applies it because EJS auto-hides on idle; cleared in
