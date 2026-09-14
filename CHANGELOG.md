@@ -1,5 +1,20 @@
 # Changelog
 
+## 3.4
+- Playback shortcuts can now be bound to a **keyboard key** as well as a
+  controller button (Input settings → Playback): Push-to-talk, Fast-forward and
+  Slow motion each have a key chip and a pad chip. Assigned keys are dedicated
+  hotkeys during a game.
+- **Sound settings** submenu (netplay sheet and party call): microphone mode
+  (open mic with voice detection / push-to-talk / muted), noise-cancelling
+  level (off / light / strong) and voice polish (none / warm / bright / radio),
+  with a live mic-level meter and a "Reconnect microphone" action. The raw mic
+  now runs through a Web Audio graph (high-pass, tone shaping, compressor, and a
+  voice-activity gate in open-mic mode).
+- The **in-game toolbar now reveals itself briefly when a game boots** on mobile
+  (it was hidden behind the top nub with no indication).
+- The Play page has the same **Continue playing** shelf as Home.
+
 ## 3.3
 - Push-to-talk is no longer only the on-screen 🎙 button: you can assign a
   **controller button** for it in `Input settings → Playback → Push-to-talk`

@@ -1260,6 +1260,8 @@ body.lite .pad-row.listening .pr-chip { animation: none; border-style: dashed; }
 .chat-who-link:hover { text-decoration: underline; }
 .ra-test { display: flex; align-items: center; gap: 10px; margin-top: 4px; flex-wrap: wrap; }
 .ra-status { margin: 0; }
+.mic-meter { height: 10px; border-radius: 999px; background: var(--bg-3, #191925); border: 1px solid var(--line-2); overflow: hidden; margin: 4px 0 2px; }
+.mic-meter i { display: block; height: 100%; width: 0; background: linear-gradient(90deg, var(--cyan), var(--pink, #ff5fa2)); transition: width .1s linear; }
 .chat-text { color: var(--text); overflow-wrap: anywhere; }
 .chat-row { display: flex; gap: 8px; }
 .chat-input {

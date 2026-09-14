@@ -583,11 +583,74 @@ function npAttachRemoteAudio() {
 // Inside the Android app the OS prompt only appears after the app is told to
 // request RECORD_AUDIO. That dialog is asynchronous and can take several
 // seconds, so keep retrying while it is up instead of giving up after one try.
+// ---- microphone processing (noise gate + voice polish) -------------------
+// The raw getUserMedia stream is routed through a small Web Audio graph before
+// it reaches WebRTC: high-pass rumble removal, tone shaping, a compressor and
+// (in open-mic mode) a voice-activity gate that silences the mic between words.
+let _micCtx = null;
+function micCtx() {
+  if (_micCtx) return _micCtx;
+  const AC = window.AudioContext || window.webkitAudioContext;
+  if (AC) { try { _micCtx = new AC(); } catch { _micCtx = null; } }
+  return _micCtx;
+}
+function micProcess(raw) {
+  const ctx = micCtx();
+  if (!ctx) return { stream: raw, stop: () => {}, level: () => 0 };
+  const nl = prefs().noiseLevel || "light";
+  const fx = prefs().voiceFx || "none";
+  const gateOn = (prefs().micMode || "open") === "open" && nl !== "off";
+  try { if (ctx.state === "suspended") ctx.resume(); } catch { /* */ }
+  const src = ctx.createMediaStreamSource(raw);
+  const hp = ctx.createBiquadFilter();
+  hp.type = "highpass"; hp.frequency.value = nl === "strong" ? 150 : nl === "light" ? 100 : 60;
+  const low = ctx.createBiquadFilter();
+  low.type = "lowshelf"; low.frequency.value = 320;
+  low.gain.value = fx === "warm" ? 4 : fx === "radio" ? -6 : 0;
+  const presence = ctx.createBiquadFilter();
+  presence.type = "peaking"; presence.frequency.value = 2800; presence.Q.value = 0.9;
+  presence.gain.value = fx === "bright" ? 5 : fx === "radio" ? 7 : fx === "warm" ? 1.5 : 0;
+  const lp = fx === "radio" ? ctx.createBiquadFilter() : null;
+  if (lp) { lp.type = "lowpass"; lp.frequency.value = 3200; }
+  const comp = ctx.createDynamicsCompressor();
+  comp.threshold.value = fx === "none" ? -22 : -28;
+  comp.knee.value = 24;
+  comp.ratio.value = fx === "radio" ? 8 : 3;
+  comp.attack.value = 0.004;
+  comp.release.value = 0.18;
+  const gate = ctx.createGain();
+  const analyser = ctx.createAnalyser(); analyser.fftSize = 512;
+  const dest = ctx.createMediaStreamDestination();
+  let node = src;
+  for (const n of [hp, low, presence, lp, comp, gate]) { if (!n) continue; node.connect(n); node = n; }
+  node.connect(analyser); node.connect(dest);
+  const data = new Uint8Array(analyser.fftSize);
+  const readLevel = () => {
+    analyser.getByteTimeDomainData(data);
+    let s = 0;
+    for (let i = 0; i < data.length; i++) { const v = (data[i] - 128) / 128; s += v * v; }
+    return Math.sqrt(s / data.length);
+  };
+  let timer = 0;
+  if (gateOn) {
+    const thr = nl === "strong" ? 0.05 : nl === "light" ? 0.032 : 0.02;
+    timer = setInterval(() => {
+      const rms = readLevel();
+      gate.gain.setTargetAtTime(rms > thr ? 1 : 0, ctx.currentTime, 0.035);
+    }, 60);
+  } else {
+    gate.gain.value = 1;
+  }
+  const stop = () => { clearInterval(timer); try { src.disconnect(); } catch { /* */ } };
+  return { stream: dest.stream, stop, level: readLevel };
+}
 async function npGetMic() {
   if (!navigator.mediaDevices?.getUserMedia) {
     throw new Error("Microphone capture isn't available in this browser");
   }
-  const ask = () => navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } });
+  const nl = prefs().noiseLevel || "light";
+  const audio = { echoCancellation: true, noiseSuppression: nl !== "off", autoGainControl: nl !== "off" };
+  const ask = () => navigator.mediaDevices.getUserMedia({ audio });
   const signal = () => {
     try { window.SSNotify?.postMessage(JSON.stringify({ mic: true, cid: CID, origin: location.origin, on: prefs().netplay !== false })); } catch { /* */ }
   };
@@ -602,7 +665,12 @@ async function npGetMic() {
   let lastErr = null;
   try {
     for (let attempt = 0; attempt < maxAttempts; attempt++) {
-      try { return await ask(); }
+      try {
+        const raw = await ask();
+        const proc = micProcess(raw);
+        NP._micRaw = raw; NP._micProc = proc;
+        return proc.stream;
+      }
       catch (e) {
         lastErr = e;
         // Hard device/permission errors won't resolve by waiting longer.
@@ -634,14 +702,20 @@ async function npSetVoice(on) {
     if (NP.micTrack && NP.pc) {
       try { NP.micSender = NP.pc.addTrack(NP.micTrack, new MediaStream([NP.micTrack])); } catch { /* */ }
     }
-    NP.micMuted = prefs().npPTT === true;   // PTT starts muted
+    // Start muted only in push-to-talk (with a way to talk) or fully-muted mode;
+    // open-mic mode relies on the voice-activity gate instead.
+    const mode = prefs().micMode || "open";
+    NP.micMuted = mode === "muted" || (mode === "ptt" && (PAD_BINDS.ptt >= 0 || !!PAD_BINDS.pttKey));
     npApplyMicMute();
-    npLog("mic on");
+    npLog(`mic on (${mode}/${prefs().noiseLevel || "light"}/${prefs().voiceFx || "none"})`);
     return true;
   }
   try { if (NP.micSender && NP.pc) NP.pc.removeTrack(NP.micSender); } catch { /* */ }
+  try { NP._micProc?.stop(); } catch { /* */ }
+  try { NP._micRaw?.getTracks().forEach((t) => t.stop()); } catch { /* */ }
   try { NP.mic?.getTracks().forEach((t) => t.stop()); } catch { /* */ }
   NP.mic = null; NP.micTrack = null; NP.micSender = null; NP.micMuted = false;
+  NP._micRaw = null; NP._micProc = null;
   npUpdatePtt();
   npLog("mic off");
   return true;
@@ -649,6 +723,7 @@ async function npSetVoice(on) {
 // Mic mute / push-to-talk. `enabled=false` mutes without dropping the track.
 // One state covers both transports: the netplay 1:1 mic and a party call mic.
 function voiceSetMuted(muted) {
+  if ((prefs().micMode || "open") === "muted") muted = true;   // muted mode stays muted
   muted = !!muted;
   NP.micMuted = muted;
   try { if (NP.micTrack) NP.micTrack.enabled = !muted; } catch { /* */ }
@@ -670,7 +745,7 @@ function npUpdatePtt() {
       style: "position:fixed;left:max(8px,env(safe-area-inset-left));top:50%;transform:translateY(-50%);z-index:1000;width:46px;height:46px;border-radius:50%;font-size:20px;line-height:1;background:rgba(6,6,12,.82);border:1px solid var(--gold,#ffd23d);color:var(--gold,#ffd23d)" });
     uiRoot().append(b);
   }
-  const ptt = prefs().npPTT === true;
+  const ptt = prefs().micMode === "ptt";
   const muted = NP.micMuted || PARTY.muted;
   b.textContent = muted ? "🔇" : "🎙";
   b.title = ptt ? "Hold to talk" : "Mute / unmute mic";
@@ -1204,7 +1279,8 @@ function openNetplaySheet(sys, file, name) {
   };
   kids.push(el("div", { style: "margin-top:10px;padding-top:10px;border-top:1px solid var(--line,#232330)" },
     prefRow("Auto-unmute P2's video", "npAutoUnmute"),
-    prefRow("Push-to-talk (hold 🎙 on the left, or the controller button you assign in Input settings)", "npPTT"),
+    el("button", { className: "btn btn-ghost", style: "width:100%;margin:6px 0", textContent: "🎚 Sound settings (mic mode, noise cancelling, voice polish)",
+      onclick: () => { o.remove(); soundPanel(); } }),
     prefRow("I usually host", "npHostByDefault")));
 
   const diag = el("details", { style: "margin-top:12px" },
@@ -1412,6 +1488,8 @@ const PREF_DEFAULTS = {
   region: "", playingToasts: true, confirmOverwrite: false, previewSound: true,
   netplay: true, netplayName: "", npAutoUnmute: true, npHostByDefault: true, npVoice: false, npPTT: false,
   ffPadButton: 7, slowPadButton: 6, pttPadButton: -1,
+  ffKey: "", slowKey: "", pttKey: "",
+  micMode: "open", noiseLevel: "light", voiceFx: "none",
   raEnabled: false, raUser: "", raKey: "",
 };
 const AUTH = { token: LS.get("auth", null), user: null };
@@ -2424,6 +2502,11 @@ async function partyJoinCall(watcher) {
     catch { toast("Mic unavailable — joining as a listener"); PARTY.watcher = true; }
   }
   if (PARTY.micTrack) PARTY.micTrack.enabled = !PARTY.muted;
+  if (!PARTY.watcher) {
+    // Honour the mic mode: PTT starts muted only if there is a way to talk.
+    const pttReady = PAD_BINDS.ptt >= 0 || !!PAD_BINDS.pttKey;
+    voiceSetMuted((prefs().micMode || "open") === "ptt" && pttReady);
+  }
   npUpdatePtt();
   try { const d = await partyPost("/party", { id: PARTY.id, cid: CID, who: partyWho(),
     muted: PARTY.muted, watcher: PARTY.watcher }); partyAdopt(d); } catch { /* */ }
@@ -2435,6 +2518,9 @@ async function partyLeaveCall() {
   PARTY.pcs.clear();
   document.querySelectorAll(".party-audio").forEach((a) => a.remove());
   try { PARTY.local?.getTracks().forEach((t) => t.stop()); } catch { /* */ }
+  try { NP._micProc?.stop(); } catch { /* */ }
+  try { NP._micRaw?.getTracks().forEach((t) => t.stop()); } catch { /* */ }
+  NP._micRaw = null; NP._micProc = null;
   PARTY.local = null; PARTY.micTrack = null; PARTY.watcher = false;
   partyNotifyApp(false, false);
   npUpdatePtt();
@@ -2584,7 +2670,7 @@ function renderPartyCall(box) {
       kids.push(el("button", { className: "btn btn-ghost sm", textContent: "🎙 Use microphone",
         title: "Leave the listener mode and start talking",
         onclick: () => partyUpgradeToTalk().catch(() => {}) }));
-    } else if (prefs().npPTT === true) {
+    } else if (prefs().micMode === "ptt") {
       const talk = el("button", { className: "btn btn-ghost sm", textContent: "🎙 Hold to talk",
         title: "Press and hold to talk (or assign a controller button in Input settings)" });
       talk.onpointerdown = (e) => { e.preventDefault(); voiceSetMuted(false); };
@@ -2594,6 +2680,8 @@ function renderPartyCall(box) {
       kids.push(el("button", { className: "btn " + (PARTY.muted ? "btn-primary" : "btn-ghost") + " sm",
         textContent: PARTY.muted ? "🔇 Unmute" : "🎙 Mute", onclick: () => partyToggleMute() }));
     }
+    kids.push(el("button", { className: "btn btn-ghost sm", textContent: "🎚 Sound settings",
+      onclick: () => soundPanel() }));
     kids.push(el("button", { className: "btn btn-ghost sm", style: "color:var(--pink,#ff5fa2)", textContent: "Leave party",
       onclick: () => partyLeave().catch(() => {}) }));
   }
@@ -2898,6 +2986,24 @@ async function routePlay() {
       { label: "⌕ Search games", className: "play-search", onClick: () => openGameSearch() },
     ],
   }));
+  // Same "Continue playing" shelf as Home, so you can resume without leaving Play.
+  const playRecent = recentList();
+  if (playRecent.length) {
+    const recentResolve = [];
+    frag.append(shelf({
+      title: "Continue playing", count: playRecent.length,
+      note: "Pick up where you left off — cloud saves load automatically.",
+      tiles: playRecent.map((r) => {
+        const art = coverArt({ img: r.img, name: r.name, sys: r.sys, badge: "Resume", file: r.file, resolve: recentResolve });
+        return el("a", { className: "tile wide",
+          href: `#/resume/${r.sys}/${r.file.split("/").map(encodeURIComponent).join("/")}` }, art,
+          el("div", { className: "tile-cap" },
+            el("div", { className: "t", textContent: r.name }),
+            el("div", { className: "s", textContent: sysName(r.sys) })));
+      }),
+    }));
+    hydrateCovers(recentResolve);
+  }
   const liveAnchor = el("div");
   frag.append(liveAnchor);
   const previewAnchor = el("div");
@@ -3318,6 +3424,7 @@ async function routePlayGame(sys, romParam, resume = false) {
       clearTimeout(hideT);
       hideT = setTimeout(hideChrome, 5000);
     };
+    window.__sswShowChrome = showChrome;
     shell.append(
       el("button", { type: "button", className: "fab-exit", textContent: "‹", title: "Exit game",
         onclick: (e) => { e.preventDefault(); e.stopPropagation(); exitPlayer(); } }),
@@ -3597,6 +3704,9 @@ async function routePlayGame(sys, romParam, resume = false) {
     // no duplicate Portrait control in the top player menu.
     setLandscape(true);
     applyPadPreset(sys);
+    // Mobile hides the toolbar behind the top nub; reveal it briefly at boot so
+    // it is discoverable, then it auto-hides.
+    if (IN_APP) setTimeout(() => { try { window.__sswShowChrome?.(); } catch { /* */ } }, 700);
     ctrlBtn.hidden = false;
     ctrlBtn.onclick = () => controlsPanel(core, sys);
     raBtn.hidden = false;
@@ -3771,6 +3881,7 @@ function emuCleanup() {
   window.__watchId = null; window.__inNetplay = false; window.__npRoom = null;
   try { delete window.__playPing; } catch { /* */ }
   try { delete window.__sswStartWatch; } catch { window.__sswStartWatch = null; }
+  try { delete window.__sswShowChrome; } catch { /* */ }
   try { npStop(); } catch { /* */ }
   try { window.SSPlay && window.SSPlay.postMessage("0"); } catch { /* */ }
   try { screen.orientation.unlock(); } catch { /* */ }
@@ -3976,7 +4087,7 @@ function controlsPanel(core, sys) {
   const wasPlaying = !emu.paused;
   try { emu.pause(true); } catch { /* */ }
 
-  let player = 0, listening = null, listeningPad = null;
+  let player = 0, listening = null, listeningPad = null, listeningKey = null;
   let prevBtns = [], padIndex = null, rafId = 0;
   const active = {};                         // slot -> Set<source>
   const face = FACE_LBL[core] || ["B", "A", "Y", "X"];
@@ -4004,7 +4115,7 @@ function controlsPanel(core, sys) {
   const apply = () => { try { emu.setupKeys(); emu.checkGamepadInputs(); emu.saveSettings(); } catch { /* */ } render(); };
   const bind = (id, k, v) => { const c = ctrls()[player]; c[id] = Object.assign({}, c[id]); c[id][k] = v; listening = null; apply(); };
   const begin = (id, slot) => { listening = { id, label: lbl[slot] || slot }; render(); };
-  const cancel = () => { listening = null; listeningPad = null; render(); };
+  const cancel = () => { listening = null; listeningPad = null; listeningKey = null; render(); };
   // EmulatorJS stores .value as a numeric keyCode — pretty-print it
   const KEY_SHORT = { "up arrow": "↑", "down arrow": "↓", "left arrow": "←", "right arrow": "→",
     space: "Space", enter: "Enter", backspace: "⌫", shift: "Shift", ctrl: "Ctrl", alt: "Alt", tab: "Tab", escape: "Esc" };
@@ -4027,12 +4138,21 @@ function controlsPanel(core, sys) {
       bind(listening.id, "value", e.keyCode);
       return;
     }
+    if (listeningKey && down) {
+      if (e.key === "Escape") return;
+      e.preventDefault(); e.stopImmediatePropagation();
+      setPref(listeningKey === "fast" ? "ffKey" : listeningKey === "slow" ? "slowKey" : "pttKey", playbackKey(e));
+      loadPadBinds();
+      listeningKey = null;
+      render();
+      return;
+    }
     const c = ctrls()[player];
     if (!c) return;
     for (const [slot, id] of Object.entries(SLOT_ID)) if (c[id] && c[id].value === e.keyCode) setSlot(slot, down, "key");
   };
   const kd = (e) => onKey(e, true), ku = (e) => onKey(e, false);
-  const esc = (e) => { if (e.key === "Escape" && (listening || listeningPad)) { e.preventDefault(); e.stopPropagation(); cancel(); } };
+  const esc = (e) => { if (e.key === "Escape" && (listening || listeningPad || listeningKey)) { e.preventDefault(); e.stopPropagation(); cancel(); } };
 
   const poll = () => {
     const pads = navigator.getGamepads ? [...navigator.getGamepads()] : [];
@@ -4069,12 +4189,17 @@ function controlsPanel(core, sys) {
   const panel = el("div", { id: "ctrl-panel", onclick: (e) => { if (e.target.id === "ctrl-panel") close(); } });
 
   // RetroVerse playback shortcuts are not EmulatorJS controls, so they get
-  // their own capture: click, then press a controller button.
-  const playbackRow = (which, label, idx) => el("div", { className: "pad-row" + (listeningPad === which ? " listening" : "") },
+  // their own capture: click a chip, then press a key or a controller button.
+  const playbackRow = (which, label, idx, keyVal) => el("div", {
+      className: "pad-row" + ((listeningPad === which || listeningKey === which) ? " listening" : ""),
+    },
     el("span", { className: "pr-name", textContent: label }),
-    el("button", { className: "pr-chip pad", title: "Click, then press a controller button",
+    el("button", { className: "pr-chip kbd" + (keyVal ? "" : " empty"), title: "Keyboard — click, then press a key",
+      textContent: listeningKey === which ? "press…" : playbackKeyLabel(keyVal),
+      onclick: () => { listening = null; listeningPad = null; listeningKey = which; render(); } }),
+    el("button", { className: "pr-chip pad", title: "Gamepad — click, then press a button",
       textContent: listeningPad === which ? "press…" : padBtnName(idx),
-      onclick: () => { listening = null; listeningPad = which; render(); } }));
+      onclick: () => { listening = null; listeningKey = null; listeningPad = which; render(); } }));
 
   function render() {
     svgWrap.innerHTML = padSvg(lbl, showSet);
@@ -4099,9 +4224,9 @@ function controlsPanel(core, sys) {
         }))),
       el("div", { className: "pad-grp" },
         el("h4", { textContent: "Playback (RetroVerse)" }),
-        playbackRow("fast", "Fast-forward", PAD_BINDS.ff),
-        playbackRow("slow", "Slow motion", PAD_BINDS.slow),
-        playbackRow("ptt", "Push-to-talk", PAD_BINDS.ptt)),
+        playbackRow("fast", "Fast-forward", PAD_BINDS.ff, PAD_BINDS.ffKey),
+        playbackRow("slow", "Slow motion", PAD_BINDS.slow, PAD_BINDS.slowKey),
+        playbackRow("ptt", "Push-to-talk", PAD_BINDS.ptt, PAD_BINDS.pttKey)),
       el("div", { className: "pad-acts" },
         sys ? el("button", { className: "btn btn-ghost sm", textContent: "Pad layout…",
           title: "Touch pad size, opacity and position",
@@ -4111,10 +4236,12 @@ function controlsPanel(core, sys) {
         el("button", { className: "btn btn-primary sm", textContent: "Done", onclick: close })));
     hint.textContent = listening
       ? `Press a key or controller button for “${listening.label}” — Esc to cancel`
-      : listeningPad
-        ? `Press a controller button for ${listeningPad === "fast" ? "fast-forward" : listeningPad === "slow" ? "slow motion" : "push-to-talk"} — Esc to cancel`
-        : "Press buttons on your controller to see them light up. Click any button to rebind it.";
-    hint.classList.toggle("live", !!(listening || listeningPad));
+      : listeningKey
+        ? `Press a key for ${listeningKey === "fast" ? "fast-forward" : listeningKey === "slow" ? "slow motion" : "push-to-talk"} — Esc to cancel`
+        : listeningPad
+          ? `Press a controller button for ${listeningPad === "fast" ? "fast-forward" : listeningPad === "slow" ? "slow motion" : "push-to-talk"} — Esc to cancel`
+          : "Press buttons on your controller to see them light up. Click any button to rebind it.";
+    hint.classList.toggle("live", !!(listening || listeningPad || listeningKey));
   }
 
   panel.append(el("div", { className: "ctrl-card" },
@@ -5168,6 +5295,50 @@ function raPanel() {
       el("button", { className: "btn btn-primary", style: "width:100%;margin-top:12px", textContent: "Done", onclick: () => o.remove() })));
   uiRoot().append(o);
 }
+// ---- sound settings: mic mode, noise cancelling, voice polish -------------
+function soundPanel() {
+  const o = el("div", { id: "help-overlay", onclick: (e) => { if (e.target.id === "help-overlay") o.remove(); } });
+  const cur = () => ({ mode: prefs().micMode || "open", noise: prefs().noiseLevel || "light", fx: prefs().voiceFx || "none" });
+  const row = (label, key, opts) => {
+    const prefKey = key === "mode" ? "micMode" : key === "noise" ? "noiseLevel" : "voiceFx";
+    const s = el("select", {}, ...opts.map(([v, t]) => el("option", { value: v, textContent: t, selected: cur()[key] === v })));
+    s.onchange = () => {
+      setPref(prefKey, s.value);
+      if (key === "mode") { setPref("npPTT", s.value === "ptt"); loadPadBinds(); npUpdatePtt(); }
+      toast("Sound settings saved — tap “Reconnect microphone” to apply");
+    };
+    return el("label", { className: "set-row" }, s,
+      el("div", {}, el("div", { textContent: label }),
+        key === "mode" ? el("div", { className: "hint", textContent: "Open mic uses voice detection; PTT needs a key/button (Input settings)" }) : null));
+  };
+  const meter = el("div", { className: "mic-meter" }, el("i"));
+  const meterT = setInterval(() => {
+    const l = NP._micProc?.level?.() ?? 0;
+    meter.firstChild.style.width = Math.min(100, Math.round(l * 280)) + "%";
+  }, 120);
+  const close = () => { clearInterval(meterT); o.remove(); };
+  const reconnect = el("button", { className: "btn btn-primary", style: "width:100%;margin-top:10px", textContent: "Reconnect microphone",
+    onclick: async () => {
+      reconnect.disabled = true; reconnect.textContent = "Reconnecting…";
+      try {
+        if (PARTY.id) { const w = PARTY.watcher; await partyLeaveCall(); await partyJoinCall(w); }
+        else if (NP.role) { await npSetVoice(false); await npSetVoice(true); }
+        else toast("Start netplay voice or a party call first");
+      } catch { /* */ }
+      reconnect.disabled = false; reconnect.textContent = "Reconnect microphone";
+    } });
+  o.append(el("div", { className: "help-card" },
+    el("h3", { textContent: "Sound settings" }),
+    el("p", { className: "hint", textContent: "Applies to netplay voice and party calls. Reconnect to apply now." }),
+    row("Microphone mode", "mode", [["open", "Open mic (voice detection)"], ["ptt", "Push-to-talk"], ["muted", "Muted"]]),
+    row("Noise cancelling", "noise", [["off", "Off"], ["light", "Light"], ["strong", "Strong"]]),
+    row("Voice polish", "fx", [["none", "None"], ["warm", "Warm"], ["bright", "Bright / clear"], ["radio", "Radio"]]),
+    el("div", { className: "hint", style: "margin:10px 0 2px", textContent: "Microphone level" }),
+    meter, reconnect,
+    el("p", { className: "hint", style: "font-size:11px", textContent: "Voice polish shapes tone and level. True pitch-correction autotune is not practical in-browser." }),
+    el("button", { className: "btn btn-ghost", style: "width:100%;margin-top:8px", textContent: "Done", onclick: close })));
+  uiRoot().append(o);
+}
 function settingsCard() {
   const p = prefs();
   const toggle = (k, label, hint) => {
@@ -5801,16 +5972,41 @@ let _playbackPad = { fast: false, slow: false, ptt: false };
 // L2 (6), and no PTT button. The Input settings panel can rebind any of them.
 // Cached because pollGameplayPad runs every animation frame and prefs() hits
 // localStorage.
-const PAD_BINDS = { ff: 7, slow: 6, ptt: -1, pttEnabled: false };
+const PAD_BINDS = { ff: 7, slow: 6, ptt: -1, pttEnabled: false, ffKey: "", slowKey: "", pttKey: "" };
 function loadPadBinds() {
   const p = prefs();
   PAD_BINDS.ff = Number.isInteger(p.ffPadButton) ? p.ffPadButton : 7;
   PAD_BINDS.slow = Number.isInteger(p.slowPadButton) ? p.slowPadButton : 6;
   PAD_BINDS.ptt = Number.isInteger(p.pttPadButton) ? p.pttPadButton : -1;
   PAD_BINDS.pttEnabled = p.npPTT === true;
+  PAD_BINDS.ffKey = p.ffKey || "";
+  PAD_BINDS.slowKey = p.slowKey || "";
+  PAD_BINDS.pttKey = p.pttKey || "";
 }
 addEventListener("ssw-prefs", loadPadBinds);
 loadPadBinds();
+// Playback hotkeys (fast-forward / slow motion / push-to-talk). Assigned keys
+// are dedicated: they are swallowed so the emulator doesn't also see them.
+const playbackKey = (e) => (e.key === " " ? "space" : String(e.key || "").toLowerCase());
+const playbackKeyLabel = (k) => !k ? "—" : k === "space" ? "Space" : k.length === 1 ? k.toUpperCase() : k;
+function playbackKeyDown(e) {
+  if (!window.__emuUp || document.getElementById("ctrl-panel")) return;
+  const t = e.target;
+  if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.tagName === "SELECT" || t.isContentEditable)) return;
+  const k = playbackKey(e);
+  if (PAD_BINDS.ffKey && k === PAD_BINDS.ffKey) { e.preventDefault(); e.stopPropagation(); if (!e.repeat) setPlaybackPadMode("fast", true); }
+  else if (PAD_BINDS.slowKey && k === PAD_BINDS.slowKey) { e.preventDefault(); e.stopPropagation(); if (!e.repeat) setPlaybackPadMode("slow", true); }
+  else if (PAD_BINDS.pttKey && k === PAD_BINDS.pttKey && PAD_BINDS.pttEnabled) { e.preventDefault(); e.stopPropagation(); if (!e.repeat) voiceSetMuted(false); }
+}
+function playbackKeyUp(e) {
+  if (!window.__emuUp) return;
+  const k = playbackKey(e);
+  if (PAD_BINDS.ffKey && k === PAD_BINDS.ffKey) setPlaybackPadMode("fast", false);
+  else if (PAD_BINDS.slowKey && k === PAD_BINDS.slowKey) setPlaybackPadMode("slow", false);
+  else if (PAD_BINDS.pttKey && k === PAD_BINDS.pttKey && PAD_BINDS.pttEnabled) voiceSetMuted(true);
+}
+addEventListener("keydown", playbackKeyDown, true);
+addEventListener("keyup", playbackKeyUp, true);
 function setPlaybackPadMode(mode, on) {
   const gm = window.EJS_emulator?.gameManager;
   if (!gm) return;

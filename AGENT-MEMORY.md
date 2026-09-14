@@ -6,6 +6,28 @@ agent can pick up context without re-deriving it. Read `AGENTS.md` first, then
 this. (Netplay internals: `NETPLAY-UI-CONTRACT.md`. Roadmap split:
 `FEATURE-BACKLOG.md`.)
 
+## Session 2026-09-13 — PTT keybind, sound settings, mobile toolbar, Continue
+- PTT couldn't be keyboard-bound because the playback rows only captured a
+  controller button. `playbackRow` now renders a **kbd** and a **pad** chip for
+  Fast-forward / Slow motion / Push-to-talk; `listeningKey` captures the next
+  keydown (`setPref` `ffKey`/`slowKey`/`pttKey`). Global `playbackKeyDown/Up`
+  (added at load, skipped while `#ctrl-panel` is open) make assigned keys
+  dedicated in-game hotkeys. Prefs added; `PAD_BINDS` loads them.
+- **Sound settings** (`soundPanel()`): `micMode` (open/ptt/muted),
+  `noiseLevel` (off/light/strong), `voiceFx` (none/warm/bright/radio). The raw
+  getUserMedia stream is routed through `micProcess()` — high-pass, low-shelf +
+  presence EQ (tone shaping), DynamicsCompressor, and a voice-activity gate
+  (AnalyserNode RMS → GainNode) in open-mic mode — then its
+  `MediaStreamAudioDestinationNode.stream` is what feeds WebRTC. `NP._micRaw`/
+  `NP._micProc` hold the raw + graph; `npSetVoice(false)` and `partyLeaveCall`
+  tear both down. `micMode:"ptt"` keeps `npPTT` in sync; PTT starts muted only
+  when a key/button is bound. Access from the netplay sheet and the party panel.
+  NOTE: true pitch-correction autotune is not practical in-browser; "voice
+  polish" is tone/level shaping.
+- **Mobile toolbar**: `window.__sswShowChrome` is set in the IN_APP branch and
+  called ~700ms into `EJS_onGameStart`, so the hideable top bar shows at boot.
+- **Continue playing** now also on `#/play` (same shelf as Home, `#/resume/…`).
+
 ## Session 2026-09-13 — push-to-talk button is assignable
 - The PTT "button" was only the on-screen 🎙 (`#np-ptt`, left edge, netplay
   voice only) — easy to miss and unusable with a controller.
