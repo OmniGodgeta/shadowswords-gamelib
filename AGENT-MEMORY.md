@@ -6,6 +6,18 @@ agent can pick up context without re-deriving it. Read `AGENTS.md` first, then
 this. (Netplay internals: `NETPLAY-UI-CONTRACT.md`. Roadmap split:
 `FEATURE-BACKLOG.md`.)
 
+## Session 2026-09-13 — watch-only, toolbar-coupled EJS bar
+- `startWatchParty(silent)` extracted from `watchBtn.onclick`; a host now starts
+  it silently after auto-open hosting and after an explicit "Create room", when
+  `npWatch` (default true) is on. Presence then has `x.watch` so the **Watch**
+  action (watch-only, no controls) works for solo players too.
+- `syncEjsMenuBar()` toggles `.ejs_menu_bar_hidden` to match the top toolbar
+  (desktop = always visible; in-app = with `.show-chrome`). An 800ms interval
+  (`window.__ejsBarT`) re-applies it because EJS auto-hides on idle; cleared in
+  `emuCleanup`. This is the owner's "bottom toolbar should show/hide with the top
+  one" request.
+- Fixed `localStorage.removeItem("joinNp")` → `"ssw:joinNp"` in `npJoin`.
+
 ## Session 2026-09-13 — join regression (auto-open race) + solo P2 bug
 - Owner: invites "only load the emulator", host stuck on "Waiting for P2", and a
   friend playing solo got pulled back to P2; host saw "Netplay disconnected".

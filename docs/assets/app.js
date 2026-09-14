@@ -27,6 +27,16 @@ function uiRoot() {
   const p = document.querySelector(".player");
   return (window.__emuUp && p && p.isConnected) ? p : document.body;
 }
+// Keep EmulatorJS's own bottom menu bar in step with our top toolbar: both show
+// or hide together. On desktop our top bar is always visible; in the app it is
+// revealed by .show-chrome.
+function syncEjsMenuBar() {
+  const bar = document.querySelector(".ejs_menu_bar");
+  if (!bar) return;
+  const player = document.querySelector(".player");
+  const topVisible = !player || !player.classList.contains("in-app-player") || player.classList.contains("show-chrome");
+  bar.classList.toggle("ejs_menu_bar_hidden", !topVisible);
+}
 let _toastT;
 function toast(msg) {
   let t = document.getElementById("toast");
@@ -970,7 +980,7 @@ async function npJoin(room) {
   if (!check.ok || !info?.sys || !info?.file) throw new Error(info?.error || `Room unavailable (HTTP ${check.status})`);
   if (info.host === CID) {
     npLog("join refused: this client owns the room as host");
-    try { localStorage.removeItem("joinNp"); } catch { /* */ }
+    try { localStorage.removeItem("ssw:joinNp"); } catch { /* */ }
     throw new Error("This device is already Player 1 for that room");
   }
   npStop();
@@ -1214,6 +1224,8 @@ function openNetplaySheet(sys, file, name) {
           if (!NP.room) { await npHost({ sys, file, name }); toast("Room created — you are Player 1"); }
           const sb = document.getElementById("np-sync-btn");
           if (sb && !NP.video && npStateSyncAllowed()) { sb.hidden = false; sb.onclick = resyncNetplay; }
+          // Make the room watchable so non-players can spectate (no controls).
+          if (prefs().npWatch !== false) window.__sswStartWatch?.(true);
           window.__playPing?.(false);
           invitePicker({ sys, file, name, watch: window.__watchId });
         } catch (e) { toast(`Couldn't create a room: ${e?.message || "server unavailable"}`); npLog(`room create failed: ${e?.message || e}`); }
@@ -1298,6 +1310,7 @@ function openNetplaySheet(sys, file, name) {
   kids.push(el("div", { style: "margin-top:10px;padding-top:10px;border-top:1px solid var(--line,#232330)" },
     prefRow("Auto-unmute P2's video", "npAutoUnmute"),
     prefRow("Let friends join my games", "npOpen"),
+    prefRow("Let friends watch (no controls)", "npWatch"),
     el("button", { className: "btn btn-ghost", style: "width:100%;margin:6px 0", textContent: "🎚 Sound settings (mic mode, noise cancelling, voice polish)",
       onclick: () => { o.remove(); soundPanel(); } }),
     prefRow("I usually host", "npHostByDefault")));
@@ -1509,7 +1522,7 @@ const PREF_DEFAULTS = {
   ffPadButton: 7, slowPadButton: 6, pttPadButton: -1,
   ffKey: "", slowKey: "", pttKey: "",
   micMode: "open", noiseLevel: "light", voiceFx: "none",
-  npMode: "input", npOpen: true, npTurnUrl: "", npTurnUser: "", npTurnPass: "",
+  npMode: "input", npOpen: true, npWatch: true, npTurnUrl: "", npTurnUser: "", npTurnPass: "",
   padLayout: "auto",
   raEnabled: false, raUser: "", raKey: "",
 };
@@ -3423,12 +3436,13 @@ async function routePlayGame(sys, romParam, resume = false) {
     el("div", { className: "player-stage" },
       el("div", { id: "game" }), loadEl));
   if (IN_APP) {
-    const hideChrome = () => shell.classList.remove("show-chrome");
+    const hideChrome = () => { shell.classList.remove("show-chrome"); syncEjsMenuBar(); };
     let hideT;
     const showChrome = () => {
       shell.classList.add("show-chrome");
       clearTimeout(hideT);
       hideT = setTimeout(hideChrome, 5000);
+      syncEjsMenuBar();
     };
     window.__sswShowChrome = showChrome;
     shell.append(
@@ -3725,6 +3739,9 @@ async function routePlayGame(sys, romParam, resume = false) {
     chatBtn.onclick = () => { moreMenu.hidden = true; openPartyChat(); };
     rememberSession({ sys, file, name: romName });
     window.__npSnapT = setInterval(() => snapshotNetplay(sys, file, romName), 4000);
+    // EJS auto-hides its bottom menu bar; keep it in step with our top toolbar.
+    window.__ejsBarT = setInterval(syncEjsMenuBar, 800);
+    setTimeout(syncEjsMenuBar, 1200);
     try { window.SSPlay && window.SSPlay.postMessage("1"); } catch { /* */ }
     const joinHint = LS.get("joinNp", null);
     if (joinHint && joinHint.sys === sys && (!joinHint.file || joinHint.file === file)) {
@@ -3758,18 +3775,25 @@ async function routePlayGame(sys, romParam, resume = false) {
       if (!willJoinOrRecover && np && sys !== "upload" && prefs().npOpen !== false) {
         setTimeout(() => {
           if (NP.role || window.__inNetplay || NP.joining || LS.get("joinNp")) return;
-          npHost({ sys, file, name: romName }).catch(() => {});
+          npHost({ sys, file, name: romName }).then(() => {
+            // Be watchable too, so non-players can spectate without controls.
+            if (prefs().npWatch !== false) window.__sswStartWatch?.(true);
+          }).catch(() => {});
         }, 2600);
       }
     }
     window.__emuHeartbeat = setInterval(() => { ping(false); flushPlaytime(); }, 15000);
     window.__emuAutoSaveT = key && !n64 ? setInterval(autoSave, 15000) : 0;
     watchBtn.hidden = false;
-    watchBtn.onclick = async () => {
+    // Start (or re-copy) the watch party. `silent` skips the clipboard/toast so
+    // a host can be watchable without the user pressing anything.
+    const startWatchParty = async (silent) => {
       if (window.__watchId) {
-        try { await navigator.clipboard.writeText(`${location.origin}${location.pathname}#/watch/${window.__watchId}`); } catch { /* */ }
-        toast("Watch-party link copied again");
-        return;
+        if (!silent) {
+          try { await navigator.clipboard.writeText(`${location.origin}${location.pathname}#/watch/${window.__watchId}`); } catch { /* */ }
+          toast("Watch-party link copied again");
+        }
+        return window.__watchId;
       }
       try {
         // Build the WebRTC watch room first; fall back to JPEG-only if capture fails.
@@ -3779,9 +3803,11 @@ async function routePlayGame(sys, romParam, resume = false) {
           body: JSON.stringify({ sys, file, name: romName, who: AUTH.user?.display || prefs().netplayName || "Host", room, party: PARTY.id || null }),
         }).then((r) => r.json());
         window.__watchId = d.id;
-        const link = `${location.origin}${location.pathname}#/watch/${d.id}`;
-        try { await navigator.clipboard.writeText(link); } catch { /* */ }
-        toast("Watch-party link copied — anyone on the tailnet can spectate");
+        if (!silent) {
+          const link = `${location.origin}${location.pathname}#/watch/${d.id}`;
+          try { await navigator.clipboard.writeText(link); } catch { /* */ }
+          toast("Watch-party link copied — anyone on the tailnet can spectate");
+        }
         watchBtn.textContent = "Live";
         watchBtn.classList.add("on");
         ping(false);
@@ -3794,9 +3820,11 @@ async function routePlayGame(sys, romParam, resume = false) {
             fetch(`${API}/watch/${window.__watchId}/frame`, { method: "PUT", body: blob, keepalive: true }).catch(() => {});
           }, "image/jpeg", 0.55);
         }, 160);
-      } catch { toast("Couldn't start a watch party"); }
+        return window.__watchId;
+      } catch { if (!silent) toast("Couldn't start a watch party"); return null; }
     };
-    window.__sswStartWatch = () => watchBtn.onclick();
+    watchBtn.onclick = () => startWatchParty(false);
+    window.__sswStartWatch = (silent) => startWatchParty(!!silent);
     npOpenBtn.onclick = () => { npMenu.hidden = true; openNetplaySheet(sys, file, romName); };
     syncBtn.onclick = () => { npMenu.hidden = true; resyncNetplay(); };
     npBtn.onclick = (e) => {
@@ -3893,7 +3921,7 @@ async function routePlayGame(sys, romParam, resume = false) {
 function emuCleanup() {
   document.documentElement.classList.remove("playing");
   clearInterval(window.__emuHeartbeat); clearInterval(window.__emuAutoSaveT);
-  clearInterval(window.__watchT); clearInterval(window.__npSnapT);
+  clearInterval(window.__watchT); clearInterval(window.__npSnapT); clearInterval(window.__ejsBarT);
   if (window.__watchId) fetch(`${API}/watch/${window.__watchId}`, { method: "DELETE", keepalive: true }).catch(() => {});
   try { wnpStop(); } catch { /* */ }
   window.__watchId = null; window.__inNetplay = false; window.__npRoom = null;

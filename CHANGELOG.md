@@ -1,5 +1,14 @@
 # Changelog
 
+## 3.9
+- **Watch-only for non-players**: a host is now automatically watchable
+  ("Let friends watch", on by default), so the Home card shows **Watch** and
+  anyone can spectate with no controls (`#/watch…`), alongside **Join as P2**.
+- **The emulator's bottom menu bar now shows/hides together with the top in-game
+  toolbar** (both visible on desktop; on mobile it appears with the top toolbar)
+  instead of the EJS bar auto-hiding on its own.
+- Fixed a join-key typo (`joinNp` vs `ssw:joinNp`) in `npJoin`'s refusal path.
+
 ## 3.8
 - **Fixed invites never connecting / host stuck on "Waiting for P2"**: the
   auto-open-room feature (3.7) could race an in-progress join, making the guest
