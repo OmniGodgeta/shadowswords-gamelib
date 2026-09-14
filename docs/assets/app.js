@@ -647,13 +647,23 @@ async function npSetVoice(on) {
   return true;
 }
 // Mic mute / push-to-talk. `enabled=false` mutes without dropping the track.
-function npApplyMicMute() {
-  try { if (NP.micTrack) NP.micTrack.enabled = !NP.micMuted; } catch { /* */ }
+// One state covers both transports: the netplay 1:1 mic and a party call mic.
+function voiceSetMuted(muted) {
+  muted = !!muted;
+  NP.micMuted = muted;
+  try { if (NP.micTrack) NP.micTrack.enabled = !muted; } catch { /* */ }
+  PARTY.muted = muted;
+  try { if (PARTY.micTrack) PARTY.micTrack.enabled = !muted; } catch { /* */ }
   npUpdatePtt();
+  try { partyRenderUI(); } catch { /* */ }
+  try { if (PARTY.id && !PARTY.watcher) partyNotifyApp(true, muted); } catch { /* */ }
 }
+function npApplyMicMute() { voiceSetMuted(NP.micMuted); }
 function npUpdatePtt() {
   let b = document.getElementById("np-ptt");
-  const active = NP.dc?.readyState === "open" && NP.mic;
+  const netplayMic = NP.dc?.readyState === "open" && NP.mic;
+  const partyMic = !!PARTY.id && !!PARTY.micTrack;
+  const active = netplayMic || partyMic;
   if (!active) { b?.remove(); return; }
   if (!b) {
     b = el("button", { id: "np-ptt", type: "button",
@@ -661,14 +671,15 @@ function npUpdatePtt() {
     uiRoot().append(b);
   }
   const ptt = prefs().npPTT === true;
-  b.textContent = NP.micMuted ? "🔇" : "🎙";
+  const muted = NP.micMuted || PARTY.muted;
+  b.textContent = muted ? "🔇" : "🎙";
   b.title = ptt ? "Hold to talk" : "Mute / unmute mic";
   b.onclick = b.onpointerdown = b.onpointerup = b.onpointerleave = null;
   if (ptt) {
-    b.onpointerdown = (e) => { e.preventDefault(); NP.micMuted = false; npApplyMicMute(); };
-    b.onpointerup = b.onpointerleave = () => { NP.micMuted = true; npApplyMicMute(); };
+    b.onpointerdown = (e) => { e.preventDefault(); voiceSetMuted(false); };
+    b.onpointerup = b.onpointerleave = () => voiceSetMuted(true);
   } else {
-    b.onclick = () => { NP.micMuted = !NP.micMuted; npApplyMicMute(); };
+    b.onclick = () => voiceSetMuted(!NP.micMuted);
   }
 }
 function npStartPc(isHost) {
@@ -1193,7 +1204,7 @@ function openNetplaySheet(sys, file, name) {
   };
   kids.push(el("div", { style: "margin-top:10px;padding-top:10px;border-top:1px solid var(--line,#232330)" },
     prefRow("Auto-unmute P2's video", "npAutoUnmute"),
-    prefRow("Push-to-talk (hold 🎙 on the left)", "npPTT"),
+    prefRow("Push-to-talk (hold 🎙 on the left, or the controller button you assign in Input settings)", "npPTT"),
     prefRow("I usually host", "npHostByDefault")));
 
   const diag = el("details", { style: "margin-top:12px" },
@@ -1400,7 +1411,7 @@ const PREF_DEFAULTS = {
   lite: false, autoResume: true, musicShuffle: false, videoFilter: "pixel",
   region: "", playingToasts: true, confirmOverwrite: false, previewSound: true,
   netplay: true, netplayName: "", npAutoUnmute: true, npHostByDefault: true, npVoice: false, npPTT: false,
-  ffPadButton: 7, slowPadButton: 6,
+  ffPadButton: 7, slowPadButton: 6, pttPadButton: -1,
   raEnabled: false, raUser: "", raKey: "",
 };
 const AUTH = { token: LS.get("auth", null), user: null };
@@ -2413,6 +2424,7 @@ async function partyJoinCall(watcher) {
     catch { toast("Mic unavailable — joining as a listener"); PARTY.watcher = true; }
   }
   if (PARTY.micTrack) PARTY.micTrack.enabled = !PARTY.muted;
+  npUpdatePtt();
   try { const d = await partyPost("/party", { id: PARTY.id, cid: CID, who: partyWho(),
     muted: PARTY.muted, watcher: PARTY.watcher }); partyAdopt(d); } catch { /* */ }
   partyNotifyApp(true, PARTY.muted);
@@ -2425,6 +2437,7 @@ async function partyLeaveCall() {
   try { PARTY.local?.getTracks().forEach((t) => t.stop()); } catch { /* */ }
   PARTY.local = null; PARTY.micTrack = null; PARTY.watcher = false;
   partyNotifyApp(false, false);
+  npUpdatePtt();
   partyRenderUI();
 }
 // Listener -> talker: rebuild the peers with a mic track.
@@ -2441,12 +2454,7 @@ async function partyLeave() {
   toast("Left the party");
   partyRenderUI();
 }
-function partyToggleMute() {
-  PARTY.muted = !PARTY.muted;
-  if (PARTY.micTrack) PARTY.micTrack.enabled = !PARTY.muted;
-  partyNotifyApp(true, PARTY.muted);
-  partyRenderUI();
-}
+function partyToggleMute() { voiceSetMuted(!PARTY.muted); }
 // Tell the Android wrapper to keep the call alive in the background and show
 // its floating bubble. No-op in a plain browser.
 function partyNotifyApp(active, muted) {
@@ -2576,6 +2584,12 @@ function renderPartyCall(box) {
       kids.push(el("button", { className: "btn btn-ghost sm", textContent: "🎙 Use microphone",
         title: "Leave the listener mode and start talking",
         onclick: () => partyUpgradeToTalk().catch(() => {}) }));
+    } else if (prefs().npPTT === true) {
+      const talk = el("button", { className: "btn btn-ghost sm", textContent: "🎙 Hold to talk",
+        title: "Press and hold to talk (or assign a controller button in Input settings)" });
+      talk.onpointerdown = (e) => { e.preventDefault(); voiceSetMuted(false); };
+      talk.onpointerup = talk.onpointerleave = () => voiceSetMuted(true);
+      kids.push(talk);
     } else {
       kids.push(el("button", { className: "btn " + (PARTY.muted ? "btn-primary" : "btn-ghost") + " sm",
         textContent: PARTY.muted ? "🔇 Unmute" : "🎙 Mute", onclick: () => partyToggleMute() }));
@@ -4004,7 +4018,7 @@ function controlsPanel(core, sys) {
     for (const [slot, id] of Object.entries(SLOT_ID)) if (c[id] && c[id].value2 === label) return slot;
     return STD_SLOT[stdIndex] || null;
   };
-  const padBtnName = (i) => { const l = EJS_STD_LABEL[i]; return l ? padGlyph(l) : `Button ${i}`; };
+  const padBtnName = (i) => { if (i < 0) return "—"; const l = EJS_STD_LABEL[i]; return l ? padGlyph(l) : `Button ${i}`; };
 
   const onKey = (e, down) => {
     if (listening && down) {
@@ -4032,9 +4046,9 @@ function controlsPanel(core, sys) {
       if (listening && pressed >= 0 && EJS_STD_LABEL[pressed]) bind(listening.id, "value2", EJS_STD_LABEL[pressed]);
       else if (listeningPad && pressed >= 0) {
         const which = listeningPad; listeningPad = null;
-        setPref(which === "fast" ? "ffPadButton" : "slowPadButton", pressed);
+        setPref(which === "fast" ? "ffPadButton" : which === "slow" ? "slowPadButton" : "pttPadButton", pressed);
         loadPadBinds();
-        _playbackPad = { fast: false, slow: false };
+        _playbackPad = { fast: false, slow: false, ptt: false };
         render();
       }
       prevBtns = gp.buttons.map((b) => b.pressed || b.value > 0.5);
@@ -4086,7 +4100,8 @@ function controlsPanel(core, sys) {
       el("div", { className: "pad-grp" },
         el("h4", { textContent: "Playback (RetroVerse)" }),
         playbackRow("fast", "Fast-forward", PAD_BINDS.ff),
-        playbackRow("slow", "Slow motion", PAD_BINDS.slow)),
+        playbackRow("slow", "Slow motion", PAD_BINDS.slow),
+        playbackRow("ptt", "Push-to-talk", PAD_BINDS.ptt)),
       el("div", { className: "pad-acts" },
         sys ? el("button", { className: "btn btn-ghost sm", textContent: "Pad layout…",
           title: "Touch pad size, opacity and position",
@@ -4097,7 +4112,7 @@ function controlsPanel(core, sys) {
     hint.textContent = listening
       ? `Press a key or controller button for “${listening.label}” — Esc to cancel`
       : listeningPad
-        ? `Press a controller button for ${listeningPad === "fast" ? "fast-forward" : "slow motion"} — Esc to cancel`
+        ? `Press a controller button for ${listeningPad === "fast" ? "fast-forward" : listeningPad === "slow" ? "slow motion" : "push-to-talk"} — Esc to cancel`
         : "Press buttons on your controller to see them light up. Click any button to rebind it.";
     hint.classList.toggle("live", !!(listening || listeningPad));
   }
@@ -5781,15 +5796,18 @@ function moveFocus(dir) {
   if (best) { best.focus(); best.scrollIntoView({ block: "nearest", inline: "nearest" }); }
 }
 let _padRAF = 0; const _padPrev = {};
-let _playbackPad = { fast: false, slow: false };
-// Fast-forward / slow-motion gamepad buttons. Default R2 (7) and L2 (6); the
-// controller-setup panel can rebind either. Cached because pollGameplayPad runs
-// every animation frame and prefs() hits localStorage.
-const PAD_BINDS = { ff: 7, slow: 6 };
+let _playbackPad = { fast: false, slow: false, ptt: false };
+// Fast-forward / slow-motion / push-to-talk gamepad buttons. Defaults: R2 (7),
+// L2 (6), and no PTT button. The Input settings panel can rebind any of them.
+// Cached because pollGameplayPad runs every animation frame and prefs() hits
+// localStorage.
+const PAD_BINDS = { ff: 7, slow: 6, ptt: -1, pttEnabled: false };
 function loadPadBinds() {
   const p = prefs();
   PAD_BINDS.ff = Number.isInteger(p.ffPadButton) ? p.ffPadButton : 7;
   PAD_BINDS.slow = Number.isInteger(p.slowPadButton) ? p.slowPadButton : 6;
+  PAD_BINDS.ptt = Number.isInteger(p.pttPadButton) ? p.pttPadButton : -1;
+  PAD_BINDS.pttEnabled = p.npPTT === true;
 }
 addEventListener("ssw-prefs", loadPadBinds);
 loadPadBinds();
@@ -5819,6 +5837,11 @@ function pollGameplayPad() {
   const slow = trigger(gp.buttons[PAD_BINDS.slow]);
   if (fast !== _playbackPad.fast) { _playbackPad.fast = fast; setPlaybackPadMode("fast", fast); }
   if (slow !== _playbackPad.slow) { _playbackPad.slow = slow; setPlaybackPadMode("slow", slow); }
+  // Controller push-to-talk: hold the assigned button to unmute, release to mute.
+  if (PAD_BINDS.ptt >= 0 && PAD_BINDS.pttEnabled) {
+    const ptt = trigger(gp.buttons[PAD_BINDS.ptt]);
+    if (ptt !== _playbackPad.ptt) { _playbackPad.ptt = ptt; voiceSetMuted(!ptt); }
+  }
 }
 function pollPad() {
   _padRAF = requestAnimationFrame(pollPad);

@@ -6,6 +6,17 @@ agent can pick up context without re-deriving it. Read `AGENTS.md` first, then
 this. (Netplay internals: `NETPLAY-UI-CONTRACT.md`. Roadmap split:
 `FEATURE-BACKLOG.md`.)
 
+## Session 2026-09-13 — push-to-talk button is assignable
+- The PTT "button" was only the on-screen 🎙 (`#np-ptt`, left edge, netplay
+  voice only) — easy to miss and unusable with a controller.
+- `voiceSetMuted(muted)` is now the single mute state for both the netplay mic
+  and the party mic; `npApplyMicMute` and `partyToggleMute` delegate to it, and
+  `#np-ptt` shows whenever either mic is live.
+- `PAD_BINDS.ptt` (pref `pttPadButton`, default -1 = unassigned) + `pttEnabled`
+  (from `npPTT`). `pollGameplayPad` holds-to-talk on that controller button.
+  `Input settings → Playback` gained a "Push-to-talk" row (shows "—" when
+  unassigned). The party call panel shows "🎙 Hold to talk" when PTT is on.
+
 ## Session 2026-09-13 — watch/invite carry the party call
 - `invitePicker` and the watch-party `POST /watch` now send `party: PARTY.id`;
   the server stores it on `WATCH` and on invites (`watchMeta` and the invite

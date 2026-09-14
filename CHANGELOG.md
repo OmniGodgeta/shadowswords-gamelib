@@ -1,5 +1,12 @@
 # Changelog
 
+## 3.3
+- Push-to-talk is no longer only the on-screen 🎙 button: you can assign a
+  **controller button** for it in `Input settings → Playback → Push-to-talk`
+  (hold to talk, release to mute). It works for both netplay voice and a party
+  call, and the party call panel shows a **🎙 Hold to talk** button when
+  push-to-talk is on. One mute state now drives both transports.
+
 ## 3.2
 - Watch and netplay invites now carry the host's party call: accepting an
   invite, or opening a watch link, joins the voice party as a listener so
