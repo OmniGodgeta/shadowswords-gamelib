@@ -1335,6 +1335,42 @@ html.playing .party-chat-fab { display: none; }
   border: 1px solid var(--line); border-radius: 10px; aspect-ratio: 4/3; object-fit: contain;
 }
 .watch-meta { display: flex; align-items: baseline; gap: 12px; margin: 10px 0 14px; flex-wrap: wrap; }
+/* YouTube-style watch player chrome */
+.watch-player { position: relative; background: #000; border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
+.watch-video { width: 100%; max-height: 72vh; background: #000; display: none; }
+.watch-controls {
+  position: absolute; left: 0; right: 0; bottom: 0; z-index: 2;
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  padding: 8px 12px; background: linear-gradient(180deg, transparent, rgba(0,0,0,.78));
+  opacity: 0; transition: opacity .2s ease;
+}
+.watch-player:hover .watch-controls, .watch-player.show-ctrl .watch-controls { opacity: 1; }
+.watch-c-left { display: flex; align-items: center; gap: 6px; font-weight: 800; color: #fff; font-size: 12px; letter-spacing: .08em; }
+.watch-c-right { display: flex; align-items: center; gap: 6px; }
+.watch-btn {
+  width: 34px; height: 34px; border-radius: 8px; cursor: pointer; font-size: 15px; line-height: 1;
+  background: rgba(0,0,0,.45); border: 1px solid rgba(255,255,255,.25); color: #fff;
+}
+.watch-btn:hover, .watch-btn.on { border-color: var(--cyan); color: var(--cyan); }
+.watch-vol { width: 100px; accent-color: var(--cyan); }
+.watch-player.theater {
+  position: fixed; inset: 0; z-index: 80; border: 0; border-radius: 0;
+  display: flex; align-items: center; justify-content: center;
+}
+.watch-player.theater .watch-video, .watch-player.theater .watch-img { max-height: 100vh; width: 100%; }
+.watch-chat { max-width: 1100px; margin: 16px auto 0; }
+.watch-chat-slot .chat-log { height: min(40vh, 260px); }
+.watch-side {
+  position: absolute; top: 0; right: 0; bottom: 0; width: min(360px, 44vw); z-index: 3;
+  display: flex; flex-direction: column; background: rgba(6,6,12,.96);
+  border-left: 1px solid var(--line-2); backdrop-filter: blur(6px);
+}
+.watch-side[hidden] { display: none; }
+.watch-side-head { display: flex; align-items: center; justify-content: space-between; padding: 8px 10px; }
+.watch-side-slot { flex: 1; min-height: 0; overflow: auto; padding: 0 10px 10px; }
+.watch-side-slot .chat-box { height: 100%; }
+.watch-side-slot .chat-log { height: auto; flex: 1; }
+@media (max-width: 560px) { .watch-vol { display: none; } }
 
 /* save timeline */
 .slot-row { display: flex; align-items: center; gap: 8px; margin: 6px 0; }

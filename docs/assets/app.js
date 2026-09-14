@@ -2818,25 +2818,118 @@ async function routeLibrary() {
 async function routeWatch(id) {
   ++state.render;
   document.title = "Watch party — RetroVerse";
-  const vid = el("video", { autoplay: true, playsInline: true, muted: true,
-    style: "width:100%;max-height:72vh;background:#000;border-radius:12px;display:none" });
+  const token = state.render;
+  const vid = el("video", { autoplay: true, playsInline: true, muted: true, className: "watch-video" });
   vid.setAttribute("playsinline", "");
-  const img = el("img", { alt: "Live play" });
+  const img = el("img", { alt: "Live play", className: "watch-img", style: "display:none" });
   const meta = el("div", { className: "watch-meta" },
     el("span", { className: "live-dot" }),
     el("strong", { id: "watch-title", textContent: "Connecting…" }),
     el("span", { className: "hint", id: "watch-host" }));
   const playLink = el("a", { className: "btn btn-primary sm", hidden: true, textContent: "Play this too" });
+
+  // ---- YouTube-style player chrome ----
+  const vol = el("input", { type: "range", min: "0", max: "1", step: "0.01", value: "0.8", className: "watch-vol", title: "Volume", ariaLabel: "Volume" });
+  const muteBtn = el("button", { className: "watch-btn", title: "Mute (m)", textContent: "🔊" });
+  const pipBtn = el("button", { className: "watch-btn", title: "Picture-in-picture", textContent: "⧉" });
+  const theaterBtn = el("button", { className: "watch-btn", title: "Theater mode (t)", textContent: "▭" });
+  const fsBtn = el("button", { className: "watch-btn", title: "Full screen (f)", textContent: "⛶" });
+  const chatBtn = el("button", { className: "watch-btn", title: "Show / hide chat", textContent: "💬", hidden: true });
+  const controls = el("div", { className: "watch-controls" },
+    el("div", { className: "watch-c-left" }, el("span", { className: "live-dot" }), el("span", { textContent: "LIVE" })),
+    el("div", { className: "watch-c-right" }, muteBtn, vol, pipBtn, chatBtn, theaterBtn, fsBtn));
+
+  // Chat lives under the video; in fullscreen it moves into a side panel.
+  const chatBox = chatWidget();
+  const chatUnderSlot = el("div", { className: "watch-chat-slot" }, chatBox);
+  const chatUnder = el("section", { className: "shelf watch-chat" },
+    el("div", { className: "shelf-head" }, el("h2", { textContent: "Party chat" })),
+    chatUnderSlot);
+  const sideSlot = el("div", { className: "watch-side-slot" });
+  const side = el("aside", { className: "watch-side", hidden: true },
+    el("div", { className: "watch-side-head" }, el("strong", { textContent: "Party chat" }),
+      el("button", { className: "watch-btn", title: "Hide chat", textContent: "✕" })),
+    sideSlot);
+  side.querySelector(".watch-side-head button").onclick = () => setSide(false);
+
+  const player = el("div", { className: "watch-player" }, vid, img, controls, side);
+
   view.replaceChildren(el("div", { className: "watch-stage" },
     el("h1", { textContent: "Watch party" }),
-    meta, playLink, vid, img,
-    el("p", { className: "hint", textContent: "Live stream from the host — smooth video with sound (falls back to still frames if the stream can't connect)." })));
+    meta, playLink, player, chatUnder,
+    el("p", { className: "hint", textContent: "Live stream from the host — smooth video with sound (falls back to still frames if the stream can't connect). Hover for controls: f full screen · t theater · m mute." })));
+
+  let lastVol = 0.8;
+  const applyVol = () => {
+    vol.value = String(vid.muted ? 0 : vid.volume);
+    muteBtn.textContent = vid.muted || vid.volume === 0 ? "🔇" : "🔊";
+  };
+  vid.volume = 0.8;
+  vol.oninput = () => { const v = +vol.value; vid.volume = v; vid.muted = v === 0; if (v > 0) lastVol = v; applyVol(); };
+  const toggleMute = () => { if (vid.muted || vid.volume === 0) { vid.volume = lastVol || 0.8; vid.muted = false; } else { lastVol = vid.volume; vid.muted = true; } applyVol(); };
+  muteBtn.onclick = toggleMute;
+  vid.onclick = toggleMute;
+  applyVol();
+
+  const theater = () => { const on = player.classList.toggle("theater"); theaterBtn.classList.toggle("on", on); document.documentElement.classList.toggle("watch-theater", on); };
+  theaterBtn.onclick = theater;
+  pipBtn.onclick = async () => {
+    try {
+      if (document.pictureInPictureElement) await document.exitPictureInPicture();
+      else if (vid.requestPictureInPicture) await vid.requestPictureInPicture();
+      else toast("Picture-in-picture isn't available here");
+    } catch { toast("Picture-in-picture isn't available here"); }
+  };
+  const fullscreen = () => {
+    const d = document;
+    if (d.fullscreenElement || d.webkitFullscreenElement) (d.exitFullscreen || d.webkitExitFullscreen)?.call(d);
+    else (player.requestFullscreen || player.webkitRequestFullscreen)?.call(player);
+  };
+  fsBtn.onclick = fullscreen;
+  const onFsChange = () => {
+    const fs = !!(document.fullscreenElement || document.webkitFullscreenElement);
+    fsBtn.classList.toggle("on", fs);
+    // Chat sits under the video; fullscreen moves it to a side panel that can
+    // be hidden. It goes back under the video when fullscreen ends.
+    (fs ? sideSlot : chatUnderSlot).append(chatBox);
+    side.hidden = !fs;
+    chatBtn.hidden = !fs;
+  };
+  document.addEventListener("fullscreenchange", onFsChange);
+  const setSide = (on) => { side.hidden = !on; };
+  chatBtn.onclick = () => setSide(side.hidden);
+
+  // Controls appear on hover/touch/move and fade out again.
+  let hideT = 0;
+  const showCtrls = () => { player.classList.add("show-ctrl"); clearTimeout(hideT); hideT = setTimeout(() => player.classList.remove("show-ctrl"), 2800); };
+  player.addEventListener("pointermove", showCtrls);
+  player.addEventListener("pointerleave", () => player.classList.remove("show-ctrl"));
+  player.addEventListener("touchstart", showCtrls, { passive: true });
+  showCtrls();
+
+  const onKey = (e) => {
+    if (state.render !== token) return;
+    const t = e.target;
+    if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA")) return;
+    const k = e.key.toLowerCase();
+    if (k === "f") { e.preventDefault(); fullscreen(); }
+    else if (k === "t") { e.preventDefault(); theater(); }
+    else if (k === "m") { e.preventDefault(); toggleMute(); }
+  };
+  addEventListener("keydown", onKey);
+
   wnpStop();
   let dead = 0;
   let partyJoined = false;
-  const token = state.render;
+  const cleanup = () => {
+    removeEventListener("keydown", onKey);
+    document.removeEventListener("fullscreenchange", onFsChange);
+    player.classList.remove("theater");
+    document.documentElement.classList.remove("watch-theater");
+    wnpStop();
+  };
   const poll = async () => {
-    if (token !== state.render) { wnpStop(); return; }
+    if (token !== state.render) { cleanup(); return; }
     try {
       const info = await fetch(`${API}/watch/${id}`, { cache: "no-store" }).then((r) => r.ok ? r.json() : null);
       if (!info) { dead++; if (dead > 8) { $("#watch-title").textContent = "This party ended."; return; } }
@@ -2854,7 +2947,7 @@ async function routeWatch(id) {
             vid.srcObject = stream;
             vid.style.display = "block";
             img.style.display = "none";
-            vid.play?.().then(() => { vid.muted = false; }).catch(() => { /* tap to unmute */ });
+            vid.play?.().then(() => { vid.muted = false; applyVol(); }).catch(() => { /* tap to unmute */ });
           });
         }
         // Join the host's voice party as a listener, if there is one.
@@ -2862,7 +2955,10 @@ async function routeWatch(id) {
           partyJoined = true;
           partyJoin(info.party).then(() => partyJoinCall(true)).catch(() => {});
         }
-        if (!info.room || !WNP.alive || vid.style.display === "none") img.src = `${API}/watch/${id}/frame?t=${Date.now()}`;
+        if (!info.room || !WNP.alive || vid.style.display === "none") {
+          img.src = `${API}/watch/${id}/frame?t=${Date.now()}`;
+          img.style.display = "block";
+        }
       }
     } catch { dead++; }
     if (token === state.render) setTimeout(poll, 180);

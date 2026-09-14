@@ -545,7 +545,9 @@ function stateDelete(req, res, sys, rel, u0) {
 const WATCH = new Map();   // id -> { sys, file, name, host, at, frame, ctype }
 const WATCH_MAX = 400 * 1024;
 function pruneWatch() {
-  const cut = now() - 25000;
+  // A host in quiet watch mode does not upload frames, so allow a longer gap;
+  // viewers and the host's presence ping keep `at` fresh.
+  const cut = now() - 90000;
   for (const [id, w] of WATCH) if (w.at < cut) WATCH.delete(id);
 }
 setInterval(pruneWatch, 8000).unref?.();
@@ -815,6 +817,9 @@ async function playPing(req, res) {
       room: idle ? null : (body.room || null),
       idle,
     };
+    // Keep the host's watch party alive while they are playing (quiet watch
+    // mode uploads no frames, so without this it would be pruned).
+    if (!idle && body.watch && WATCH.has(body.watch)) WATCH.get(body.watch).at = now();
   }
   statsDirty = true;
   jsonRes(res, 200, { ok: true, invites: invitesFor(body.cid, u) });
@@ -1291,7 +1296,7 @@ const server = http.createServer(async (req, res) => {
         if (req.method === "HEAD") return res.end();
         res.end(w.frame); return;
       }
-      if (req.method === "GET") { jsonRes(res, 200, watchMeta(id, w)); return; }
+      if (req.method === "GET") { w.at = now(); jsonRes(res, 200, watchMeta(id, w)); return; }
     }
 
     const writeEP = req.method === "PUT" || req.method === "DELETE"

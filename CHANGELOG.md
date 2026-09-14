@@ -1,5 +1,19 @@
 # Changelog
 
+## 3.12
+- Fixed watch parties dropping with **"This party ended."** while the host was
+  still playing: quiet watch mode doesn't upload frames, so the server pruned
+  the room. The server now refreshes a watch room on every viewer poll and on
+  the host's presence ping, and keeps it longer between activity.
+- **Watch player chrome** (YouTube-like): hover for mute, volume slider,
+  picture-in-picture, theater mode, fullscreen and a chat toggle; keys `f`
+  full screen, `t` theater, `m` mute.
+- **Party chat under the video**; entering fullscreen moves it into a side
+  panel with a show/hide button, and it returns under the video when you leave
+  fullscreen.
+- `~/arcade-server.mjs` (and the tracked copy) changed — restart
+  `arcade-server.service`.
+
 ## 3.11
 - Every host starts a watch party automatically (`npWatch`, on by default), so
   the Home card shows a working **Watch** and friends can spectate with no

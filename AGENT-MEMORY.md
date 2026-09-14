@@ -6,6 +6,20 @@ agent can pick up context without re-deriving it. Read `AGENTS.md` first, then
 this. (Netplay internals: `NETPLAY-UI-CONTRACT.md`. Roadmap split:
 `FEATURE-BACKLOG.md`.)
 
+## Session 2026-09-13 — watch player chrome + "party ended" fix
+- **"This party ended."** while the host was still playing: quiet/auto watch mode
+  (3.10+) uploads no JPEG frames, so `w.at` was never refreshed and `pruneWatch`
+  (25s) deleted the room; every viewer poll then 404'd. Fix (server): refresh
+  `w.at` on viewer GET `/watch/<id>`, refresh it from the host's `/play/ping`
+  when `body.watch` matches, and raise the prune gap to 90s. Applied to tracked
+  `server/arcade-server.mjs` **and** live `~/arcade-server.mjs`; restarted.
+- **Watch chrome** in `routeWatch`: `.watch-player` with hover controls (mute,
+  volume, PiP, theater, fullscreen, chat toggle), keys f/t/m. `.watch-side`
+  holds the chat in fullscreen; `onFsChange` moves the single `chatWidget()` box
+  between `.watch-chat-slot` (under the video) and `.watch-side-slot`.
+- Lesson repeated: the headless page served the SW-cached bundle until the
+  `VERSION`/`?v=` bump (3.12) — always bump before testing.
+
 ## Session 2026-09-13 — watch-only, toolbar-coupled EJS bar
 - `startWatchParty(silent)` extracted from `watchBtn.onclick`; a host now starts
   it silently after auto-open hosting and after an explicit "Create room", when
