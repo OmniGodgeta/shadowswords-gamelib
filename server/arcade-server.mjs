@@ -1120,6 +1120,7 @@ const server = http.createServer(async (req, res) => {
       const reuse = (typeof b.reuse === "string" && /^[0-9a-f]{4,32}$/i.test(b.reuse)) ? b.reuse : null;
       const id = reuse || crypto.randomBytes(4).toString("hex");
       NP_SIG.set(id, { id, host: b.cid || "", guest: "", sys: b.sys, file: b.file, name: b.name || "Game",
+        party: (typeof b.party === "string" && /^[0-9a-f]{4,32}$/i.test(b.party)) ? b.party : null,
         n: 0, msgs: [], at: now() });
       jsonRes(res, 200, { id }); return;
     }
@@ -1159,6 +1160,7 @@ const server = http.createServer(async (req, res) => {
           ? r.msgs.filter((m) => m.from === r.host && m.n > after)
           : r.msgs.filter((m) => m.n > after);
       jsonRes(res, 200, { host: r.host, guest: r.guest, sys: r.sys, file: r.file, name: r.name,
+        party: r.party || null,
         after: r.n, msgs });
       return;
     }

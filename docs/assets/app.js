@@ -319,6 +319,13 @@ function npStateSyncAllowed() {
 }
 // How often the host re-pushes its savestate. N64 states are big, so less often.
 function npSyncEvery() { return window.__playSys === "n64" ? 10000 : 6000; }
+// Effective netplay mode. "auto" mirrors the host on systems whose savestates
+// are too big to sync smoothly (N64) and shares inputs everywhere else.
+function npModeFor() {
+  const m = prefs().npMode || "auto";
+  if (m !== "auto") return m;
+  return window.__playSys === "n64" ? "video" : "input";
+}
 function npHookInput(tries = 0) {
   const gm = window.EJS_emulator?.gameManager;
   // A guest that joins while the ROM is still booting has no gameManager yet;
@@ -388,7 +395,8 @@ function npBindDc(dc) {
         npLog("renegotiate: offer sent");
       } catch (e) { npLog(`renegotiate err ${e?.message || e}`); }
     };
-    if (prefs().npVoice === true) npSetVoice(true).then(() => { npUpdatePtt(); npIndicator?.(); });
+    // Don't open a second mic path if we're already on a party call.
+    if (prefs().npVoice === true && !(PARTY.id && PARTY.micTrack)) npSetVoice(true).then(() => { npUpdatePtt(); npIndicator?.(); });
     // Live RTT readout (shown in the sheet + badge).
     clearInterval(NP.pingT);
     NP.pingT = setInterval(() => {
@@ -497,7 +505,7 @@ function npStartHostStream() {
   // Mirroring the host's screen (video) is opt-in because encode + decode adds
   // lag; it is now allowed for N64 too (the watch stream proves phones decode
   // WebRTC video fine).
-  if (prefs().npMode !== "video") {
+  if (npModeFor() !== "video") {
     npLog("host video off; using low-latency input/state sync");
     return;
   }
@@ -916,7 +924,7 @@ function npPoll() {
 }
 async function npHost({ sys, file, name, reuse }) {
   const response = await fetch(`${API}/np/room`, { method: "POST", headers: { "content-type": "application/json", ...authHdr() },
-    body: JSON.stringify({ sys, file, name, cid: CID, reuse: reuse || undefined }) });
+    body: JSON.stringify({ sys, file, name, cid: CID, reuse: reuse || undefined, party: PARTY.id || null }) });
   let d = null;
   try { d = await response.json(); } catch { /* handled below */ }
   if (!response.ok || !d?.id) throw new Error(d?.error || `Room server returned HTTP ${response.status}`);
@@ -1002,6 +1010,11 @@ async function npJoin(room) {
   try {
     await npWaitLinked();
     npLog("linked");
+    // If the host is running a party call, hop on it so Player 2 and any
+    // watchers share one voice channel.
+    if (info.party && !PARTY.id) {
+      try { await partyJoin(info.party); await partyJoinCall(false); } catch { /* */ }
+    }
   } catch (e) {
     npLog(`join link failed: ${e?.message || e}`);
     npStop();
@@ -1317,6 +1330,14 @@ function openNetplaySheet(sys, file, name) {
     prefRow("Auto-unmute P2's video", "npAutoUnmute"),
     prefRow("Let friends join my games", "npOpen"),
     prefRow("Let friends watch (no controls)", "npWatch"),
+    el("label", { style: "display:flex;gap:8px;align-items:center;margin:6px 0;font-size:12px" },
+      (() => {
+        const s = el("select", {}, ...[["auto", "Auto (recommended)"], ["input", "Lowest lag (share inputs)"], ["video", "Mirror my screen (video)"]]
+          .map(([v, t]) => el("option", { value: v, textContent: t, selected: (prefs().npMode || "auto") === v })));
+        s.onchange = () => { setPref("npMode", s.value); toast("Netplay mode saved — restart netplay to apply"); };
+        return s;
+      })(),
+      el("span", { textContent: "Netplay mode" })),
     el("button", { className: "btn btn-ghost", style: "width:100%;margin:6px 0", textContent: "🎚 Sound settings (mic mode, noise cancelling, voice polish)",
       onclick: () => { o.remove(); soundPanel(); } }),
     prefRow("I usually host", "npHostByDefault")));
@@ -1526,7 +1547,7 @@ const PREF_DEFAULTS = {
   ffPadButton: 7, slowPadButton: 6, pttPadButton: -1,
   ffKey: "", slowKey: "", pttKey: "",
   micMode: "open", noiseLevel: "light", voiceFx: "none",
-  npMode: "input", npOpen: true, npWatch: true, npTurnUrl: "", npTurnUser: "", npTurnPass: "",
+  npMode: "auto", npOpen: true, npWatch: true, npTurnUrl: "", npTurnUser: "", npTurnPass: "",
   padLayout: "auto",
   raEnabled: false, raUser: "", raKey: "",
 };

@@ -6,6 +6,23 @@ agent can pick up context without re-deriving it. Read `AGENTS.md` first, then
 this. (Netplay internals: `NETPLAY-UI-CONTRACT.md`. Roadmap split:
 `FEATURE-BACKLOG.md`.)
 
+## Session 2026-09-14 — N64 lag, party/netplay voice, TURN
+- Owner: N64 Smash connected but lagged 1000–4000ms. Cause: the multi-MB N64
+  savestate sync (3.14) shares the ordered datachannel, so the RTT ping queued
+  behind it and the guest stalled. Fix: `npMode` default is now `"auto"` and
+  `npModeFor()` returns `"video"` for N64 (mirror the host — no savestate sync,
+  no stalls) and `"input"` elsewhere. The Netplay sheet has an Auto / Lowest lag
+  / Mirror selector. N64 mirroring is acceptable because the watch stream proved
+  phones decode WebRTC video.
+- **One voice channel**: `/np/room` now stores `party` and `/np/sig` returns it;
+  `npHost` sends `PARTY.id`; `npJoin` joins that party as a talker after linking.
+  `npBindDc.dc.onopen` skips the separate netplay mic when a party mic is live
+  (avoids two open mics). Applied to tracked + live server; restarted.
+- **TURN**: `server/turn/turnserver.conf` + `README.md` + `tools/setup-turn.sh`
+  (root-run) set up a tailnet-only coturn. Settings → Netplay relay fields feed
+  `iceServers()`. Diagnostics `cands=` shows `relay×N` when it is in use.
+- Removed the unused `_lastProbeTime` field from the app.
+
 ## Session 2026-09-14 — N64 netplay drift (state sync re-enabled)
 - Owner: P2 joined and controlled, but after a few seconds the phone stayed on
   character select while the PC was in game (N64 Smash). Root cause: the 2.94-era

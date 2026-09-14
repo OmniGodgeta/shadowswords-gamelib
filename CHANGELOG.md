@@ -1,5 +1,19 @@
 # Changelog
 
+## 3.15
+- **N64 netplay lag fixed**: mirroring the host is now the **default for N64**
+  ("Auto" netplay mode → video), because its multi-MB savestates stalled the
+  ordered channel (1–4s hitches, and the RTT readout queued behind them). Other
+  systems keep lowest-lag input sharing; the Netplay mode selector now offers
+  Auto / Lowest lag / Mirror.
+- **One call for netplay + watchers**: the netplay room advertises the host's
+  party id, so Player 2 joins the same voice party as spectators (and the
+  separate netplay mic is skipped when a party mic is already live).
+- Added a **TURN relay setup** (`server/turn/`, `tools/setup-turn.sh`) for when
+  direct ICE can't connect; point Settings → Netplay relay at it.
+- Server change (`/np/room` + `/np/sig` carry `party`) — restart
+  `arcade-server.service`.
+
 ## 3.14
 - **N64 netplay drift fixed**: savestate sync was disabled for N64 (to avoid the
   stalls its large states can cause), so the guest's own core drifted and never
