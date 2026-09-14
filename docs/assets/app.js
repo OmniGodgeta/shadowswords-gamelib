@@ -465,10 +465,14 @@ function npSendLocalSdp() {
 // guest sees and hears the host's game (perfect sync, guest lag ≈ 1 RTT).
 function npStartHostStream() {
   NP.video = false;
-  // N64's heavier WebGL canvas and Android WebView video decode make the
-  // host-video path unreliable. Input/state sync keeps both mupen cores
-  // local and avoids a second media negotiation before the data channel opens.
-  if (window.__playSys === "n64") { npLog("N64 host video disabled; using input/state sync"); return; }
+  // Input/state sync is the default: both cores run locally so the guest's
+  // input latency is ~1 RTT (the host mirror is re-synced periodically).
+  // Mirroring the host's screen (video) is opt-in because encode + decode adds
+  // noticeable lag, and N64/Android cannot handle the extra media path.
+  if (window.__playSys === "n64" || prefs().npMode !== "video") {
+    npLog("host video off; using low-latency input/state sync");
+    return;
+  }
   try {
     const canvas = document.querySelector("#game canvas");
     if (!canvas) { npLog("host stream: no canvas"); return; }
@@ -484,13 +488,15 @@ function npStartHostStream() {
     const vt = stream.getVideoTracks()[0];
     const at = stream.getAudioTracks()[0];
     if (vt) {
-      vt.contentHint = "detail";
+      // "motion" keeps the encoder latency-focused; "detail" buffered frames
+      // for quality and made mirrored play feel laggy.
+      vt.contentHint = "motion";
       const sender = NP.pc.addTrack(vt, new MediaStream([vt])); // video-only stream for #np-video
       try {
         const p = sender.getParameters();
-        p.degradationPreference = "maintain-resolution";
-        p.encodings = [{ ...(p.encodings?.[0] || {}), maxBitrate: 8000000, maxFramerate: 60, scaleResolutionDownBy: 1 }];
-        sender.setParameters(p).then(() => npLog("host video quality set to 8 Mbps / 60 FPS"))
+        p.degradationPreference = "maintain-framerate";
+        p.encodings = [{ ...(p.encodings?.[0] || {}), maxBitrate: 4000000, maxFramerate: 60, scaleResolutionDownBy: 1 }];
+        sender.setParameters(p).then(() => npLog("host video set to 4 Mbps / 60 FPS (low latency)"))
           .catch((e) => npLog(`host video quality unchanged: ${e?.message || e}`));
       } catch (e) { npLog(`host video quality unchanged: ${e?.message || e}`); }
     }
@@ -780,6 +786,10 @@ function npStartPc(isHost) {
   NP.pc.ontrack = (e) => {
     npLog(`track ${e.track.kind}`);
     if (e.track.kind === "video") {
+      // Ask the receiver to render immediately instead of building a jitter
+      // buffer — the biggest source of "mirrored play feels laggy".
+      try { if (e.receiver) e.receiver.playoutDelayHint = 0; } catch { /* */ }
+      if (e.streams?.[0]?.getVideoTracks) e.streams[0].getVideoTracks().forEach((t) => { try { t.contentHint = "motion"; } catch { /* */ } });
       if (NP.role === "guest") npShowHostVideo((e.streams && e.streams[0]) || new MediaStream([e.track]));
     } else if (e.track.kind === "audio") {
       (NP.remoteAudio ||= new MediaStream()).addTrack(e.track);
@@ -1490,6 +1500,7 @@ const PREF_DEFAULTS = {
   ffPadButton: 7, slowPadButton: 6, pttPadButton: -1,
   ffKey: "", slowKey: "", pttKey: "",
   micMode: "open", noiseLevel: "light", voiceFx: "none",
+  npMode: "input",
   raEnabled: false, raUser: "", raKey: "",
 };
 const AUTH = { token: LS.get("auth", null), user: null };
@@ -3645,7 +3656,9 @@ async function routePlayGame(sys, romParam, resume = false) {
       sys, file, name: romName, start, cid: CID,
       who: AUTH.user?.display || prefs().netplayName || null,
       watch: window.__watchId || null,
-      netplay: !!window.__inNetplay,
+      // Advertise the room as soon as it exists, not only once a peer links —
+      // otherwise friends see "Play too" while the host is still waiting for P2.
+      netplay: !!window.__npRoom || !!window.__inNetplay,
       room: window.__npRoom || null,
     }),
   }).then((r) => r.json()).then(handlePingReply).catch(() => {});

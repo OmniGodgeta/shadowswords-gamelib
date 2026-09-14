@@ -6,6 +6,25 @@ agent can pick up context without re-deriving it. Read `AGENTS.md` first, then
 this. (Netplay internals: `NETPLAY-UI-CONTRACT.md`. Roadmap split:
 `FEATURE-BACKLOG.md`.)
 
+## Session 2026-09-13 — netplay lag + presence join + Android cold-start invite
+- Owner: friend saw the host's stream but it was laggy; Android→Android join
+  failed; and while waiting for P2 the presence card showed "Play too".
+- **Version-bump lesson**: the `npMode` default change did nothing until the SW
+  `VERSION`/`?v=` were bumped — WebViews kept the cached bundle. Always ship the
+  bump with netplay/perf changes.
+- **Lag**: `npMode` pref, default `"input"`; `npStartHostStream` returns early
+  unless `prefs().npMode === "video"` (and never for n64). Netplay sheet has a
+  "Netplay mode" select. Video (when chosen) now uses `contentHint:"motion"`,
+  `degradationPreference:"maintain-framerate"`, 4 Mbps cap, and
+  `receiver.playoutDelayHint = 0` in `npStartPc.ontrack`.
+- **Presence join**: the play-ping now sends `netplay: !!window.__npRoom ||
+  !!window.__inNetplay` (was only `__inNetplay`, which stays false until a peer
+  connects), so a waiting host is joinable.
+- **Android cold start**: `MainActivity.configureFlutterEngine` reads the launch
+  `joinUrl` extra (onNewIntent isn't called when the process was killed) and
+  forwards it; Dart queues it in `_pendingInviteUrl` until the first page
+  finishes. Native join URLs now URL-encode each sys/file segment (`+`→`%20`).
+
 ## Session 2026-09-13 — PTT keybind, sound settings, mobile toolbar, Continue
 - PTT couldn't be keyboard-bound because the playback rows only captured a
   controller button. `playbackRow` now renders a **kbd** and a **pad** chip for

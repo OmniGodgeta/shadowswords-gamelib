@@ -1,5 +1,17 @@
 # Changelog
 
+## 3.5
+- **Netplay lag**: input/state sync is now the default (`npMode: "input"`) so
+  Player 2's inputs reach Player 1 in ~1 RTT instead of waiting on the host's
+  encoded video. Mirroring the host screen is opt-in in the Netplay sheet
+  ("Netplay mode"). The video path, when chosen, now uses `contentHint:"motion"`,
+  a 4 Mbps cap and `playoutDelayHint=0` to cut encode/playout latency.
+- **Presence/join fix**: a waiting host now advertises its room as soon as it is
+  created (`window.__npRoom`), not only once P2 connects — friends were seeing
+  "Play too" instead of "Join as P2" while the host waited.
+- Android `v1.6.9`: invite notifications tapped from a **cold start** now join
+  (the launch intent is forwarded), and the join URL URL-encodes the ROM path.
+
 ## 3.4
 - Playback shortcuts can now be bound to a **keyboard key** as well as a
   controller button (Input settings → Playback): Push-to-talk, Fast-forward and
