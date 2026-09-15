@@ -270,7 +270,7 @@ function snapshotNetplay(sys, file, name) {
 }
 /* WebRTC netplay — replaces EmulatorJS's broken savestate lockstep.
    Host = player 1, guest = player 2. Inputs ride a datachannel on the tailnet. */
-const NP = { role: null, peerRole: null, room: null, pc: null, dc: null, myP: 0, after: 0, pollT: 0, pollFails: 0, reconnectT: 0, alive: false, pendingIce: [], rxId: null, rxLen: 0, rxGot: 0, rxChunks: [], txBusy: false, syncPromise: null, lastSyncError: "", syncT: 0, sent: 0, recv: 0, inputsSent: 0, inputsApplied: 0, video: false, hostStream: null, mic: null, micTrack: null, micSender: null, remoteAudio: null, pingT: 0, rtt: 0, meReady: false, peerReady: false, micMuted: false, videoFailed: false, iceCand: {} };
+const NP = { role: null, peerRole: null, room: null, pc: null, dc: null, dci: null, myP: 0, after: 0, pollT: 0, pollFails: 0, reconnectT: 0, alive: false, pendingIce: [], rxId: null, rxLen: 0, rxGot: 0, rxChunks: [], txBusy: false, syncPromise: null, lastSyncError: "", syncT: 0, sent: 0, recv: 0, inputsSent: 0, inputsApplied: 0, video: false, hostStream: null, mic: null, micTrack: null, micSender: null, remoteAudio: null, pingT: 0, rtt: 0, meReady: false, peerReady: false, micMuted: false, videoFailed: false, iceCand: {}, txSeq: 0, rxSeq: {} };
 
 // Netplay diagnostics: kept in memory and shown in the Netplay sheet so a
 // failure can be read off a phone with no devtools.
@@ -337,6 +337,18 @@ function npHookInput(tries = 0) {
   if (gm.__sswRtc) return;
   gm.__sswRtc = true;
   const orig = gm.simulateInput.bind(gm);
+  // Real-time presses go out on NP.dci (unordered, unreliable) when it's up —
+  // the reliable "np" channel also carries multi-hundred-KB savestate chunks
+  // every few seconds, and ordered delivery head-of-line-blocks anything
+  // queued behind them, which is exactly the 1-4s stall N64 hit before it
+  // moved to video mode (3.15). A stray dropped/late press is harmless here:
+  // the periodic savestate resync (or the host's own state, in video mode)
+  // is what actually keeps the two sides in agreement.
+  const sendInput = (pp, ii, vv) => {
+    const ch = (NP.dci && NP.dci.readyState === "open") ? NP.dci : NP.dc;
+    try { ch.send(JSON.stringify({ t: "i", p: pp, i: ii, v: vv, s: ++NP.txSeq })); NP.inputsSent++; }
+    catch (e) { npLog(`input send failed: ${e?.message || e}`); }
+  };
   gm.simulateInput = (p, i, v) => {
     if (!NP.dc || NP.dc.readyState !== "open") return orig(p, i, v);
     if ([24, 25, 26, 27, 28, 29].includes(i)) return orig(p, i, v);
@@ -346,15 +358,35 @@ function npHookInput(tries = 0) {
       // P1 presses locally; the guest forwards its presses to the host and
       // applies nothing (it just renders the host's stream).
       if (me === 0) orig(0, i, v);
-      else {
-        try { NP.dc.send(JSON.stringify({ t: "i", p: 1, i, v })); NP.inputsSent++; }
-        catch (e) { npLog(`input send failed: ${e?.message || e}`); }
-      }
+      else sendInput(1, i, v);
       return;
     }
     npCore(me, i, v);
-    try { NP.dc.send(JSON.stringify({ t: "i", p: me, i, v })); NP.inputsSent++; }
-    catch (e) { npLog(`input send failed: ${e?.message || e}`); }
+    sendInput(me, i, v);
+  };
+}
+// The low-latency input channel: only ever carries {t:"i"} presses. Unordered +
+// unreliable (maxRetransmits 0) so a lost or late packet is just dropped
+// instead of stalling every input behind it (SCTP ordered delivery would
+// otherwise hold later, still-relevant presses back waiting for a retransmit).
+// `s` is a per-sender monotonic counter; since delivery can reorder, a message
+// older than the last one applied for that exact (player, input) pair is
+// discarded rather than replayed over a newer state.
+function npBindInputDc(dc) {
+  NP.dci = dc;
+  dc.onopen = () => npLog(`input channel open role=${NP.role}`);
+  dc.onclose = () => npLog("input channel closed");
+  dc.onerror = (e) => npLog(`input channel error ${e?.error?.message || e?.message || "unknown"}`);
+  dc.onmessage = (e) => {
+    if (typeof e.data !== "string") return;
+    let m; try { m = JSON.parse(e.data); } catch { return; }
+    if (m.t !== "i") return;
+    const key = `${m.p}:${m.i}`;
+    const seq = m.s || 0;
+    if (seq && (NP.rxSeq[key] || 0) >= seq) return;
+    if (seq) NP.rxSeq[key] = seq;
+    npCore(m.p, m.i, m.v);
+    NP.inputsApplied++;
   };
 }
 function npBindDc(dc) {
@@ -847,10 +879,12 @@ function npStartPc(isHost) {
     npStartHostStream();     // canvas + tapped game audio, added before the offer
     const dc = NP.pc.createDataChannel("np", { ordered: true });
     npBindDc(dc);
+    const dci = NP.pc.createDataChannel("npi", { ordered: false, maxRetransmits: 0 });
+    npBindInputDc(dci);
     NP.pc.createOffer().then((o) => NP.pc.setLocalDescription(o)).then(sendSdpSoon)
       .catch((e) => npLog(`offer failed: ${e?.message || e}`));
   } else {
-    NP.pc.ondatachannel = (e) => npBindDc(e.channel);
+    NP.pc.ondatachannel = (e) => { if (e.channel.label === "npi") npBindInputDc(e.channel); else npBindDc(e.channel); };
   }
 }
 async function npHandleSig(m) {
@@ -1041,6 +1075,7 @@ function npStop() {
   NP.alive = false; clearTimeout(NP.pollT); clearTimeout(NP.reconnectT); NP.pollT = 0; NP.reconnectT = 0;
   clearInterval(NP.syncT); NP.syncT = 0;
   try { NP.dc && NP.dc.close(); } catch { /* */ }
+  try { NP.dci && NP.dci.close(); } catch { /* */ }
   try { NP.pc && NP.pc.close(); } catch { /* */ }
   try { NP.hostStream?.getTracks().forEach((t) => t.stop()); } catch { /* */ }
   try { NP.mic?.getTracks().forEach((t) => t.stop()); } catch { /* */ }
@@ -1053,7 +1088,7 @@ function npStop() {
   document.getElementById("np-ptt")?.remove();
   const cv = document.querySelector("#game canvas");
   if (cv) cv.style.visibility = "";
-  NP.dc = NP.pc = NP.room = NP.role = null; NP.peerRole = null; NP.myP = 0; NP.pendingIce = []; NP.rxId = null; NP.rxLen = 0; NP.rxGot = 0; NP.rxChunks = []; NP.txBusy = false; NP.syncPromise = null; NP.lastSyncError = ""; NP.pollFails = 0;
+  NP.dc = NP.pc = NP.room = NP.role = null; NP.dci = null; NP.peerRole = null; NP.myP = 0; NP.pendingIce = []; NP.rxId = null; NP.rxLen = 0; NP.rxGot = 0; NP.rxChunks = []; NP.txBusy = false; NP.syncPromise = null; NP.lastSyncError = ""; NP.pollFails = 0; NP.txSeq = 0; NP.rxSeq = {};
   window.__inNetplay = false; window.__npRoom = null;
   npIndicator();
 }
@@ -1138,12 +1173,42 @@ function wnpStop() {
   WNP.pc = null; WNP.stream = null; WNP.room = null; WNP.pendingIce = [];
   document.getElementById("wnp-video")?.remove();
 }
+// Safety net for watch parties: pushes JPEG frames to the /watch/:id/frame
+// endpoint so a watcher whose WebRTC connection never comes up still sees
+// something. Idempotent (checks window.__watchT) — safe to call more than
+// once, from either the explicit "Start watch party" path or the connection
+// watchdog in wnpStartHost below.
+function startWatchJpegFallback() {
+  if (window.__watchT) return;
+  window.__watchT = setInterval(() => {
+    const c = document.querySelector("#game canvas");
+    if (!c || !window.__watchId || !c.toBlob) return;
+    c.toBlob((blob) => {
+      if (!blob) return;
+      fetch(`${API}/watch/${window.__watchId}/frame`, { method: "PUT", body: blob, keepalive: true }).catch(() => {});
+    }, "image/jpeg", 0.55);
+  }, 160);
+}
 async function wnpStartHost() {
   const d = await fetch(`${API}/np/room`, { method: "POST", headers: { "content-type": "application/json", ...authHdr() },
     body: JSON.stringify({ sys: window.__playSys, file: window.__playFile, name: document.title, cid: CID, watch: true }) }).then((r) => r.json());
   WNP.room = d.id; WNP.after = 0; WNP.alive = true;
   WNP.pc = new RTCPeerConnection({ iceServers: iceServers() });
   WNP.pc.onicecandidate = (e) => { if (e.candidate) wnpSendSig({ ice: e.candidate }); };
+  // The auto-watch path (any host is watchable by default) skips the JPEG
+  // loop to spare the host's GPU when WebRTC is doing the job. But that
+  // decision was made once, locally, from whether *this* device's capture
+  // succeeded — it says nothing about whether a given watcher can actually
+  // complete the WebRTC connection (mobile NAT/ICE is the common failure).
+  // Once someone has actually answered (remoteDescription set), give the
+  // connection a few seconds, then fall back to JPEG if it never connects —
+  // otherwise that watcher sees a blank player with no recovery.
+  let answered = false;
+  WNP.pc.addEventListener("signalingstatechange", () => {
+    if (answered || !WNP.pc.remoteDescription) return;
+    answered = true;
+    setTimeout(() => { if (WNP.pc && WNP.pc.connectionState !== "connected") startWatchJpegFallback(); }, 6000);
+  });
   let stream = null;
   try {
     const canvas = document.querySelector("#game canvas");
@@ -1256,7 +1321,7 @@ function openNetplaySheet(sys, file, name) {
       title: "Send a fresh offer if Player 2 is stuck connecting",
       onclick: async () => {
         try { NP.pc?.close(); } catch { /* */ }
-        NP.pc = null; NP.dc = null;
+        NP.pc = null; NP.dc = null; NP.dci = null;
         npStartPc(true);
         npIndicator();
         toast("Sent a fresh offer — waiting for Player 2");
@@ -1345,7 +1410,7 @@ function openNetplaySheet(sys, file, name) {
   const diag = el("details", { style: "margin-top:12px" },
     el("summary", { className: "hint", style: "cursor:pointer", textContent: "Diagnostics" }),
     el("p", { className: "hint", style: "font-size:11px;opacity:.8;margin:8px 0 2px",
-      textContent: `role=${NP.role || "-"} peer=${NP.peerRole || "-"} mode=${NP.video ? "player-stream" : "input-echo"} pc=${NP.pc?.connectionState || "-"} ice=${NP.pc?.iceConnectionState || "-"} cands=${Object.entries(NP.iceCand || {}).map(([k, v]) => `${k}×${v}`).join(",") || "-"} dc=${NP.dc?.readyState || "-"} room=${NP.room || "-"} rtt=${NP.rtt || "-"}ms states=${NP.sent}/${NP.recv} inputs=${NP.inputsSent}/${NP.inputsApplied} sync=${NP.lastSyncError || "ok"}` }));
+      textContent: `role=${NP.role || "-"} peer=${NP.peerRole || "-"} mode=${NP.video ? "player-stream" : "input-echo"} pc=${NP.pc?.connectionState || "-"} ice=${NP.pc?.iceConnectionState || "-"} cands=${Object.entries(NP.iceCand || {}).map(([k, v]) => `${k}×${v}`).join(",") || "-"} dc=${NP.dc?.readyState || "-"} dci=${NP.dci?.readyState || "-"} room=${NP.room || "-"} rtt=${NP.rtt || "-"}ms states=${NP.sent}/${NP.recv} inputs=${NP.inputsSent}/${NP.inputsApplied} sync=${NP.lastSyncError || "ok"}` }));
   if (window.__npLast) diag.append(el("p", { className: "hint", style: "font-size:11px;opacity:.6", textContent: "last: " + window.__npLast }));
   kids.push(diag);
   kids.push(el("button", { className: "btn btn-ghost", style: "width:100%;margin:8px 0 0", textContent: "Close", onclick: () => o.remove() }));
@@ -2248,7 +2313,13 @@ function openTvChannel(c) {
 }
 
 // ---- iptv-org catalog (thousands of free channels) -----------------------
-const IPTV_SRC = "https://iptv-org.github.io/iptv/index.m3u";
+// Proxied through arcade-server (see serveIptv) rather than fetched directly
+// from iptv-org.github.io — the direct cross-origin fetch depended on the
+// *viewer's* network reaching that host, which some DNS/ad-block setups
+// blocklist (IPTV aggregators are a common blocklist entry), silently
+// yielding zero channels with no visible error. Same SELF_HOSTED/TS fallback
+// pattern as VIDEO_BASE — the public GH Pages mirror has no dynamic backend.
+const IPTV_SRC = SELF_HOSTED ? "/iptv/index.m3u" : TS + "/iptv/index.m3u";
 let _iptvCatalog = null;
 function parseM3U(text) {
   const out = [];
@@ -2954,8 +3025,17 @@ async function routeWatch(id) {
     document.removeEventListener("fullscreenchange", onFsChange);
     player.classList.remove("theater");
     document.documentElement.classList.remove("watch-theater");
+    clearInterval(videoStallT);
     wnpStop();
   };
+  // Tracks whether the WebRTC stream has actually produced a frame — distinct
+  // from WNP.alive, which just means a connection attempt started. Checking
+  // `vid.style.display === "none"` here used to be a no-op: that hidden state
+  // comes from the `.watch-video` CSS class, not an inline style, so the DOM
+  // property never read back "none" and the JPEG fallback never engaged when
+  // the stream failed to connect (blank player, nothing visible at all).
+  let videoLive = false;
+  let videoStallT = 0;
   const poll = async () => {
     if (token !== state.render) { cleanup(); return; }
     try {
@@ -2975,6 +3055,17 @@ async function routeWatch(id) {
             vid.srcObject = stream;
             vid.style.display = "block";
             img.style.display = "none";
+            videoLive = true;
+            clearInterval(videoStallT);
+            // A track can connect and then stall (host backgrounded, GPU
+            // capture hiccup, mobile decode issue) — keep watching so a dead
+            // stream falls back to the JPEG poster instead of freezing.
+            let stalled = 0;
+            videoStallT = setInterval(() => {
+              if (!videoLive) return clearInterval(videoStallT);
+              if (vid.readyState >= 2 && !vid.paused) { stalled = 0; return; }
+              if (++stalled >= 4) { videoLive = false; vid.style.display = "none"; clearInterval(videoStallT); }
+            }, 1000);
             vid.play?.().then(() => { vid.muted = false; applyVol(); }).catch(() => { /* tap to unmute */ });
           });
         }
@@ -2983,7 +3074,7 @@ async function routeWatch(id) {
           partyJoined = true;
           partyJoin(info.party).then(() => partyJoinCall(true)).catch(() => {});
         }
-        if (!info.room || !WNP.alive || vid.style.display === "none") {
+        if (!info.room || !videoLive) {
           img.src = `${API}/watch/${id}/frame?t=${Date.now()}`;
           img.style.display = "block";
         }
@@ -3546,8 +3637,13 @@ async function routePlayGame(sys, romParam, resume = false) {
   const saveMenu = el("div", { className: "save-menu", hidden: true }, saveBtn, saveAsBtn, loadBtn);
   const saveGroup = el("div", { className: "player-control-group save-group", role: "group", ariaLabel: "Save controls" }, saveMenuBtn, saveMenu);
   const flagBtn = el("button", { className: "pbtn", id: "flag-btn", textContent: "⚑ Report", title: "Report a problem with this game" });
+  // EJS's native fullscreen button is a dead no-op in-app (see EJS_Buttons
+  // above) — this is the working replacement, always reachable here even
+  // while the top bar (not just the collapsed FABs) is open.
+  const rotateBtn = el("button", { className: "pbtn", id: "rotate-btn", textContent: "🔄 Rotate screen", title: "Switch between landscape and portrait", hidden: !IN_APP,
+    onclick: () => { moreMenu.hidden = true; setLandscape(!landNow()); } });
   const moreBtn = el("button", { className: "pbtn more-menu-btn", textContent: "⋯", title: "More controls" });
-  const moreMenu = el("div", { className: "more-menu", hidden: true }, ctrlBtn, gfxBtn, raBtn, chatBtn, noteBtn, flagBtn);
+  const moreMenu = el("div", { className: "more-menu", hidden: true }, ctrlBtn, rotateBtn, gfxBtn, raBtn, chatBtn, noteBtn, flagBtn);
   const moreGroup = el("div", { className: "player-control-group more-group" }, moreBtn, moreMenu);
   if (sys !== "upload") flagBtn.onclick = () => reportGame(sys, file, romName);
   else flagBtn.hidden = true;
@@ -3572,11 +3668,21 @@ async function routePlayGame(sys, romParam, resume = false) {
     shell.append(
       el("button", { type: "button", className: "fab-exit", textContent: "‹", title: "Exit game",
         onclick: (e) => { e.preventDefault(); e.stopPropagation(); exitPlayer(); } }),
-      el("button", { type: "button", className: "chrome-peek", title: "Show controls",
-        onclick: (e) => { e.preventDefault(); e.stopPropagation(); showChrome(); } }),
+      // Same button opens AND closes the toolbar now — was open-only, so the
+      // only way to dismiss it early was to wait out the 5s auto-hide.
+      el("button", { type: "button", className: "chrome-peek", title: "Show or hide controls",
+        onclick: (e) => { e.preventDefault(); e.stopPropagation(); if (shell.classList.contains("show-chrome")) hideChrome(); else showChrome(); } }),
       el("button", { type: "button", className: "fab-pad", title: "Hide or show touch controls",
         onclick: (e) => { e.preventDefault(); e.stopPropagation(); toggleTouchPad(); } }),
+      el("button", { type: "button", className: "fab-ctrl", textContent: "🔄", title: "Rotate: landscape / portrait",
+        onclick: (e) => { e.preventDefault(); e.stopPropagation(); setLandscape(!landNow()); } }),
     );
+    // Tapping the game itself (not a control) closes an open toolbar instead of
+    // waiting out the 5s auto-hide — careful not to eat taps meant for EJS's
+    // own on-screen gamepad, which lives inside #game too.
+    shell.querySelector("#game")?.addEventListener("pointerdown", (e) => {
+      if (shell.classList.contains("show-chrome") && !e.target.closest(".ejs_virtualGamepad_parent, .nipple")) hideChrome();
+    }, { capture: true });
   }
   document.body.append(shell);
   shell.addEventListener("click", (e) => {
@@ -3633,7 +3739,11 @@ async function routePlayGame(sys, romParam, resume = false) {
   window.EJS_startOnLoaded = true;
   const bios = sys !== "upload" && meta(sys).bios;
   if (bios) window.EJS_biosUrl = ROM_BASE + "bios/" + encodeURIComponent(bios);
-  window.EJS_Buttons = { restart: true, settings: true, fullscreen: true, saveState: true,
+  // EJS's own fullscreen button calls the standard Fullscreen API directly —
+  // that's a silent no-op in the Android WebView (no onShowCustomView support
+  // wired up there), so in-app it's a dead button. Hide it there; the more-menu
+  // "Rotate screen" entry below uses the working native-rotation bridge instead.
+  window.EJS_Buttons = { restart: true, settings: true, fullscreen: !IN_APP, saveState: true,
     loadState: true, screenshot: true, cheat: true, gamepad: true, netplay: false,
     exitEmulation: true };
   const vf = gfxFilterFor(sys);
@@ -3937,18 +4047,10 @@ async function routePlayGame(sys, romParam, resume = false) {
         ping(false);
         // The JPEG frame loop is a fallback for browsers without WebRTC. In
         // silent (auto) mode skip it unless the WebRTC capture failed, since
-        // canvas.toBlob every 160ms hammers the host's GPU.
-        if (!silent || !room) {
-          const grab = () => document.querySelector("#game canvas");
-          window.__watchT = setInterval(() => {
-            const c = grab();
-            if (!c || !window.__watchId || !c.toBlob) return;
-            c.toBlob((blob) => {
-              if (!blob) return;
-              fetch(`${API}/watch/${window.__watchId}/frame`, { method: "PUT", body: blob, keepalive: true }).catch(() => {});
-            }, "image/jpeg", 0.55);
-          }, 160);
-        }
+        // canvas.toBlob every 160ms hammers the host's GPU — wnpStartHost's
+        // own connection watchdog starts it later if a watcher answers but
+        // never actually connects.
+        if (!silent || !room) startWatchJpegFallback();
         return window.__watchId;
       } catch { if (!silent) toast("Couldn't start a watch party"); return null; }
     };

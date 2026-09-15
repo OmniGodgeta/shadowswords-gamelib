@@ -6,6 +6,211 @@ agent can pick up context without re-deriving it. Read `AGENTS.md` first, then
 this. (Netplay internals: `NETPLAY-UI-CONTRACT.md`. Roadmap split:
 `FEATURE-BACKLOG.md`.)
 
+## Session 2026-09-16 (round 3) — Live TV proxy fix (3.19)
+- Owner: "In the lounge section, the Live TV doesn't load any channels."
+- Diagnosed by testing each layer in isolation rather than guessing: the
+  local curated `assets/live-tv.json` (3 real channels after the `.m3u`
+  placeholder filter) is same-origin and fine; `curl`-fetching iptv-org's
+  `index.m3u` directly (2.5MB) returned 200 with `access-control-allow-
+  origin: *` (CORS is NOT the problem); running the app's own `parseM3U()`
+  against the real fetched file produced 11,033 channels correctly. Every
+  piece worked in isolation — meaning the failure has to be specific to the
+  *viewer's own browser/network* reaching `iptv-org.github.io` directly
+  (most likely a DNS/ad-block list — IPTV-aggregator domains are a common
+  blocklist entry — though this couldn't be confirmed without the owner's
+  actual device). `routeTv()`'s `.catch(() => [])` swallows exactly this
+  failure silently, which is why nothing appeared and no error showed.
+- **Fix**: added `serveIptv()` to `arcade-server.mjs` — disk-cached proxy of
+  the playlist at `/iptv/index.m3u`, 30 min TTL (matches the existing
+  `serveEjs` cache-then-fetch pattern, but time-based since this file
+  legitimately changes rather than being immutable-once-fetched). `app.js`'s
+  `IPTV_SRC` now follows the same `SELF_HOSTED ? "/x/" : TS+"/x/"` pattern as
+  `VIDEO_BASE` — browser now only ever talks to our own origin, sidestepping
+  whatever was blocking the viewer's direct fetch entirely rather than
+  chasing the specific blocklist/DNS cause. Added `iptv` to sw.js's
+  never-cache regex (server already handles freshness).
+- Applied to **both** `server/arcade-server.mjs` (tracked) and the live
+  `~/arcade-server.mjs` (untracked, live-only per AGENTS.md §3) — diffed
+  them first (only pre-existing harmless comment differences), patched both
+  identically, `node --check` on both, restarted `arcade-server.service`,
+  verified the new endpoint live (`curl 127.0.0.1:8710/iptv/index.m3u` → 200,
+  2.5MB, correct content).
+- Bumped to 3.19. Owner said **"push the update on website and android app
+  when done, double check for no bugs or errors"** — publish now authorized
+  (this and every 3.15-3.18 change from earlier today), see the wrap-up at
+  the end of this session for what actually got pushed/built/released.
+
+## Session 2026-09-16 (round 2) — Android fullscreen/orientation, toolbar close,
+## touch-pad z-index hardening, NDS touch confirmed-upstream (3.18)
+- Owner batched 4 asks, said **"let publish only after these fixes"** — so
+  nothing has been committed/pushed/released yet (this and the 3.15-3.17 work
+  are all still uncommitted working-tree diffs, still just live on the
+  self-hosted server).
+- **Fullscreen dead on Android**: `EJS_Buttons.fullscreen: true` unconditionally
+  before this — EJS's own button calls `Element.requestFullscreen()` directly,
+  which Android WebView no-ops (no `onShowCustomView`/`onHideCustomView`
+  wired up, which `webview_flutter_android` doesn't provide out of the box).
+  Now `fullscreen: !IN_APP`. Replacement: `rotateBtn` in the more-menu +
+  a `.fab-ctrl` FAB (bottom-right, was dead/unused CSS from an earlier design)
+  both call `setLandscape(!landNow())` — the existing `window.SSPlay`
+  native-rotation bridge, which already worked, just had no manual toggle
+  exposed. **This deliberately reverses** the `EJS_onGameStart` comment
+  ("deliberately no duplicate Portrait control") from whenever 3.13-era
+  netplay-lag work landed — owner explicitly asked for it now, so the old
+  reasoning no longer applies. Scoped to `IN_APP` only per the owner's own
+  phrasing ("only for android") — browser fullscreen/orientation untouched.
+- **Toolbar had no close button**: `.chrome-peek` was open-only; the only
+  dismiss was its 5s auto-hide (`hideChrome`/`showChrome` in `routePlayGame`'s
+  `IN_APP` block). Now a toggle, plus a `pointerdown` listener on `#game`
+  that closes it on any tap that isn't inside `.ejs_virtualGamepad_parent`/
+  `.nipple` (guarded so it doesn't eat taps meant for the on-screen gamepad —
+  that guard is important, don't remove it).
+- **Netplay touch pad "disappeared", Hide/Show pad toggle did nothing**:
+  reported on Android, N64 (which defaults to video/mirror mode), joined a PC
+  host, Mario Kart 64. Two DIFFERENT things share the name "pad" here — don't
+  conflate them again: `.fab-pad` is our own floating toggle button (toggles
+  `html.hide-touch`, which `display:none`s EJS's pad); `.ejs_virtualGamepad_
+  parent`/`.nipple` is EmulatorJS's actual on-screen D-pad/buttons the user
+  plays with. The report is almost certainly about the latter going invisible.
+  Working theory (NOT confirmed live — no second Android device here):
+  NETPLAY-UI-CONTRACT.md already documents the intended stacking (pad
+  z-index~999 above `#np-video`'s z-index:1 in `.player-stage`) as a **known
+  fragile spot** ("don't add a stacking context that traps it") — but our own
+  stylesheet never actually SET a z-index on the pad, only relied on EJS's
+  own inline value. If that ever weakens/changes, or something upstream of it
+  gains a `transform`/`filter`/`will-change` (any of which creates a new
+  stacking context and would trap it regardless of z-index magnitude), the pad
+  goes invisible **and stays invisible either way `hide-touch` is set** —
+  which exactly matches "toggling did nothing" (the toggle only ever
+  controlled `display`, never the thing actually keeping it hidden).
+  Applied: explicit `z-index:999 !important` on both selectors in our own
+  CSS, so it's enforced rather than assumed. **If this recurs, the next
+  debugging step is live DOM inspection (`getComputedStyle` on the pad vs
+  `#np-video`, and walking the ancestor chain for transform/filter/
+  will-change) — I could not do this blind.** A secondary, unconfirmed
+  suspect: `.ejs_virtualGamepad_button`'s `backdrop-filter:blur(8px)`
+  (style.css ~line 1438) — Android WebView/Chromium has a history of
+  `backdrop-filter` rendering bugs on some builds. Deliberately did NOT
+  remove it this round (unconfirmed, and it's a visible design element) —
+  flagging as the next thing to try if the z-index fix doesn't hold.
+- **NDS touchscreen — confirmed upstream, not app code**: searched, this is
+  a known, currently-unfixed EmulatorJS/melonDS regression (broke in
+  EmulatorJS 4.0.10 / melonds-wasm data v11, affects Android+Mac+Windows
+  alike — [#814](https://github.com/EmulatorJS/EmulatorJS/issues/814),
+  [#394](https://github.com/EmulatorJS/EmulatorJS/issues/394),
+  [#140](https://github.com/EmulatorJS/EmulatorJS/issues/140)). This app
+  doesn't customize NDS touch handling at all — nothing in app.js to fix.
+  One comment thread claims Desmume's touchscreen works where melonDS's
+  doesn't (melonDS otherwise runs better). **Did not attempt the core
+  swap** — unverified whether EmulatorJS's stable build even exposes a
+  separate "desmume" system id the same way `EJS_core="nds"` maps to
+  melonDS (this app's `EJS_LIBRETRO.nds="melonds"` is just an informational
+  display label, not something that selects the core), and swapping the
+  default core for every DS game is a real compatibility/performance
+  trade-off the owner should decide on, not something to flip blind. Asked
+  the owner; waiting on an answer before touching this further.
+- Bumped to 3.18 (sw.js VERSION + both `?v=` in index.html), CHANGELOG entry
+  added. Still not committed to git (owner's "publish only after" hold).
+
+## Session 2026-09-16 — watch party showed nothing + video crispness (3.17)
+- Owner: pressed Watch from the Android app, saw a blank/generic placeholder
+  instead of any video (screenshot showed the native "unstarted `<video>`"
+  play-button icon — not our video, not our JPEG-fallback `<img>`, meaning
+  routeWatch never even triggered its own fallback). Also flagged N64
+  netplay as laggy from Android.
+- **Root cause 1 (site, watcher side)**: `routeWatch`'s fallback-to-JPEG
+  condition checked `vid.style.display === "none"`, but `.watch-video`'s
+  hidden-by-default state is a CSS class rule (`style.css`), not an inline
+  style — `.style.display` never reflects that, so the check was always
+  false once `WNP.alive` (set true the instant a connection is *attempted*,
+  not once it succeeds) went true. Net effect: if the WebRTC stream never
+  actually arrives, neither the video nor the JPEG poster ever shows.
+  Fixed with a real `videoLive` flag (set only in the `onStream` callback)
+  plus a stall-detector copied from `npShowHostVideo`'s pattern.
+- **Root cause 2 (site, host side)**: the host's JPEG safety-net loop
+  (`startWatchJpegFallback`, extracted from inline code in `startWatchParty`)
+  was gated on whether *the host's own* local canvas capture succeeded, not
+  on whether any given watcher's WebRTC connection actually completes. Since
+  "any host is watchable" auto-starts silently by default, the safety net
+  was effectively dead for the default path. `wnpStartHost` now watches its
+  own `RTCPeerConnection` and starts the JPEG loop if a watcher answers
+  (`remoteDescription` set) but the connection doesn't reach `"connected"`
+  within 6s — this is the fix most likely to have actually mattered, since a
+  mobile watcher on a carrier NAT is a very plausible case for exactly that.
+- **Root cause 3 (Android app, `~/Work/shadowswords`)**: `main.dart` never
+  called `AndroidWebViewController.setMediaPlaybackRequiresUserGesture`.
+  Android WebView's documented default is `true` — it blocks ALL `<video>`
+  playback, even muted/autoplay, until a user gesture. The screenshot's
+  gray "unstarted video" placeholder is the tell: our JS *did* promote the
+  video to visible (`vid.style.display="block"`), it just never actually
+  started playing. Netplay's own `#np-video` gets away with it because by
+  the time it needs to autoplay, the user has already tapped through several
+  screens getting into a game; the watch page's video is populated
+  asynchronously off a WebRTC track event, which isn't a gesture in the
+  WebView's eyes. Fixed: `setMediaPlaybackRequiresUserGesture(false)` next to
+  the existing mic-permission handler in `_initWebView()`. Bumped
+  `pubspec.yaml` to 1.6.10+21 (see that repo's own AGENTS.md ritual).
+- **Video crispness**: `#np-video` (netplay mirror) had no `image-rendering`
+  rule, so a game's native (small) resolution was smooth-upscaled by the
+  `<video>` element — likely most of what "video low resolution" (from the
+  prior session) actually was, distinct from any real encoder downscaling.
+  Gave it the same `image-rendering: pixelated` rule `#game canvas` already
+  has (with the same `smooth`/`crt` filter opt-out).
+- **Not verified against a live watcher session or on-device** — same
+  caveat as 2026-09-15: no second client / Android device available here.
+  The Android WebView fix in particular should be tested on a real device;
+  the autoplay-gesture theory is standard/well-documented but unconfirmed
+  for this specific WebView build.
+- **Still open, deferred**: N64-from-Android lag. `#np-video` is already
+  tuned (motion contentHint, maintain-framerate, 4Mbps/60fps,
+  playoutDelayHint=0) — video-mirror mode has an architecturally-inherent
+  ~1 RTT + encode/decode floor that no client change removes; whether
+  Android specifically adds more (software decode path, WebView compositing
+  overhead) needs on-device profiling, not something inferrable from source.
+- Also found but **not fixed**: `WNP` (watch broadcast) is a single global
+  `{pc, ...}` object reused for every watcher — if two people watch the same
+  host simultaneously, their signaling (answers/ICE) collides on the same
+  `RTCPeerConnection`. Only one watcher was reported here; flagging for
+  whoever hits multi-watcher next.
+- Housekeeping: yesterday's 3.16 (netplay input datachannel split) was never
+  committed to git — still sitting as an uncommitted working-tree diff along
+  with today's 3.17. Both are live on the self-hosted server regardless
+  (`arcade-server.mjs` serves `docs/` straight off disk), but git is behind.
+
+## Session 2026-09-15 — netplay input/video lag, generalized fix
+- Owner asked to analyze RetroVerse (site + app) for netplay input/video lag.
+- Video mode was already tuned (3.13-3.15): `contentHint:"motion"`,
+  `degradationPreference:"maintain-framerate"`, 4 Mbps/60fps cap,
+  `receiver.playoutDelayHint = 0`. Nothing further changed there this session —
+  remaining video latency is mostly encode/decode + network, not app-side.
+- **Input mode had the same bug 3.15 fixed for N64, just not generalized.**
+  `npSendState()` chunks a savestate (SNES ~0.4MB, Genesis ~1MB, NDS ~6MB) onto
+  the single ordered/reliable `np` datachannel — the same channel `npHookInput`
+  used to send every button press. Ordered delivery head-of-line-blocks: any
+  press queued behind an in-flight state transfer (every 6s, `npSyncEvery()`)
+  waits for the whole transfer to land before it's delivered. 3.15 sidestepped
+  this for N64 by defaulting it to video-mirror (no state sync at all), but
+  every other system — including NDS, whose states are N64-sized — still syncs
+  state over the same channel presses ride.
+- **Fix (3.16)**: added a second datachannel, `npi` (`ordered:false,
+  maxRetransmits:0`), used only for `{t:"i"}` presses; `np` keeps
+  ready/ping/mode/savestate traffic. Host creates both in `npStartPc`; guest
+  routes `ondatachannel` by `e.channel.label`. `npHookInput`'s `sendInput()`
+  prefers `NP.dci` when open, falls back to `NP.dc` (so input still works
+  during the brief window before the second channel opens). Since `npi` is
+  unordered, a stray reordered press could stick a button — guarded with a
+  per-message monotonic `s` (`NP.txSeq`), and the receiver
+  (`npBindInputDc`) drops anything not newer than the last applied `s` for
+  that exact `(player, input)` pair (`NP.rxSeq` keyed by `"p:i"`).
+- Cleanup: `NP.dci` closed/nulled everywhere `NP.dc` already was (`npStop`, the
+  Netplay sheet's "Retry connection" button). Diagnostics line gained `dci=`.
+- **Not verified against a live two-peer session** (no second client available
+  here) — `node --check` passed and the message flow was traced by hand, but
+  the owner should test host+guest before calling this closed. If pressing
+  still stutters, check the Netplay sheet's `diag …` line for `dci=open` — if
+  it stays `connecting`/`closed`, the fallback path is silently eating the
+  benefit and ICE/SCTP for the second channel needs a look.
+
 ## Session 2026-09-14 — N64 lag, party/netplay voice, TURN
 - Owner: N64 Smash connected but lagged 1000–4000ms. Cause: the multi-MB N64
   savestate sync (3.14) shares the ordered datachannel, so the RTT ping queued

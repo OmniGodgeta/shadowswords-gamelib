@@ -1,5 +1,83 @@
 # Changelog
 
+## 3.19
+- **Live TV loaded no channels**: the browser fetched iptv-org's ~2.5MB
+  playlist directly, cross-origin, from the *viewer's* own network — some
+  DNS/ad-block setups blocklist IPTV-aggregator domains, and a blocked fetch
+  there silently yielded zero channels with no error shown. Now proxied
+  through arcade-server (`/iptv/index.m3u`, disk-cached, 30 min TTL — same
+  pattern as the existing EmulatorJS-core proxy), so the browser only ever
+  talks to our own origin. `IPTV_SRC` in app.js follows the existing
+  SELF_HOSTED/TS fallback pattern (`VIDEO_BASE` etc.) — the public GH Pages
+  mirror still has no dynamic backend, unchanged there. Verified end-to-end
+  against the live server (200, 2.5MB, parses to 11k+ channels).
+- Server change (`serveIptv` + `/iptv/index.m3u` route) — applied to both
+  the tracked `server/arcade-server.mjs` and the live `~/arcade-server.mjs`,
+  restarted `arcade-server.service`.
+
+## 3.18
+- **Android fullscreen button was dead**: EJS's native fullscreen button calls
+  the standard Fullscreen API directly, which is a silent no-op in the Android
+  WebView (no `onShowCustomView` wired up). Hidden in-app (`EJS_Buttons.
+  fullscreen: !IN_APP`); replaced by a working "🔄 Rotate screen" control
+  (more-menu, and a FAB next to Hide pad) using the existing native-rotation
+  bridge (`setLandscape`/`window.SSPlay`). This reverses a prior deliberate
+  "no portrait control" decision (3.13-era comment in `EJS_onGameStart`) at
+  the owner's explicit request.
+- **In-game toolbar had no close button**: the `.chrome-peek` handle only
+  opened the top bar in-app; closing meant waiting out its 5s auto-hide.
+  It's now a toggle (tap again to close), and tapping the game area itself
+  also closes it (guarded against eating taps meant for the on-screen
+  gamepad, `.ejs_virtualGamepad_parent`/`.nipple`).
+- **Netplay touch pad could vanish with no way back**: hardened
+  `.ejs_virtualGamepad_parent`/`.nipple` with an explicit `z-index:999`
+  instead of relying on EmulatorJS's own inline value — matches the
+  intended stacking NETPLAY-UI-CONTRACT.md already documents (pad above
+  `#np-video`'s z-index:1), just enforced instead of assumed. Reported as:
+  Android guest in N64 (video-mode) netplay, on-screen controls disappeared,
+  toggling Hide/Show pad had no visible effect — consistent with the pad
+  being stacked behind the video rather than actually hidden by the toggle.
+  **Unconfirmed without live inspection** — see AGENT-MEMORY.md.
+- **NDS touchscreen not fixed — confirmed upstream bug, not this app's code**:
+  EmulatorJS/melonDS touch input broke across Android, Mac and Windows
+  starting EmulatorJS 4.0.10 / melonds-wasm data v11
+  ([EmulatorJS#814](https://github.com/EmulatorJS/EmulatorJS/issues/814),
+  [#394](https://github.com/EmulatorJS/EmulatorJS/issues/394),
+  [#140](https://github.com/EmulatorJS/EmulatorJS/issues/140)). No app-side
+  fix applied — see AGENT-MEMORY.md for the desmume-core workaround option.
+
+## 3.17
+- **Watch party showed nothing** (reported: pressed Watch, saw a blank/placeholder
+  player). Two compounding bugs: (1) `routeWatch`'s JPEG-fallback trigger
+  checked `vid.style.display === "none"`, but `.watch-video`'s hidden state
+  comes from a CSS class, not an inline style — that DOM read never actually
+  returned `"none"`, so the fallback poster never engaged when the WebRTC
+  stream failed to connect. Replaced with a real `videoLive` flag, set only
+  once a stream actually arrives, with the same stall-detection pattern
+  `npShowHostVideo` already used for netplay video. (2) The host's JPEG
+  safety-net loop was skipped whenever the host's own local capture
+  succeeded, regardless of whether a given watcher could actually complete
+  its WebRTC connection (the common failure is a watcher on a mobile network
+  with restrictive NAT) — `wnpStartHost` now watches its connection and
+  starts the JPEG loop if a watcher answers but never connects within 6s.
+- **Netplay/watch video looked low-res**: `#np-video` had no `image-rendering`
+  rule, so the host's native (small) game resolution was smooth-upscaled by
+  the `<video>` element instead of crisply scaled like local play. Added the
+  same `image-rendering: pixelated` (+ `smooth`/`crt` filter opt-out) rule
+  `#game canvas` already had.
+
+## 3.16
+- **Netplay input lag fixed for every system, not just N64**: presses now ride
+  a second datachannel (`npi`, unordered + `maxRetransmits:0`) instead of
+  sharing the reliable `np` channel with savestate-sync chunks. Root cause was
+  the same one 3.15 found for N64 (ordered delivery head-of-line-blocks
+  anything queued behind a multi-chunk transfer) — it just wasn't fixed for
+  everyone else, and NDS states (~6 MB) are large enough to hit it too. A
+  per-message sequence number (`s`) discards stale/reordered presses for the
+  same (player, input) pair, since the new channel can deliver out of order.
+  Ready/ping/mode/savestate traffic is unchanged on `np`. Diagnostics line
+  (Netplay sheet) now also shows `dci=` (input channel state).
+
 ## 3.15
 - **N64 netplay lag fixed**: mirroring the host is now the **default for N64**
   ("Auto" netplay mode → video), because its multi-MB savestates stalled the

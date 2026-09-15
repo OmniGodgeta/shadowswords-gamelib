@@ -730,6 +730,36 @@ function serveThumb(req, res, rel) {
     "cache-control": "no-store" }).end();
 }
 
+// ---- IPTV catalog proxy ------------------------------------------------
+// The client used to fetch iptv-org's playlist directly, cross-origin, from
+// the viewer's own browser. That depends on the *viewer's* network reaching
+// iptv-org.github.io — some DNS/ad-block setups blocklist IPTV-aggregator
+// domains, and a failure there showed as "Live TV loads no channels" with
+// no visible error (reported 2026-09-16). Proxying through our own origin
+// removes that dependency, same disk-cache pattern as serveEjs above, except
+// time-based (the playlist legitimately changes) rather than miss-based.
+const IPTV_SRC = "https://iptv-org.github.io/iptv/index.m3u";
+const IPTV_CACHE = path.join(DATA, "iptv-index.m3u");
+const IPTV_TTL = 30 * 60 * 1000; // upstream sends its own max-age=600; we don't need to hammer it that often
+async function serveIptv(req, res) {
+  let fresh = false;
+  try { fresh = (Date.now() - fs.statSync(IPTV_CACHE).mtimeMs) < IPTV_TTL; } catch { /* no cache yet */ }
+  if (!fresh) {
+    try {
+      const r = await fetch(IPTV_SRC, { signal: AbortSignal.timeout(15000) });
+      if (r.ok) {
+        const buf = Buffer.from(await r.arrayBuffer());
+        try { fs.mkdirSync(DATA, { recursive: true }); fs.writeFileSync(IPTV_CACHE, buf); } catch { /* rw */ }
+      }
+    } catch { /* upstream unreachable this round — fall through to whatever's cached */ }
+  }
+  try {
+    const buf = fs.readFileSync(IPTV_CACHE);
+    res.writeHead(200, { ...CORS, "content-type": "audio/x-mpegurl", "content-length": buf.length,
+      "cache-control": "public, max-age=1800" }).end(req.method === "HEAD" ? undefined : buf);
+  } catch { res.writeHead(502, CORS).end("iptv catalog unavailable — no cache and upstream unreachable"); }
+}
+
 // ---- server-side search over docs/data/search.json ----------------------
 let SEARCH = null;
 function loadSearch() {
@@ -1336,6 +1366,7 @@ const server = http.createServer(async (req, res) => {
     if (ejs && (req.method === "GET" || req.method === "HEAD")) { serveEjs(req, res, decodeURIComponent(ejs[1])); return; }
     const th = P.match(/^\/thumb\/(.+)$/);
     if (th && (req.method === "GET" || req.method === "HEAD")) { serveThumb(req, res, th[1]); return; }
+    if (P === "/iptv/index.m3u" && (req.method === "GET" || req.method === "HEAD")) { serveIptv(req, res); return; }
     const jf = P.match(/^\/jellyfin\/(.*)$/);
     if (jf && (req.method === "GET" || req.method === "HEAD")) { jellyfinProxy(req, res, jf[1], u0); return; }
   }

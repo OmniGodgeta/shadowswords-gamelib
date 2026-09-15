@@ -574,6 +574,11 @@ body.lite .shelf-track > .tile, body.lite .tile-grid > .tile { animation: none; 
 /* Keep emulator scaling crisp on desktop; smooth/CRT filters opt out. */
 #game canvas { image-rendering: pixelated; }
 html[data-vf="smooth"] #game canvas, html[data-vf="crt"] #game canvas { image-rendering: auto; }
+/* Netplay guest mirrors the host's canvas at its native (small) resolution;
+   without this it's smooth-upscaled by the <video> element and looks soft/
+   low-res next to how the same game renders locally. Match the local rule. */
+#np-video { image-rendering: pixelated; }
+html[data-vf="smooth"] #np-video, html[data-vf="crt"] #np-video { image-rendering: auto; }
 .player-load { position: absolute; inset: 0; display: grid; place-items: center; background: #000; color: var(--cyan); font-size: 13px; letter-spacing: .12em; text-transform: uppercase; text-align: center; padding: 20px; }
 
 /* ---- dropzone ---- */
@@ -1403,13 +1408,19 @@ html.playing .party-chat-fab { display: none; }
   }
 }
 
-/* Touch pad: larger hit targets, press glow, visible analog stick */
+/* Touch pad: larger hit targets, press glow, visible analog stick.
+   z-index reinforced (not just relying on EJS's own inline value) — netplay's
+   host-authoritative video (#np-video, z-index:1 in .player-stage) has to sit
+   BELOW this or the pad becomes invisible-but-toggle-does-nothing, which is
+   the failure mode NETPLAY-UI-CONTRACT.md warns about. */
 .ejs_virtualGamepad_parent {
   transform: none !important;
   filter: none !important;
   bottom: var(--pad-bottom, 12px) !important;
   opacity: var(--pad-opacity, 1) !important;
+  z-index: 999 !important;
 }
+.nipple { z-index: 999 !important; }
 .ejs_virtualGamepad_left,
 .ejs_virtualGamepad_right {
   width: 168px !important;
@@ -1544,7 +1555,8 @@ html.in-app.playing .drawer { display: none !important; }
 html.hide-touch .player.in-app-player .fab-pad::after { content: "Show pad"; }
 .player.in-app-player.show-chrome .fab-exit,
 .player.in-app-player.show-chrome .chrome-peek,
-.player.in-app-player.show-chrome .fab-pad { opacity: 0; pointer-events: none; }
+.player.in-app-player.show-chrome .fab-pad,
+.player.in-app-player.show-chrome .fab-ctrl { opacity: 0; pointer-events: none; }
 .player.in-app-player .fab-ctrl {
   position: absolute;
   right: max(8px, env(safe-area-inset-right));
