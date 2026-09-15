@@ -129,6 +129,23 @@ def scan_system(root: Path) -> list[str]:
         if len(parts) >= 3:
             dirnames[:] = []
         dirnames[:] = [d for d in dirnames if d.lower() not in JUNK_DIR and not d.startswith(".")]
+        # Wii U "loadiine"-style extracted dumps are one game spread across
+        # code/content/meta subfolders — content/ alone routinely holds a
+        # dozen+ data files (.cpk etc.), which the generic "folder with many
+        # files = key each individually" rule below was miscounting as that
+        # many separate games (confirmed: wiiu showed 2070 "games" for a
+        # ~30-title library). Collapse the whole bundle into one game keyed
+        # by its own folder name, and don't descend into it at all.
+        lower_dirs = {d.lower() for d in dirnames}
+        if dirpath != str(root) and {"code", "content"} <= lower_dirs:
+            code_dir = next(d for d in dirnames if d.lower() == "code")
+            rpx = next((f for f in os.listdir(os.path.join(dirpath, code_dir))
+                        if f.lower().endswith(".rpx")), None)
+            rel = os.path.relpath(os.path.join(dirpath, code_dir, rpx), root) if rpx \
+                else os.path.relpath(dirpath, root)
+            by_dir.setdefault(dirpath, []).append(rel)
+            dirnames[:] = []
+            continue
         for fn in filenames:
             if fn.startswith("."):
                 continue
