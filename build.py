@@ -750,19 +750,6 @@ def convert(src, dst, width):
         capture_output=True,
     )
     return r.returncode == 0
-    # GOTCHA (found 2026-09-15, wii.webp): a *few* Wikipedia console photos
-    # (Wii-Console.png at least) ship with real per-pixel alpha already cut
-    # out AND black RGB stored under the transparent areas (common export
-    # convention). magick's *lossy* webp alpha compression on that specific
-    # combination visibly bands — blocky partial-transparency artifacts let
-    # the black bleed through in stripes. Most console photos are plain
-    # opaque product shots (strip_light_bg below removes their background),
-    # so this doesn't normally bite — but if a freshly (re)fetched console
-    # photo looks banded/striped after a full rebuild, that's why. Fix: skip
-    # `magick` for that one file, resize+re-encode with PIL directly and
-    # `lossless=True` instead (see the manual fix applied to wii.webp), then
-    # `strip_light_bg` is a safe no-op on it since the border is already
-    # transparent, not "light".
 
 
 def strip_light_bg(path, thresh=168, tol=65):
@@ -809,7 +796,15 @@ def strip_light_bg(path, thresh=168, tol=65):
                 r, g, b, _ = px[x, y]
                 px[x, y] = (r, g, b, 0)
     try:
-        im.save(path, "WEBP", quality=90, method=6)
+        # Lossless, not quality=90: a lossy re-save here is what actually
+        # caused the wii.webp banding bug above, not the border-clearing
+        # logic itself — some source photos (Wii-Console.png at least)
+        # already carry real alpha with black RGB stashed under it, and
+        # lossy webp alpha compression visibly bands that black through.
+        # These are ~100 small thumbnails total; lossless costs a few KB
+        # each, nothing at this scale, and removes the whole bug class
+        # rather than special-casing the one photo that surfaced it.
+        im.save(path, "WEBP", lossless=True, method=6)
     except Exception:
         pass
 
