@@ -750,6 +750,19 @@ def convert(src, dst, width):
         capture_output=True,
     )
     return r.returncode == 0
+    # GOTCHA (found 2026-09-15, wii.webp): a *few* Wikipedia console photos
+    # (Wii-Console.png at least) ship with real per-pixel alpha already cut
+    # out AND black RGB stored under the transparent areas (common export
+    # convention). magick's *lossy* webp alpha compression on that specific
+    # combination visibly bands — blocky partial-transparency artifacts let
+    # the black bleed through in stripes. Most console photos are plain
+    # opaque product shots (strip_light_bg below removes their background),
+    # so this doesn't normally bite — but if a freshly (re)fetched console
+    # photo looks banded/striped after a full rebuild, that's why. Fix: skip
+    # `magick` for that one file, resize+re-encode with PIL directly and
+    # `lossless=True` instead (see the manual fix applied to wii.webp), then
+    # `strip_light_bg` is a safe no-op on it since the border is already
+    # transparent, not "light".
 
 
 def strip_light_bg(path, thresh=168, tol=65):

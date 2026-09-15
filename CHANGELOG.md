@@ -1,5 +1,38 @@
 # Changelog
 
+## 3.25
+- **Wii U and 3DS joined the "Streamed consoles" shelf** — real Cemu
+  (Wii U, official AppImage, verified Vulkan on the RTX 5070) and real
+  Azahar (3DS, Citra's actual maintained successor). Cemu verified
+  end-to-end with real gameplay (Bayonetta, Hyrule Warriors — "loadiine"-
+  format dumps play immediately; `.wud`/`.wux` disc images need a real
+  common/title key the owner doesn't have yet, only Cemu's own placeholder
+  example key — a real, documented, unresolved gap, not a bug). Azahar's
+  container is fully built and wired in, but every game in the current 3DS
+  library is refused by Azahar's own deliberate "no built-in decryption"
+  policy (announced by the project itself) — nothing plays there yet until
+  the library is decrypted via the owner's own 3DS hardware.
+- **Switch deliberately deferred again** — re-researched this round
+  (multiple fake "Eden" GitHub orgs with SEO-spam/impersonation-pattern
+  descriptions, the seemingly-legit self-hosted Gitea instance still 403s).
+  No trustworthy source found; still not downloading from an unverified one.
+- **Fixed streamed consoles not re-fullscreening after a phone rotation**:
+  the `wmctrl` fullscreen fix now loops every few seconds instead of firing
+  once at launch (Selkies resizes its virtual display to match the browser
+  live, but the emulator window itself didn't hear about it) — self-stops
+  once the game process exits, so it doesn't pile up across relaunches.
+- **Watch + Join as Player 2 links** on every streamed console's page while
+  a game is running — Selkies has this built in (`#shared` / `#player2`
+  URL fragments, server-enforced, on by default), so this is pure frontend
+  wiring, no relay/broadcast code needed. Directly answers the "2-player
+  netplay on streamed consoles" question left unresolved in earlier
+  rounds — Selkies already does it.
+- **Fixed a genuinely broken Wii console photo** — the Wikipedia source
+  image has real transparency with black RGB under it, and lossy WebP
+  alpha compression revealed banding artifacts letting it bleed through.
+  Re-encoded losslessly; noted the gotcha in `build.py` for any other
+  console this might hit on a future full rebuild.
+
 ## 3.24
 - **Xbox joined PS2/GameCube/Wii in "Streamed consoles"** — real xemu,
   same architecture, official `xemu-project/xemu` AppImage. 98 games found

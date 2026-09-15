@@ -2342,6 +2342,8 @@ const STREAM_SYSTEMS = SELF_HOSTED ? [
   { id: "gc", name: "GameCube", icon: "🎮" },
   { id: "wii", name: "Wii", icon: "🎮" },
   { id: "xbox", name: "Xbox", icon: "🎮" },
+  { id: "wiiu", name: "Wii U", icon: "🎮" },
+  { id: "n3ds", name: "Nintendo 3DS", icon: "🎮" },
 ] : [];
 async function routeStream(sys) {
   const token = ++state.render;
@@ -2370,16 +2372,28 @@ async function routeStream(sys) {
   search.oninput = () => draw(search.value);
   const np = data.nowPlaying;
   const frag = document.createDocumentFragment();
+  // Selkies (what actually streams these consoles) ships built-in
+  // spectator + extra-controller links as URL fragments on the same stream
+  // URL — #shared (watch only) and #player2/3/4 (watch + drive that
+  // gamepad slot), server-side-enforced, on by default. No relay/broadcast
+  // code needed on our side; only shown once a game is actually running,
+  // since joining an idle emulator's game list isn't useful.
+  const shareActions = np && data.url ? [
+    { label: "👁 Watch", href: data.url + "#shared", blank: true },
+    { label: "🎮 Join as Player 2", href: data.url + "#player2", blank: true },
+  ] : [];
   frag.append(hero({
     kicker: "Streamed", title: cfg.name,
     desc: `${data.games.length.toLocaleString()} games, read straight off shadow's own drive — nothing to download. ` +
       "The real emulator runs there and streams to you live; only one game runs at a time.",
     art: sysArt(meta(sys)),
+    actions: shareActions,
   }));
   frag.append(el("div", { className: "wrap" },
     el("section", { className: "shelf", style: "padding:0 0 8px" },
       np ? el("div", { className: "note" },
-        el("b", { textContent: "🎮 Currently running: " }), `${np.name} — started by ${np.who}. Picking a game below takes over this session.`) : null,
+        el("b", { textContent: "🎮 Currently running: " }), `${np.name} — started by ${np.who}. `,
+        "Picking a game below takes over this session — or use Watch / Join as Player 2 above to join instead.") : null,
       search, list)));
   view.replaceChildren(frag);
   draw("");

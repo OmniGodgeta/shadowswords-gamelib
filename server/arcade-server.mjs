@@ -870,6 +870,8 @@ async function serveIptv(req, res) {
 const PS2_URL = "https://ShadowSwords:Allo1234@retroverse.tail51f9d6.ts.net:8722/";
 const DOLPHIN_URL = "https://ShadowSwords:Allo1234@retroverse.tail51f9d6.ts.net:8723/";
 const XEMU_URL = "https://ShadowSwords:Allo1234@retroverse.tail51f9d6.ts.net:8724/";
+const CEMU_URL = "https://ShadowSwords:Allo1234@retroverse.tail51f9d6.ts.net:8725/";
+const AZAHAR_URL = "https://ShadowSwords:Allo1234@retroverse.tail51f9d6.ts.net:8726/";
 // `killPattern` + `launch` let launchStreamGame stay one generic function
 // across different emulators with different CLIs. gc/wii intentionally
 // share one container — one Dolphin instance handles both, so launching a
@@ -894,9 +896,22 @@ const XEMU_URL = "https://ShadowSwords:Allo1234@retroverse.tail51f9d6.ts.net:872
 // small windowed rectangle, not edge-to-edge) — force it at the window-
 // manager level instead, which doesn't depend on either app's own fullscreen
 // handling working correctly inside a headless Xvfb session. Runs as its own
-// backgrounded delayed command so it doesn't block the HTTP response; the
+// backgrounded command so it doesn't block the HTTP response; the initial
 // delay gives the window time to actually appear before wmctrl looks for it.
-const FULLSCREEN_FORCER = "(sleep 4; DISPLAY=:20 wmctrl -r :ACTIVE: -b add,fullscreen) & disown";
+// LOOPS instead of firing once: Selkies resizes its virtual display to match
+// the browser on the fly (SELKIES_ENABLE_RESIZE defaults true — e.g. a phone
+// rotating), but the emulator's own window doesn't hear about that resize and
+// stays whatever size it last was, so a one-shot wmctrl (the original version
+// of this) only looked right at launch and went small/off-center after any
+// later resize. Re-asserting every few seconds is cheap (wmctrl is
+// near-instant) and self-heals within a few seconds of any resize/rotation.
+// Self-terminates via `pgrep -f <killPattern>` once that process is gone
+// (relaunch, or the container settling after a crash) — otherwise every
+// relaunch would leave the previous game's loop running forever alongside
+// the new one, an ever-growing pile of orphaned loops (harmless per-loop, a
+// real leak over many relaunches).
+const fullscreenForcer = (killPattern) =>
+  `(sleep 4; while pgrep -f '${killPattern}' >/dev/null; do DISPLAY=:20 wmctrl -r :ACTIVE: -b add,fullscreen 2>/dev/null; sleep 3; done) & disown`;
 const STREAM_SYSTEMS = {
   ps2: {
     container: "selkies-ps2",
@@ -908,7 +923,7 @@ const STREAM_SYSTEMS = {
     exts: new Set([".iso", ".mdf", ".chd", ".cso", ".zso", ".gz", ".bin", ".nrg"]),
     url: PS2_URL,
     killPattern: "pcsx2",
-    launch: (p) => `DISPLAY=:20 nohup /opt/pcsx2-extracted/AppRun -fullscreen -batch -- '${p}' >/tmp/pcsx2-launch.log 2>&1 & disown; ${FULLSCREEN_FORCER}`,
+    launch: (p) => `DISPLAY=:20 nohup /opt/pcsx2-extracted/AppRun -fullscreen -batch -- '${p}' >/tmp/pcsx2-launch.log 2>&1 & disown; ${fullscreenForcer('pcsx2')}`,
   },
   gc: {
     container: "selkies-dolphin",
@@ -917,7 +932,7 @@ const STREAM_SYSTEMS = {
     exts: new Set([".iso", ".rvz", ".gcz", ".ciso", ".wbfs"]),
     url: DOLPHIN_URL,
     killPattern: "dolphin-emu",
-    launch: (p) => `DISPLAY=:20 nohup /opt/dolphin-extracted/AppRun -b -e '${p}' >/tmp/dolphin-launch.log 2>&1 & disown; ${FULLSCREEN_FORCER}`,
+    launch: (p) => `DISPLAY=:20 nohup /opt/dolphin-extracted/AppRun -b -e '${p}' >/tmp/dolphin-launch.log 2>&1 & disown; ${fullscreenForcer('dolphin-emu')}`,
   },
   wii: {
     container: "selkies-dolphin",
@@ -926,7 +941,7 @@ const STREAM_SYSTEMS = {
     exts: new Set([".iso", ".rvz", ".gcz", ".ciso", ".wbfs"]),
     url: DOLPHIN_URL,
     killPattern: "dolphin-emu",
-    launch: (p) => `DISPLAY=:20 nohup /opt/dolphin-extracted/AppRun -b -e '${p}' >/tmp/dolphin-launch.log 2>&1 & disown; ${FULLSCREEN_FORCER}`,
+    launch: (p) => `DISPLAY=:20 nohup /opt/dolphin-extracted/AppRun -b -e '${p}' >/tmp/dolphin-launch.log 2>&1 & disown; ${fullscreenForcer('dolphin-emu')}`,
   },
   xbox: {
     container: "selkies-xemu",
@@ -940,7 +955,42 @@ const STREAM_SYSTEMS = {
     // fork+relocate. "xemu-extracted" is specific enough to never match
     // anything else in this container.
     killPattern: "xemu-extracted",
-    launch: (p) => `DISPLAY=:20 nohup /opt/xemu-extracted/AppRun -full-screen -dvd_path '${p}' >/tmp/xemu-launch.log 2>&1 & disown; ${FULLSCREEN_FORCER}`,
+    launch: (p) => `DISPLAY=:20 nohup /opt/xemu-extracted/AppRun -full-screen -dvd_path '${p}' >/tmp/xemu-launch.log 2>&1 & disown; ${fullscreenForcer('xemu-extracted')}`,
+  },
+  wiiu: {
+    container: "selkies-cemu",
+    containerRoot: "/home/ubuntu/Games/wiiu",
+    hostRoot: path.join(os.homedir(), "Games", "roms", "wiiu"),
+    exts: new Set([".wud", ".wux", ".iso"]),
+    // "loadiine"-style extracted dumps are a FOLDER (code/content/meta), not
+    // a single disc file — see listStreamGames' folderMarker handling. Most
+    // of this library is this shape, and it's pre-decrypted (no keys.txt
+    // key needed) unlike a raw .wud/.wux disc image.
+    folderMarker: "code",
+    url: CEMU_URL,
+    // AppRun exec-replaces itself in place (confirmed via `ps auxf`, shows
+    // as "/opt/cemu-extracted/AppRun.wrapped"), same as PCSX2/xemu.
+    killPattern: "cemu-extracted",
+    // A folder-game's "file" is the folder itself; Cemu needs the actual
+    // .rpx inside <folder>/code/. Single .wud/.wux files pass straight
+    // through unchanged.
+    resolveLaunchPath: (containerPath, hostPath) => {
+      if (!fs.existsSync(path.join(hostPath, "code"))) return containerPath;
+      const rpx = fs.readdirSync(path.join(hostPath, "code")).find((f) => /\.rpx$/i.test(f));
+      return rpx ? `${containerPath}/code/${rpx}` : containerPath;
+    },
+    launch: (p) => `DISPLAY=:20 nohup /opt/cemu-extracted/AppRun -g '${p}' -f >/tmp/cemu-launch.log 2>&1 & disown; ${fullscreenForcer('cemu-extracted')}`,
+  },
+  n3ds: {
+    container: "selkies-azahar",
+    containerRoot: "/home/ubuntu/Games/n3ds",
+    hostRoot: path.join(os.homedir(), "Games", "roms", "n3ds"),
+    exts: new Set([".3ds", ".cci", ".cia", ".3dsx"]),
+    url: AZAHAR_URL,
+    // AppRun exec-replaces itself in place (confirmed via `ps auxf`), same
+    // as PCSX2/xemu/Cemu.
+    killPattern: "azahar-extracted",
+    launch: (p) => `DISPLAY=:20 nohup /opt/azahar-extracted/AppRun -f '${p}' >/tmp/azahar-launch.log 2>&1 & disown; ${fullscreenForcer('azahar-extracted')}`,
   },
 };
 function listStreamGames(sys) {
@@ -954,6 +1004,16 @@ function listStreamGames(sys) {
     for (const e of entries) {
       const full = path.join(dir, e.name);
       const relPath = rel ? rel + "/" + e.name : e.name;
+      // WiiU-style "loadiine" dumps are a folder (code/content/meta), not a
+      // single disc file — cfg.folderMarker names the tell (a subfolder that
+      // must exist, e.g. "code"). Treat the whole folder as one game and
+      // don't recurse into it (its code/content/meta subfolders aren't games
+      // of their own).
+      if (e.isDirectory() && cfg.folderMarker &&
+          fs.existsSync(path.join(full, cfg.folderMarker))) {
+        out.push({ name: e.name, file: relPath });
+        continue;
+      }
       if (e.isDirectory()) walk(full, relPath, depth + 1);
       else if (cfg.exts.has(path.extname(e.name).toLowerCase())) {
         // Some Xbox dumps use the redundant "<name>.xiso.iso" convention
@@ -989,7 +1049,10 @@ function launchStreamGame(req, res, sys, body) {
   }
   const full = cfg.hostRoot + "/" + rel;
   try { fs.accessSync(full); } catch { res.writeHead(404, CORS).end("not found"); return; }
-  const containerPath = cfg.containerRoot + "/" + rel;
+  let containerPath = cfg.containerRoot + "/" + rel;
+  // Folder-based dumps (WiiU loadiine-style) resolve to the actual launch
+  // file inside; every other system's hook is absent and this is a no-op.
+  if (cfg.resolveLaunchPath) containerPath = cfg.resolveLaunchPath(containerPath, full);
   // Kill (its own separate docker exec, not concatenated with the launch
   // command — see the STREAM_SYSTEMS comment for why that matters), then
   // launch. Exit code from pkill is ignored — "nothing was running" is a

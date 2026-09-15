@@ -1,0 +1,5 @@
+[Desktop Entry]
+Type=Application
+Name=Azahar
+Exec=/opt/azahar-extracted/AppRun
+X-GNOME-Autostart-enabled=true
