@@ -124,6 +124,38 @@ docker run --name selkies-ps2 -d --restart unless-stopped --shm-size=2g \
   navigation** (a real link/tab open) — it does not work the same way for an
   iframe. `launchStream()` on the frontend deliberately always opens a new
   tab for this reason.
+- **Neither PCSX2's own `-fullscreen` flag nor Dolphin's default window
+  reliably fills Selkies' virtual display** — confirmed via a user screenshot
+  showing the emulator window as a small rectangle in the corner, black space
+  everywhere else, despite `-fullscreen` being passed. Fixed at the window-
+  manager level instead of trusting either app's own fullscreen handling:
+  every launch now also runs `wmctrl -r :ACTIVE: -b add,fullscreen` (delayed
+  ~4s, backgrounded, see `FULLSCREEN_FORCER` in `arcade-server.mjs`) after
+  starting the emulator. This is deliberately app-agnostic — it forces
+  *whatever window is currently active* to fullscreen, so the same one-liner
+  covers PCSX2, Dolphin, and xemu without needing per-app flag research.
+  Verified via before/after screenshots (before: small window with visible
+  black borders; after: game content filling the full captured frame).
+
+## Known issues (open, from live user testing)
+
+- **Controller not detected.** Root-caused by inspecting
+  `~/.config/PCSX2/inis/PCSX2.ini`'s `[Pad1]` section inside the running
+  container — it only has keyboard bindings (`Up = Keyboard/Up`, etc.), zero
+  SDL/gamepad bindings. This is a real, unfixed gap: PCSX2 (and Dolphin) need
+  actual SDL controller-binding config written in, and that needs validating
+  against a real controller — not something to fake from code alone without
+  a way to confirm button-mapping correctness live. Deferred rather than
+  guessed at.
+- **No on-screen touch controls, unlike the EmulatorJS-based emulators.**
+  Selkies actually ships one already: a **"Universal Touch Gamepad" overlay**
+  (Ctrl+Shift+G, or the hamburger side menu inside the stream itself) — it's
+  not surfaced anywhere in RetroVerse's own UI yet, so a first-time visitor
+  has no reason to know it exists. Also worth trying:
+  `SELKIES_GAMEPAD_ON_START=true` as a container env var, to have it appear
+  automatically instead of requiring the shortcut. Neither has been wired
+  into RetroVerse's own onboarding/UI yet — purely a communication/discovery
+  gap right now, not a missing feature.
 
 ## Next steps
 
@@ -159,9 +191,20 @@ docker run --name selkies-ps2 -d --restart unless-stopped --shm-size=2g \
   (server-side), not routed through RetroVerse's browser-side netplay layer
   at all — untested, and the honest next step is trying it with two real
   clients before designing further.
-- **Xbox (Xemu) and WiiU/Switch (Cemu/a Switch emulator)** — same container
-  shape, untried. Xemu has no native netplay at all (unlike Dolphin, which
-  does), so it would lean entirely on the host-stream approach or the
-  as-yet-unresolved multi-client question above. WiiU/Switch are
-  meaningfully more GPU-demanding than anything tried so far — whether
-  "most of the library at full speed" holds needs actually trying it.
+- **Xbox: done** — see `server/selkies-xemu/README.md`. Confirmed working
+  end-to-end (BIOS/MCPX/HDD chain, real game booted to its title screen).
+- **WiiU (Cemu) and 3DS** — same container shape, not yet built. Cemu ships
+  an official AppImage (`cemu-project/Cemu`, e.g. `v2.6`,
+  `Cemu-2.6-x86_64.AppImage`) so the source-trust question that blocked
+  Switch doesn't apply here. WiiU is meaningfully more GPU-demanding than
+  anything tried so far — whether "most of the library at full speed" holds
+  needs actually trying it. 3DS needs its own source-verification pass
+  first (likely Azahar or Lime3DS as Citra's actual maintained successor —
+  not yet researched).
+- **Switch: deliberately deferred.** A GitHub search for the current
+  yuzu-fork successor ("Eden") turned up SEO-spam repos with keyword-stuffed
+  descriptions matching a known malware-impersonation pattern; the
+  seemingly-legitimate self-hosted `git.eden-emu.dev` returned HTTP 403
+  (likely JS-gated, blocking scrapers) so it couldn't be verified as the
+  real source either. Didn't download from any of the unverified ones —
+  revisit only once a trustworthy official source can actually be confirmed.

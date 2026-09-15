@@ -72,6 +72,15 @@ process existed afterward. Cross-system relaunch also verified: launched a
 GameCube game, then a **Wii** game — correctly killed the GameCube one first
 (same shared container/kill pattern).
 
+## Known issues (open, from live user testing)
+
+Same as PS2's — see `server/selkies-ps2/README.md`'s "Known issues" section:
+**not fullscreen** (fixed — `wmctrl` forcer, see that README's Gotchas),
+**controller not detected** (still open — Dolphin's own config needs real
+SDL bindings, not yet done), **no on-screen touch controls** (Selkies'
+built-in Universal Touch Gamepad overlay answers this but isn't surfaced in
+RetroVerse's UI yet).
+
 ## Next steps
 
 Same list as `server/selkies-ps2/README.md`'s (box art, a real lock instead

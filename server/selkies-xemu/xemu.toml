@@ -1,0 +1,7 @@
+[general]
+show_welcome = false
+
+[sys.files]
+bootrom_path = "/home/ubuntu/xbox-bios/mcpx_1.0.bin"
+flashrom_path = "/home/ubuntu/xbox-bios/Complex_4627.bin"
+hdd_path = "/home/ubuntu/xbox-bios/xbox_hdd.qcow2"

@@ -869,6 +869,7 @@ async function serveIptv(req, res) {
 // for each container) if this ever needs to change.
 const PS2_URL = "https://ShadowSwords:Allo1234@retroverse.tail51f9d6.ts.net:8722/";
 const DOLPHIN_URL = "https://ShadowSwords:Allo1234@retroverse.tail51f9d6.ts.net:8723/";
+const XEMU_URL = "https://ShadowSwords:Allo1234@retroverse.tail51f9d6.ts.net:8724/";
 // `killPattern` + `launch` let launchStreamGame stay one generic function
 // across different emulators with different CLIs. gc/wii intentionally
 // share one container — one Dolphin instance handles both, so launching a
@@ -888,6 +889,14 @@ const DOLPHIN_URL = "https://ShadowSwords:Allo1234@retroverse.tail51f9d6.ts.net:
 // but only protects against matching *itself* — a launch string containing
 // its own emulator name in the SAME shell invocation as the kill is a
 // different, unprotected process and still gets caught.
+// Neither emulator's own `-fullscreen`/equivalent CLI flag reliably fills
+// Selkies' virtual display (confirmed via screenshot: the app opened as a
+// small windowed rectangle, not edge-to-edge) — force it at the window-
+// manager level instead, which doesn't depend on either app's own fullscreen
+// handling working correctly inside a headless Xvfb session. Runs as its own
+// backgrounded delayed command so it doesn't block the HTTP response; the
+// delay gives the window time to actually appear before wmctrl looks for it.
+const FULLSCREEN_FORCER = "(sleep 4; DISPLAY=:20 wmctrl -r :ACTIVE: -b add,fullscreen) & disown";
 const STREAM_SYSTEMS = {
   ps2: {
     container: "selkies-ps2",
@@ -899,7 +908,7 @@ const STREAM_SYSTEMS = {
     exts: new Set([".iso", ".mdf", ".chd", ".cso", ".zso", ".gz", ".bin", ".nrg"]),
     url: PS2_URL,
     killPattern: "pcsx2",
-    launch: (p) => `DISPLAY=:20 nohup /opt/pcsx2-extracted/AppRun -fullscreen -batch -- '${p}' >/tmp/pcsx2-launch.log 2>&1 & disown`,
+    launch: (p) => `DISPLAY=:20 nohup /opt/pcsx2-extracted/AppRun -fullscreen -batch -- '${p}' >/tmp/pcsx2-launch.log 2>&1 & disown; ${FULLSCREEN_FORCER}`,
   },
   gc: {
     container: "selkies-dolphin",
@@ -908,7 +917,7 @@ const STREAM_SYSTEMS = {
     exts: new Set([".iso", ".rvz", ".gcz", ".ciso", ".wbfs"]),
     url: DOLPHIN_URL,
     killPattern: "dolphin-emu",
-    launch: (p) => `DISPLAY=:20 nohup /opt/dolphin-extracted/AppRun -b -e '${p}' >/tmp/dolphin-launch.log 2>&1 & disown`,
+    launch: (p) => `DISPLAY=:20 nohup /opt/dolphin-extracted/AppRun -b -e '${p}' >/tmp/dolphin-launch.log 2>&1 & disown; ${FULLSCREEN_FORCER}`,
   },
   wii: {
     container: "selkies-dolphin",
@@ -917,7 +926,21 @@ const STREAM_SYSTEMS = {
     exts: new Set([".iso", ".rvz", ".gcz", ".ciso", ".wbfs"]),
     url: DOLPHIN_URL,
     killPattern: "dolphin-emu",
-    launch: (p) => `DISPLAY=:20 nohup /opt/dolphin-extracted/AppRun -b -e '${p}' >/tmp/dolphin-launch.log 2>&1 & disown`,
+    launch: (p) => `DISPLAY=:20 nohup /opt/dolphin-extracted/AppRun -b -e '${p}' >/tmp/dolphin-launch.log 2>&1 & disown; ${FULLSCREEN_FORCER}`,
+  },
+  xbox: {
+    container: "selkies-xemu",
+    containerRoot: "/home/ubuntu/Games/xbox",
+    hostRoot: path.join(os.homedir(), "Games", "roms", "xbox"),
+    exts: new Set([".iso"]),
+    url: XEMU_URL,
+    // AppRun exec-replaces itself in place here (confirmed via `ps auxf`
+    // inside the container — one process, "/opt/xemu-extracted/AppRun ...",
+    // not reparented to init), same as PCSX2 and unlike Dolphin's
+    // fork+relocate. "xemu-extracted" is specific enough to never match
+    // anything else in this container.
+    killPattern: "xemu-extracted",
+    launch: (p) => `DISPLAY=:20 nohup /opt/xemu-extracted/AppRun -full-screen -dvd_path '${p}' >/tmp/xemu-launch.log 2>&1 & disown; ${FULLSCREEN_FORCER}`,
   },
 };
 function listStreamGames(sys) {
@@ -933,7 +956,10 @@ function listStreamGames(sys) {
       const relPath = rel ? rel + "/" + e.name : e.name;
       if (e.isDirectory()) walk(full, relPath, depth + 1);
       else if (cfg.exts.has(path.extname(e.name).toLowerCase())) {
-        out.push({ name: e.name.replace(/\.[^.]+$/, ""), file: relPath });
+        // Some Xbox dumps use the redundant "<name>.xiso.iso" convention
+        // (the ".xiso" marks the disc image format, not part of the title).
+        const name = e.name.replace(/\.[^.]+$/, "").replace(/\.xiso$/i, "");
+        out.push({ name, file: relPath });
       }
     }
   };

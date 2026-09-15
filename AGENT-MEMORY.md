@@ -6,6 +6,90 @@ agent can pick up context without re-deriving it. Read `AGENTS.md` first, then
 this. (Netplay internals: `NETPLAY-UI-CONTRACT.md`. Roadmap split:
 `FEATURE-BACKLOG.md`.)
 
+## Session 2026-09-15 (round 8) — Xbox (xemu) added, PS2/GC/Wii fullscreen
+## fixed, controller/touch-control gaps root-caused (open), console tile
+## images, Switch/WiiU/3DS status update (3.24)
+- Owner reported, with a confirming screenshot: PS2 controller not detected,
+  PS2 doesn't go fullscreen, no touch controls on streamed consoles; GC/Wii
+  launch but don't go fullscreen and don't detect the controller either.
+  Also: "Keep going with everything else you suggested including xbox,
+  switch, wiiu and throw in 3ds" and "for each stream consoles add an image."
+- **Xbox (xemu) built and shipped** — `server/selkies-xemu/`. Official
+  `xemu-project/xemu` AppImage (verified official org — see the Switch note
+  below for why that verification actually matters this round). BIOS/MCPX/
+  HDD reused from the owner's existing working Windows-xemu install, same
+  "your own dump, mounted, never bundled" pattern as PS2's BIOS. xemu reads
+  its config from `~/.local/share/xemu/xemu/xemu.toml`, **not** portable-mode-
+  next-to-the-binary — placing it there was silently ignored ("Config file
+  not found" every launch); fixed by baking the file into that exact path at
+  Docker build time so it survives container recreates. The writable HDD
+  image can't be bind-mounted `:ro` (xemu needs to write to it immediately)
+  but also must never be bind-mounted `:rw` from the owner's *original* file
+  — fixed by copying it once into a separate Docker-managed named volume
+  (`selkies-xemu-hdd`), so the original stays untouched no matter what
+  happens to the container. `killPattern: "xemu-extracted"` — confirmed via
+  `ps auxf` that AppRun exec-replaces itself in place here (like PCSX2), not
+  fork-and-relocate (like Dolphin), so no relocation trap to work around.
+  Verified end-to-end: 007: Nightfire booted through the full BIOS chain to
+  its own title screen; relaunch confirmed clean (exactly one process after
+  each launch). **Known unresolved issue**: renders in software
+  (`GL_RENDERER: llvmpipe`) instead of GPU-accelerated, unlike PCSX2 (real
+  Vulkan) and Dolphin (real Mesa/NVIDIA OpenGL) — tried
+  `NVIDIA_DRIVER_CAPABILITIES=all`, rebuilt, retested, still llvmpipe. Games
+  still boot and run correctly, just presumably slower than GPU-accelerated
+  would be — documented as open rather than silently left unmentioned.
+- **PS2/GC/Wii (and now Xbox) fullscreen fixed** — confirmed via the owner's
+  screenshot that the emulator window was a small rectangle in the corner of
+  Selkies' virtual display, black everywhere else, despite PCSX2's own
+  `-fullscreen` flag being passed. Neither app's own fullscreen handling is
+  trustworthy inside a headless Xvfb session, so fixed at the window-manager
+  level instead: every launch now also runs `wmctrl -r :ACTIVE: -b
+  add,fullscreen` (`FULLSCREEN_FORCER` in `arcade-server.mjs`, ~4s delayed +
+  backgrounded so it doesn't block the HTTP response). Deliberately
+  app-agnostic — forces whatever window is currently active, so one constant
+  covers PCSX2/Dolphin/xemu without per-app flag research. Verified via
+  before/after screenshots.
+- **Controller detection — root-caused, NOT fixed.** Inspected
+  `~/.config/PCSX2/inis/PCSX2.ini`'s `[Pad1]` section inside the running
+  container: only keyboard bindings exist, zero SDL/gamepad bindings. Real,
+  confirmed gap — deferred rather than guessed at, since correctness can't be
+  verified without a physical controller actually in the agent's hands.
+  Needs real SDL binding config (PCSX2 and Dolphin both) written in and
+  tested live next time a controller is available.
+- **No touch controls — not actually missing, just not surfaced.** Selkies
+  ships a built-in "Universal Touch Gamepad" overlay (Ctrl+Shift+G, or the
+  side menu inside the stream) that answers this already; it isn't
+  referenced anywhere in RetroVerse's own UI, so a first-time visitor has no
+  reason to find it. `SELKIES_GAMEPAD_ON_START=true` may make it appear
+  automatically — worth trying next round. Communicated as the current
+  answer rather than building something new to duplicate it.
+- **Console tile/page images**: `routePlay`'s "Streamed consoles" shelf and
+  `routeStream`'s hero header now pass `img: m.photo || m.logo` through
+  `coverArt()`/`sysArt()` instead of a bare name — real cover photos instead
+  of a faded procedurally-colored sleeve, matching every other console tile
+  on the site. No `build.py` changes needed — `meta(sys).photo` was already
+  populated for ps2/gc/wii/xbox (photo) from earlier `fetch_console_photos()`
+  runs; this was purely a frontend wiring gap.
+- **Switch: deliberately deferred again.** A GitHub search for "Eden" (the
+  current yuzu-fork successor) surfaced SEO-spam repos with keyword-stuffed
+  descriptions matching a known malware-impersonation pattern; the
+  seemingly-legitimate self-hosted `git.eden-emu.dev` Gitea instance returned
+  HTTP 403 (likely JS-gated / blocking scrapers), so it couldn't be verified
+  as the real source either. Did not download from any unverified source —
+  this is a deliberate safety call, not a missed task; revisit only once a
+  trustworthy official source can actually be confirmed.
+- **WiiU (Cemu) and 3DS — not yet started.** Cemu has an official AppImage
+  (`cemu-project/Cemu`, e.g. `v2.6`) so the Switch-style source-trust problem
+  doesn't apply — next in line. 3DS needs its own source-verification pass
+  first (Citra's actual maintained successor is likely Azahar or Lime3DS,
+  not yet researched).
+- Bumped to 3.24. `server/selkies-ps2/README.md` and `server/
+  selkies-dolphin/README.md` gained "Known issues" sections covering the
+  fullscreen fix, the controller gap, and the touch-controls answer;
+  `server/selkies-xemu/README.md` written fresh with xemu's own full gotcha
+  list (config path, HDD volume-copy trick, write-lock issue, unresolved
+  software-rendering issue).
+
 ## Session 2026-09-16 (round 7) — Dolphin (GC/Wii) added, auth-required bug
 ## fixed, a real process-leak bug found + fixed for BOTH emulators (3.23)
 - Owner reported "Authorization Required" black screen on PS2 launch, and

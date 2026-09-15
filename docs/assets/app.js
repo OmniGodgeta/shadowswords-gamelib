@@ -2341,6 +2341,7 @@ const STREAM_SYSTEMS = SELF_HOSTED ? [
   { id: "ps2", name: "PlayStation 2", icon: "🎮" },
   { id: "gc", name: "GameCube", icon: "🎮" },
   { id: "wii", name: "Wii", icon: "🎮" },
+  { id: "xbox", name: "Xbox", icon: "🎮" },
 ] : [];
 async function routeStream(sys) {
   const token = ++state.render;
@@ -2368,15 +2369,19 @@ async function routeStream(sys) {
   const search = el("input", { type: "search", className: "chat-input", placeholder: `Search ${cfg.name}…` });
   search.oninput = () => draw(search.value);
   const np = data.nowPlaying;
-  view.replaceChildren(el("div", { className: "wrap" },
-    el("section", { className: "shelf", style: "padding:22px 0 8px" },
-      el("div", { className: "shelf-head" }, el("h1", { textContent: cfg.name })),
-      el("p", { className: "hint", textContent:
-        `${data.games.length.toLocaleString()} games, read straight off shadow's own drive — nothing to download. ` +
-        "The real emulator runs there and streams to you live; only one game runs at a time." }),
+  const frag = document.createDocumentFragment();
+  frag.append(hero({
+    kicker: "Streamed", title: cfg.name,
+    desc: `${data.games.length.toLocaleString()} games, read straight off shadow's own drive — nothing to download. ` +
+      "The real emulator runs there and streams to you live; only one game runs at a time.",
+    art: sysArt(meta(sys)),
+  }));
+  frag.append(el("div", { className: "wrap" },
+    el("section", { className: "shelf", style: "padding:0 0 8px" },
       np ? el("div", { className: "note" },
         el("b", { textContent: "🎮 Currently running: " }), `${np.name} — started by ${np.who}. Picking a game below takes over this session.`) : null,
       search, list)));
+  view.replaceChildren(frag);
   draw("");
 }
 // Popup blockers kill window.open() calls that happen after an await — open
@@ -3372,10 +3377,18 @@ async function routePlay() {
       el("p", { className: "hint", style: "margin:-6px 0 10px", textContent:
         "Too heavy for a browser core — the real emulator runs on shadow's GPU and streams to you live." }),
       el("div", { className: "tile-grid", style: "padding:0" },
-        ...STREAM_SYSTEMS.map((s) => el("a", { className: "tile wide", href: `#/stream/${s.id}` },
-          coverArt({ name: s.name, sys: s.id }),
-          el("div", { className: "tile-cap" }, el("div", { className: "t", textContent: s.name }),
-            el("div", { className: "s", textContent: "Real emulator · streamed" })))))));
+        ...STREAM_SYSTEMS.map((s) => {
+          const m = meta(s.id);
+          // Real console photo/logo (already scraped for every system by
+          // build.py — meta() just wasn't being asked for it before) instead
+          // of coverArt()'s faded-sleeve fallback: this shelf is a handful of
+          // curated consoles, not a library grid, so the image can and
+          // should be the whole point of the tile.
+          return el("a", { className: "tile wide", href: `#/stream/${s.id}` },
+            coverArt({ img: m.photo || m.logo, name: s.name, sys: s.id }),
+            el("div", { className: "tile-cap" }, el("div", { className: "t", textContent: s.name }),
+              el("div", { className: "s", textContent: "Real emulator · streamed" })));
+        }))));
   }
   frag.append(el("div", { className: "shelf" },
     el("div", { className: "shelf-head" }, el("h2", { textContent: "Playable consoles" }),

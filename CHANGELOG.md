@@ -1,5 +1,35 @@
 # Changelog
 
+## 3.24
+- **Xbox joined PS2/GameCube/Wii in "Streamed consoles"** — real xemu,
+  same architecture, official `xemu-project/xemu` AppImage. 98 games found
+  on the owner's existing library. BIOS/MCPX/HDD chain reused from an
+  existing working Windows-xemu install (own dumps, never bundled/shared);
+  the HDD image is copied once into its own Docker volume rather than
+  bind-mounted from the original, so the original file can never be
+  corrupted. See `server/selkies-xemu/README.md`. Known limitation:
+  software rendering (llvmpipe) instead of GPU-accelerated — investigated,
+  not yet resolved; games still boot and run correctly.
+- **Fixed PS2/GC/Wii not going fullscreen** — neither PCSX2's own
+  `-fullscreen` flag nor Dolphin's default window reliably filled Selkies'
+  virtual display (confirmed via screenshot: small window, black borders).
+  Fixed at the window-manager level (`wmctrl -r :ACTIVE: -b add,fullscreen`,
+  app-agnostic, applies to every streamed console including Xbox) instead
+  of relying on each emulator's own fullscreen handling.
+- **Streamed console tiles/pages now show real cover photos** instead of a
+  faded generated sleeve, matching every other console on the site.
+- Documented (not yet fixed) two known gaps found in live testing: PS2/GC/
+  Wii controllers aren't detected (root-caused to keyboard-only PCSX2
+  config, real SDL bindings still needed) and there are no on-screen touch
+  controls on streamed consoles yet — Selkies actually ships a built-in
+  "Universal Touch Gamepad" overlay (Ctrl+Shift+G) that isn't surfaced in
+  RetroVerse's own UI yet.
+- Switch emulation deliberately deferred again this round — couldn't verify
+  a trustworthy download source (SEO-spam repos impersonating the "Eden"
+  project, the legitimate-looking self-hosted Gitea instance returned
+  HTTP 403). WiiU (Cemu, official AppImage confirmed available) and 3DS
+  not yet started.
+
 ## 3.23
 - **GameCube and Wii joined PS2 in "Streamed consoles"** — real Dolphin,
   same architecture as PS2 (server/selkies-dolphin/). 647 GC + 232 Wii games

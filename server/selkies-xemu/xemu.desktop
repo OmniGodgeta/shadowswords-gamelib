@@ -1,0 +1,5 @@
+[Desktop Entry]
+Type=Application
+Name=xemu
+Exec=/opt/xemu-extracted/AppRun
+X-GNOME-Autostart-enabled=true
