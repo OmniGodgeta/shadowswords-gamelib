@@ -2339,6 +2339,8 @@ const IPTV_SRC = SELF_HOSTED ? "/iptv/index.m3u" : TS + "/iptv/index.m3u";
 // this site's netplay layer) for video/input.
 const STREAM_SYSTEMS = SELF_HOSTED ? [
   { id: "ps2", name: "PlayStation 2", icon: "🎮" },
+  { id: "gc", name: "GameCube", icon: "🎮" },
+  { id: "wii", name: "Wii", icon: "🎮" },
 ] : [];
 async function routeStream(sys) {
   const token = ++state.render;
@@ -2346,7 +2348,7 @@ async function routeStream(sys) {
   if (!cfg) { route404(); return; }
   document.title = `${cfg.name} — RetroVerse`;
   spinner();
-  let data = { games: [], url: null };
+  let data = { games: [], url: null, nowPlaying: null };
   try { data = await fetch(`${API}/stream/${sys}/list`).then((r) => r.json()); } catch { /* offline */ }
   if (token !== state.render) return;
   const list = el("div", { className: "tile-grid" });
@@ -2358,19 +2360,22 @@ async function routeStream(sys) {
         coverArt({ name: g.name, sys }),
         el("div", { className: "tile-cap" }, el("div", { className: "t", textContent: g.name }),
           el("div", { className: "s", textContent: "Play on shadow" })));
-      a.onclick = (e) => { e.preventDefault(); launchStream(sys, g.file, data.url, g.name, cfg.name); };
+      a.onclick = (e) => { e.preventDefault(); launchStream(sys, g.file, data.url, g.name, cfg.name, data.nowPlaying); };
       return a;
     }));
     if (!games.length) list.replaceChildren(el("p", { className: "hint", textContent: q ? "No matches." : "No games found — is the drive connected on shadow?" }));
   };
   const search = el("input", { type: "search", className: "chat-input", placeholder: `Search ${cfg.name}…` });
   search.oninput = () => draw(search.value);
+  const np = data.nowPlaying;
   view.replaceChildren(el("div", { className: "wrap" },
     el("section", { className: "shelf", style: "padding:22px 0 8px" },
       el("div", { className: "shelf-head" }, el("h1", { textContent: cfg.name })),
       el("p", { className: "hint", textContent:
         `${data.games.length.toLocaleString()} games, read straight off shadow's own drive — nothing to download. ` +
-        "The real emulator runs there and streams to you live; picking a game here takes over whatever's currently running." }),
+        "The real emulator runs there and streams to you live; only one game runs at a time." }),
+      np ? el("div", { className: "note" },
+        el("b", { textContent: "🎮 Currently running: " }), `${np.name} — started by ${np.who}. Picking a game below takes over this session.`) : null,
       search, list)));
   draw("");
 }
@@ -2378,12 +2383,14 @@ async function routeStream(sys) {
 // the tab synchronously on the click (blank), then point it at the stream
 // once the launch call actually succeeds. If launch fails, close it again
 // rather than leaving a blank tab behind.
-function launchStream(sys, file, url, gameName, sysName) {
+function launchStream(sys, file, url, gameName, sysName, nowPlaying) {
+  if (nowPlaying && !confirm(`${nowPlaying.who} is currently playing ${nowPlaying.name}. Launch ${gameName} and take over?`)) return;
   const win = window.open("", "_blank");
   if (win) { try { win.document.title = `Launching ${gameName}…`; } catch { /* cross-origin-safe no-op */ } }
   toast(`Launching ${gameName} on ${sysName}…`);
+  const who = AUTH.user?.display || prefs().netplayName || "Someone";
   fetch(`${API}/stream/launch`, { method: "POST", headers: { "content-type": "application/json", ...authHdr() },
-    body: JSON.stringify({ sys, file }) })
+    body: JSON.stringify({ sys, file, who }) })
     .then((r) => r.json())
     .then((d) => {
       if (!d?.ok || !d.url) throw new Error(d?.error || "launch failed");
@@ -3204,11 +3211,13 @@ async function routeSystem(id) {
   const frag = document.createDocumentFragment();
   frag.append(hero({
     kicker: "Console", title: m.name,
-    desc: `${games.length.toLocaleString()} games${m.withArt ? `, ${m.withArt} with box art` : ""}${m.playable ? " · playable in your browser" : ""}.`,
+    desc: `${games.length.toLocaleString()} games${m.withArt ? `, ${m.withArt} with box art` : ""}${m.playable ? " · playable in your browser" : STREAM_SYSTEMS.some((s) => s.id === id) ? " · playable via live stream" : ""}.`,
     art: arty.length ? collage(arty) : sysArt(m),
     actions: m.playable
       ? [{ label: "▶ Play these", href: `#/play/${id}`, primary: true }, { label: "🎲 Random", onClick: () => surpriseMe(id) }]
-      : [],
+      : STREAM_SYSTEMS.some((s) => s.id === id)
+        ? [{ label: "▶ Play via live stream", href: `#/stream/${id}`, primary: true }]
+        : [],
   }));
 
   const fText = el("input", { type: "search", placeholder: "Filter titles…" });
@@ -3422,7 +3431,16 @@ async function routePlaySystem(id) {
   spinner();
   await getSystems().catch(() => {});
   const m = meta(id);
-  if (!m.playable) { location.hash = `#/s/${id}`; return; }
+  if (!m.playable) {
+    // Not an EJS/WASM core, but might still be playable as a real emulator
+    // streamed off shadow's GPU (see STREAM_SYSTEMS) — that's a genuine
+    // "Play" path, unlike the dead-end plain system page. This is exactly
+    // the gap a user hits going PS2 -> Play from the regular flow: EJS says
+    // not playable, but streaming makes it playable after all.
+    const sc = STREAM_SYSTEMS.find((s) => s.id === id);
+    location.hash = sc ? `#/stream/${id}` : `#/s/${id}`;
+    return;
+  }
   const games = await getSystem(id).catch(() => []);
   if (token !== state.render) return;
 

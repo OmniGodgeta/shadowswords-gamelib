@@ -861,6 +861,33 @@ async function serveIptv(req, res) {
 // datachannel. `launchStreamGame` just tells the container's single running
 // emulator instance which game to boot; the browser is handed the
 // tailscale-serve URL and connects to Selkies directly for video/input.
+// Credentials embedded in every URL below so every site visitor is
+// pre-authorized — nobody needs to know or type the Selkies login
+// themselves. Browsers honor user:pass@host for HTTP Basic Auth on a
+// top-level navigation (these links always open in a new tab, never an
+// iframe). Rotate here (and the matching `docker run -e SELKIES_BASIC_AUTH_*`
+// for each container) if this ever needs to change.
+const PS2_URL = "https://ShadowSwords:Allo1234@retroverse.tail51f9d6.ts.net:8722/";
+const DOLPHIN_URL = "https://ShadowSwords:Allo1234@retroverse.tail51f9d6.ts.net:8723/";
+// `killPattern` + `launch` let launchStreamGame stay one generic function
+// across different emulators with different CLIs. gc/wii intentionally
+// share one container — one Dolphin instance handles both, so launching a
+// Wii game correctly kills a running GC one (they're the same emulator).
+//
+// killPattern is matched with `pkill -f`, NOT a tracked PID: both AppImages'
+// extracted AppRun fork(+relocate) the real binary rather than exec-replacing
+// themselves in place (confirmed by `ps` — PCSX2 stays visible as its own
+// AppRun path; Dolphin's AppRun forks a child that runs from a *different*,
+// runtime-relocated path, /opt/AppDir/bin/dolphin-emu). A PID captured via
+// `$!` at launch time is therefore worthless for killing later — it names
+// whichever one happens to exit first, not the real long-running process.
+// `pkill -f <pattern>` run as its OWN separate `docker exec` (never
+// concatenated into the same bash -c string as the launch command) finds
+// the real process either way, and is immune to the self-match trap that bit
+// the PID-file version: pkill excludes its own PID from matches by default,
+// but only protects against matching *itself* — a launch string containing
+// its own emulator name in the SAME shell invocation as the kill is a
+// different, unprotected process and still gets caught.
 const STREAM_SYSTEMS = {
   ps2: {
     container: "selkies-ps2",
@@ -870,7 +897,27 @@ const STREAM_SYSTEMS = {
     containerRoot: "/home/ubuntu/Games/ps2",
     hostRoot: path.join(os.homedir(), "Games", "roms", "ps2"),
     exts: new Set([".iso", ".mdf", ".chd", ".cso", ".zso", ".gz", ".bin", ".nrg"]),
-    url: "https://retroverse.tail51f9d6.ts.net:8722/",
+    url: PS2_URL,
+    killPattern: "pcsx2",
+    launch: (p) => `DISPLAY=:20 nohup /opt/pcsx2-extracted/AppRun -fullscreen -batch -- '${p}' >/tmp/pcsx2-launch.log 2>&1 & disown`,
+  },
+  gc: {
+    container: "selkies-dolphin",
+    containerRoot: "/home/ubuntu/Games/gc",
+    hostRoot: path.join(os.homedir(), "Games", "roms", "gc"),
+    exts: new Set([".iso", ".rvz", ".gcz", ".ciso", ".wbfs"]),
+    url: DOLPHIN_URL,
+    killPattern: "dolphin-emu",
+    launch: (p) => `DISPLAY=:20 nohup /opt/dolphin-extracted/AppRun -b -e '${p}' >/tmp/dolphin-launch.log 2>&1 & disown`,
+  },
+  wii: {
+    container: "selkies-dolphin",
+    containerRoot: "/home/ubuntu/Games/wii",
+    hostRoot: path.join(os.homedir(), "Games", "roms", "wii"),
+    exts: new Set([".iso", ".rvz", ".gcz", ".ciso", ".wbfs"]),
+    url: DOLPHIN_URL,
+    killPattern: "dolphin-emu",
+    launch: (p) => `DISPLAY=:20 nohup /opt/dolphin-extracted/AppRun -b -e '${p}' >/tmp/dolphin-launch.log 2>&1 & disown`,
   },
 };
 function listStreamGames(sys) {
@@ -894,10 +941,17 @@ function listStreamGames(sys) {
   out.sort((a, b) => a.name.localeCompare(b.name));
   return out;
 }
+// One emulator instance per system — a second person launching a different
+// game silently kicks the first. Not a lock (nothing stops it happening
+// anyway, same as before), just visibility: the frontend shows who/what is
+// running so a launch that would interrupt someone is at least informed.
+const streamNowPlaying = {};
 function serveStreamList(req, res, sys) {
   const cfg = STREAM_SYSTEMS[sys];
   if (!cfg) { res.writeHead(404, CORS).end("unknown stream system"); return; }
-  jsonRes(res, 200, { games: listStreamGames(sys), url: cfg.url });
+  // Keyed by container, not sys — gc and wii share one Dolphin instance, so
+  // "what's running" has to reflect the shared emulator, not either id alone.
+  jsonRes(res, 200, { games: listStreamGames(sys), url: cfg.url, nowPlaying: streamNowPlaying[cfg.container] || null });
 }
 function launchStreamGame(req, res, sys, body) {
   const cfg = STREAM_SYSTEMS[sys];
@@ -910,22 +964,18 @@ function launchStreamGame(req, res, sys, body) {
   const full = cfg.hostRoot + "/" + rel;
   try { fs.accessSync(full); } catch { res.writeHead(404, CORS).end("not found"); return; }
   const containerPath = cfg.containerRoot + "/" + rel;
-  // PCSX2 isn't confirmed single-instance-aware from a second CLI invocation
-  // (an earlier test launched a second window rather than messaging the
-  // running one) — kill-then-relaunch is what actually guarantees exactly
-  // one instance running the requested game, instead of windows piling up.
-  // A PID file (not `pkill -f pcsx2.appimage`) does the killing: this whole
-  // wrapper script's own command line contains the literal string
-  // "pcsx2.appimage" (it's right there in the nohup line below), so a
-  // pattern-matching pkill inside the same bash -c also matches — and
-  // kills — its own parent shell before the new launch ever runs. Exit 137
-  // (SIGKILL) on the very first attempt was this exact bug.
-  const script = `[ -f /tmp/pcsx2.pid ] && kill -9 "$(cat /tmp/pcsx2.pid)" 2>/dev/null; sleep 1; ` +
-    `DISPLAY=:20 nohup /opt/pcsx2.appimage --appimage-extract-and-run -fullscreen -batch -- '${containerPath}' ` +
-    `>/tmp/pcsx2-launch.log 2>&1 & echo $! > /tmp/pcsx2.pid; disown`;
-  execFile("docker", ["exec", cfg.container, "bash", "-c", script], { timeout: 10000 }, (err) => {
+  // Kill (its own separate docker exec, not concatenated with the launch
+  // command — see the STREAM_SYSTEMS comment for why that matters), then
+  // launch. Exit code from pkill is ignored — "nothing was running" is a
+  // normal outcome, not an error.
+  execFile("docker", ["exec", cfg.container, "pkill", "-9", "-f", cfg.killPattern], { timeout: 8000 }, () => {
+  setTimeout(() => {
+  execFile("docker", ["exec", cfg.container, "bash", "-c", cfg.launch(containerPath)], { timeout: 10000 }, (err) => {
     if (err) { res.writeHead(500, CORS).end("launch failed: " + err.message); return; }
+    streamNowPlaying[cfg.container] = { name: full.split("/").pop().replace(/\.[^.]+$/, ""), who: String(body?.who || "").slice(0, 40) || "Someone", since: now() };
     jsonRes(res, 200, { ok: true, url: cfg.url });
+  });
+  }, 1200); // give the killed process a moment to actually release the display/audio device
   });
 }
 

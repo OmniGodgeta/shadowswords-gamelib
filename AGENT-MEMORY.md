@@ -6,6 +6,93 @@ agent can pick up context without re-deriving it. Read `AGENTS.md` first, then
 this. (Netplay internals: `NETPLAY-UI-CONTRACT.md`. Roadmap split:
 `FEATURE-BACKLOG.md`.)
 
+## Session 2026-09-16 (round 7) — Dolphin (GC/Wii) added, auth-required bug
+## fixed, a real process-leak bug found + fixed for BOTH emulators (3.23)
+- Owner reported "Authorization Required" black screen on PS2 launch, and
+  "no play button" navigating into PS2 from the regular library (turned out
+  to be the same root cause as round 6's "streamed consoles not showing" —
+  the redirect fix from that round wasn't live yet when they hit it). Also
+  asked: auto-authorize all users, own username/password
+  (ShadowSwords/Allo1234), Dolphin next, workspace-isolation question,
+  "smaller fixes" go-ahead.
+- **Auth fixed**: recreated both containers with `SELKIES_BASIC_AUTH_USER=
+  ShadowSwords`/`_PASSWORD=Allo1234` (owner's own choice, not a generated
+  placeholder), and embedded them directly in the URLs `STREAM_SYSTEMS.*.url`
+  hands to the browser (`https://user:pass@host/`) — every visitor is
+  pre-authorized, matching "have all users be automatically connected."
+  Caveat noted in the READMEs: this only pre-authenticates a **top-level
+  navigation**, not an iframe — `launchStream()` already always opens a new
+  tab, so this was free.
+- **Dolphin (GameCube/Wii) built and shipped** — `server/selkies-dolphin/`.
+  `gc` and `wii` are two RetroVerse system ids sharing ONE Dolphin
+  container/instance. 647 GC + 232 Wii games found on the owner's existing
+  library (`~/Games/roms/gc`, `~/Games/roms/wii` — same external drive
+  pattern as PS2). No BIOS needed (GC boots HLE by default). `tailscale
+  serve --bg --https=8723 https+insecure://127.0.0.1:8092` for the trusted
+  URL. **Ubuntu's own `dolphin-emu` apt package (universe, no PPA needed)
+  installs and launches but hangs forever past its own splash** — Qt6 ABI
+  mismatch against the container's system Qt, confirmed via 0% GPU
+  utilization for 30+ seconds on two different titles, log flooded with
+  `QObject::connect(...): signal not found`. The unofficial AppImage
+  (pkgforge-dev/Dolphin-emu-AppImage) worked immediately — same
+  self-contained-bundle reasoning PCSX2 already used, just needed applying
+  here too since apt was tried first for simplicity and silently failed in
+  a way that LOOKED like it might just be slow (it wasn't — confirmed by
+  trying a second, normally-faster-booting game and getting the identical
+  stuck splash).
+- **Found a real process-leak bug building Dolphin, then confirmed it
+  affects PCSX2 too**: `--appimage-extract-and-run` re-extracts to a fresh
+  `/tmp` dir on every invocation and — the actual bug — its wrapper process
+  can fork a genuinely separate child for the real binary and exit shortly
+  after, reparenting that child to init. A PID captured via `$!` right after
+  launching is only valid for a few seconds; by the time a *later* HTTP
+  request tries to kill "whatever's currently running," that PID may
+  already be gone or may only ever have pointed at the (already-exited)
+  wrapper — confirmed via `ps aux`: launching a second game left the first
+  one's actual emulator process still running (two windows, two GPU
+  sessions). This is a DIFFERENT bug from round 6's pkill-self-match one,
+  despite looking similar on the surface — that one was about the kill
+  command matching its own text; this one is about `$!` pointing at the
+  wrong process entirely regardless of how it's matched. Fixed two ways:
+  (1) both Dockerfiles now extract their AppImage **once, at build time**
+  (`--appimage-extract`, reference `<dir>/AppRun` directly, no wrapper, no
+  per-launch re-extraction) — PCSX2 hadn't actually needed this fix (its
+  AppRun exec-replaces itself in place, same PID throughout — confirmed by
+  `ps` showing it still visible under its own extracted path), but it's
+  applied there too now for consistency and because "it happened to look
+  right in one manual check" is exactly the kind of false confidence that
+  let the Dolphin version of this bug through originally; (2) killing now
+  uses `pkill -f <pattern>` — a stable substring of the real running
+  binary's path (`"pcsx2"` / `"dolphin-emu"`) — as its **own separate**
+  `docker exec` call, never concatenated into the same `bash -c` string as
+  the launch command (that's what caused round 6's self-kill bug; keeping
+  them apart avoids re-introducing it while switching kill strategies).
+  Verified clean with several launch/relaunch cycles via the real HTTP
+  endpoint, `ps aux` confirming exactly one process each time, including a
+  cross-system relaunch (GC → Wii, same shared container).
+- **Workspace/background isolation — no code needed, already true.** The
+  owner asked whether their own remote/Sunshine use of `shadow` would
+  interfere, and whether the stream could run "in a workspace or in the
+  background." It already does: Selkies runs its own private Xvfb (`:20`)
+  entirely inside the container's own namespace — structurally invisible to
+  and non-interfering with the host's own Hyprland (Wayland, not X11 to
+  begin with) session, regardless of what the owner is doing on the host
+  directly. The only *actually* shared resource is the physical GPU's
+  compute/encode throughput — explained this distinction rather than
+  building anything, since there was nothing to build.
+- **"Streamed consoles" showing on Android but not browser"** — almost
+  certainly the owner testing the browser against the public GH Pages
+  mirror (no `.ts.net` in that hostname → `SELF_HOSTED` correctly false →
+  `STREAM_SYSTEMS` correctly empty, same rule Netplay/Movies/Music already
+  follow) rather than a real bug. Didn't change the gating — flagged for
+  the owner to confirm which URL their browser was actually on rather than
+  guessing further; **unconfirmed, follow up next session if it's still
+  wrong after they check.**
+- Bumped to 3.23. Both READMEs (`server/selkies-ps2/`, `server/
+  selkies-dolphin/`) rewritten with the full gotcha list — read them before
+  touching this area again, especially the AppImage-extraction and
+  pkill-pattern reasoning, both non-obvious and expensive to rediscover.
+
 ## Session 2026-09-16 (round 6) — PS2 wired into the site UI (3.22), netplay
 ## for it investigated and genuinely unresolved
 - Owner: "finalize" the PS2 section, plus "I want the best possible

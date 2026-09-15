@@ -1,5 +1,29 @@
 # Changelog
 
+## 3.23
+- **GameCube and Wii joined PS2 in "Streamed consoles"** — real Dolphin,
+  same architecture as PS2 (server/selkies-dolphin/). 647 GC + 232 Wii games
+  found on the owner's existing library.
+- **Fixed Authorization Required on the PS2/GC/Wii streams**: the login
+  credentials are now embedded directly in the stream URL RetroVerse hands
+  out, so every visitor is pre-authorized instead of hitting a blank
+  "Authorization Required" screen with nothing to type a password into.
+- **Fixed a real process-leak bug found building Dolphin, then confirmed it
+  also affected PCSX2**: `--appimage-extract-and-run` re-extracts on every
+  launch and can fork a child that outlives the short-lived wrapper process
+  a tracked PID pointed at — killing "the old game" before launching a new
+  one silently missed the actual running emulator, leaving multiple
+  instances piled up (multiple GPU sessions, multiple windows). Fixed by
+  extracting each AppImage once at Docker build time (no more wrapper) and
+  killing by a stable command-line pattern (`pkill -f`, its own separate
+  `docker exec` — never concatenated with the launch command, which is what
+  caused an earlier self-kill bug). Verified clean via `ps aux` after
+  several launch/relaunch cycles, including cross-system (GC→Wii).
+- PS2's redirect-to-stream fix (3.22) generalizes automatically — GC/Wii
+  get the same "Play these" → live stream flow with no extra code.
+- Server change (arcade-server.mjs) — applied to both the tracked and live
+  copies, restarted.
+
 ## 3.22
 - **PS2 is now playable from the site** — "Streamed consoles" shelf on Play
   → PlayStation 2 → pick a game → boots directly on shadow's real PCSX2

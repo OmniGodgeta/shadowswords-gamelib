@@ -1,5 +1,5 @@
 [Desktop Entry]
 Type=Application
-Name=PCSX2
-Exec=/opt/pcsx2-extracted/AppRun
+Name=Dolphin
+Exec=/opt/dolphin-extracted/AppRun
 X-GNOME-Autostart-enabled=true

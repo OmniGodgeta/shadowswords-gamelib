@@ -3,7 +3,9 @@
 Real PCSX2, GPU-accelerated (Vulkan via the RTX 5070), streamed to any
 browser tab over WebRTC by [Selkies](https://docs.selkies.io/) — no WASM
 port, no partial compatibility. Games are read directly from the host's own
-library; nothing is copied or re-downloaded.
+library; nothing is copied or re-downloaded. Sibling doc:
+`server/selkies-dolphin/README.md` (GameCube/Wii) shares this whole
+architecture — read this one first, that one only documents what's different.
 
 **Status: live on the site.** Play → "Streamed consoles" → PlayStation 2 in
 RetroVerse lists the library and launches a picked game directly on the
@@ -11,8 +13,10 @@ container's PCSX2 (`serveStreamList`/`launchStreamGame` in
 `arcade-server.mjs`, routes `/stream/ps2/list` + `/stream/launch`). The
 stream itself is reachable at `https://retroverse.tail51f9d6.ts.net:8722/`
 (wired via `tailscale serve --bg --https=8722 https+insecure://127.0.0.1:8090`
-— a trusted tailnet cert instead of Selkies' own self-signed one). One game
-runs at a time; launching a new one kills whatever's running first.
+— a trusted tailnet cert instead of Selkies' own self-signed one), with login
+credentials embedded right in the URL RetroVerse hands out so every visitor
+is pre-authorized. One game runs at a time; launching a new one kills
+whatever's running first — the picker shows who/what is currently running.
 
 ## What's running
 
@@ -20,7 +24,8 @@ runs at a time; launching a new one kills whatever's running first.
 docker run --name selkies-ps2 -d --restart unless-stopped --shm-size=2g \
   -p 8090:8080 \
   --gpus all --runtime nvidia \
-  -e PASSWD=retroverse \
+  -e SELKIES_BASIC_AUTH_USER=ShadowSwords \
+  -e SELKIES_BASIC_AUTH_PASSWORD=Allo1234 \
   -v ~/.config/PCSX2:/home/ubuntu/.config/PCSX2 \
   -v ~/Games/roms/ps2:/home/ubuntu/Games/ps2:ro \
   selkies-ps2:test
@@ -28,7 +33,8 @@ docker run --name selkies-ps2 -d --restart unless-stopped --shm-size=2g \
 
 - Image built from `Dockerfile` in this directory (extends
   `ghcr.io/selkies-project/selkies/desktop:main-ubuntu26.04`, adds the
-  official PCSX2 AppImage, autostarts it via `pcsx2.desktop`).
+  official PCSX2 AppImage — **extracted at build time**, see Gotchas —
+  autostarts it via `pcsx2.desktop`).
 - `~/.config/PCSX2` is mounted **read-write** and **shared with the host's
   own desktop PCSX2 install** — same BIOS, same settings, same save state
   namespace. This was the simplest thing that worked for a proof of concept;
@@ -39,8 +45,10 @@ docker run --name selkies-ps2 -d --restart unless-stopped --shm-size=2g \
   **The drive has to actually be connected** for the container to see any
   games — it showed empty when the drive wasn't mounted, populated
   correctly once it was.
-- Password (`retroverse`) is a placeholder — change it before this is
-  anything more than a local test (`-e PASSWD=...`).
+- `SELKIES_BASIC_AUTH_USER`/`_PASSWORD` are the owner's own chosen
+  credentials (not a placeholder). `arcade-server.mjs`'s `STREAM_SYSTEMS.
+  ps2.url` embeds them (`https://user:pass@host/`) so browsers auto-
+  authenticate — rotate in both places together if this ever needs to change.
 
 ## Verified end-to-end
 
@@ -54,15 +62,18 @@ docker run --name selkies-ps2 -d --restart unless-stopped --shm-size=2g \
    doesn't even need the site's existing TURN server.
 3. PCSX2 autostarts, correctly detects the mounted BIOS files (both a
    Europe and a USA BIOS showed up with correct version info) and scans the
-   mounted game directory (400+ real games from the library, correct
+   mounted game directory (600+ real games from the library, correct
    titles/regions/sizes/compatibility ratings pulled from PCSX2's own DB).
 4. Launched **Bully** — boots to the Rockstar logo, **Vulkan renderer,
-   640x448 native resolution, 60 FPS / 100% speed**. Screenshots taken via
-   `docker exec ... import -window root` are in the session log, not
-   committed here (throwaway diagnostics, not artifacts worth keeping).
-5. Reachable over the tailnet: `https://<tailnet-ip>:8090/` returns 401
-   (password prompt) — confirmed from `shadow` itself; not yet tested from
-   an actual remote device.
+   640x448 native resolution, 60 FPS / 100% speed**.
+5. Reachable over the tailnet at the trusted-cert `tailscale serve` URL —
+   confirmed from `shadow` itself with embedded credentials (200, no
+   browser prompt); not yet tested from an actual remote device.
+6. Launch-and-replace verified clean: launched two different games back to
+   back through the real `/stream/launch` endpoint, confirmed via `ps aux`
+   inside the container that exactly one emulator process exists after each
+   launch — no orphaned processes piling up (see Gotchas — this needed two
+   real fixes to get right, not just the first thing that appeared to work).
 
 ## Gotchas hit along the way (don't redo this work)
 
@@ -78,15 +89,41 @@ docker run --name selkies-ps2 -d --restart unless-stopped --shm-size=2g \
 - **The base image's ENTRYPOINT ignores whatever command you pass** —
   `docker run <image> id -u ubuntu` doesn't print a uid, it just boots the
   full desktop session anyway. Use `--entrypoint` to override it if you need
-  to run something one-off inside the image (e.g. checking the `ubuntu`
-  user's UID before deciding how to mount things).
-- PCSX2 ships only as an AppImage upstream — `--appimage-extract-and-run`
-  avoids needing `/dev/fuse` in the container.
+  to run something one-off inside the image.
+- **`--appimage-extract-and-run` at launch time is the wrong call for a
+  long-running, kill-and-relaunch-able process.** It re-extracts to a fresh
+  `/tmp` directory on *every* invocation, and — the actual bug this caused —
+  its wrapper process can fork a genuinely separate child for the real
+  binary and then exit, which reparents that child to init. A PID captured
+  via `$!` right after launching is only good for a few seconds; by the time
+  a later request tries to kill "the game currently running," that PID may
+  already be gone or may only be the (already-exited) wrapper, leaving the
+  real emulator orphaned. Symptom: launching a second game left the first
+  one *also* still running — two windows, two GPU sessions, confirmed via
+  `ps aux` inside the container. Fixed two ways at once: (1) the AppImage is
+  extracted **once, at Docker build time** (`--appimage-extract`, then
+  reference `<extracted-dir>/AppRun` directly — no wrapper, no per-launch
+  re-extraction), and (2) killing uses `pkill -f <pattern>` as its own
+  **separate** `docker exec` (see next point for why it can't be in the same
+  command as the launch), not a tracked PID.
+- **A `pkill -f` that matches its own command line kills itself.** The very
+  first version concatenated `kill` and the new `launch` into one `bash -c`
+  string — but that string's own text contains the emulator's name (it's
+  right there in the launch command that follows), so the pattern-matching
+  kill also matched — and killed — its own parent shell before the new
+  launch ever ran (exit 137/SIGKILL, first attempt). Splitting kill and
+  launch into two separate `docker exec` calls fixes this: `pkill -f` in its
+  own standalone invocation only sees `pkill -f <pattern>` as its command
+  line, which pkill's own self-exclusion already handles safely.
 - The Setup Wizard's directory picker has a plain text "Directory:" field —
   type the path directly rather than clicking through the file browser.
 - The BIOS list in the wizard needs an actual row **click** to select
   before "Next" — clicking Next with nothing selected pops a warning and
   does not advance.
+- Embedding `user:pass@host` in the URL only pre-authenticates a **top-level
+  navigation** (a real link/tab open) — it does not work the same way for an
+  iframe. `launchStream()` on the frontend deliberately always opens a new
+  tab for this reason.
 
 ## Next steps
 
@@ -98,6 +135,10 @@ docker run --name selkies-ps2 -d --restart unless-stopped --shm-size=2g \
   integration, no box art, no per-game compatibility notes surfaced in the
   UI (PCSX2 itself shows compatibility ratings once you're in its own list,
   but RetroVerse's picker doesn't know about them).
+- **A real "someone else is playing" guard** exists now (`streamNowPlaying`,
+  keyed by container, shown in the picker + a confirm() before interrupting)
+  but it's informational only, not a lock — nothing stops two requests
+  racing.
 - **2-player netplay — investigated, not resolved.** Selkies is built as a
   1:1 remote desktop tool (one controlling client), not a broadcast/
   multiplayer platform — there's an open, unresolved upstream issue
@@ -118,10 +159,9 @@ docker run --name selkies-ps2 -d --restart unless-stopped --shm-size=2g \
   (server-side), not routed through RetroVerse's browser-side netplay layer
   at all — untested, and the honest next step is trying it with two real
   clients before designing further.
-- **Generalizes directly to other consoles** — same Dockerfile shape (base
-  image + one emulator + one autostart entry) should work for Dolphin
-  (GameCube/Wii, has real official netplay) and is worth trying for Xemu
-  (Xbox, no native netplay — would lean entirely on the host-stream
-  approach) and Cemu/a Switch emulator (WiiU/Switch — GPU-heavier, whether
-  "most of the library at full speed" holds needs actually trying it, not
-  assumed from this one PS2 result).
+- **Xbox (Xemu) and WiiU/Switch (Cemu/a Switch emulator)** — same container
+  shape, untried. Xemu has no native netplay at all (unlike Dolphin, which
+  does), so it would lean entirely on the host-stream approach or the
+  as-yet-unresolved multi-client question above. WiiU/Switch are
+  meaningfully more GPU-demanding than anything tried so far — whether
+  "most of the library at full speed" holds needs actually trying it.
