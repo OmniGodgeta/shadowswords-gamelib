@@ -853,6 +853,82 @@ async function serveIptv(req, res) {
   } catch { res.writeHead(502, CORS).end("iptv catalog unavailable — no cache and upstream unreachable"); }
 }
 
+// ---- streamed consoles (real emulator + GPU, via Selkies) ----------------
+// Systems too heavy for EJS/WASM (PS2 today; the same Dockerfile shape works
+// for GameCube/Xbox/WiiU/Switch — see server/selkies-ps2/README.md) run as a
+// real emulator in a GPU-accelerated container and stream to the browser
+// over WebRTC. This is NOT EJS — no core, no save-state API, no netplay
+// datachannel. `launchStreamGame` just tells the container's single running
+// emulator instance which game to boot; the browser is handed the
+// tailscale-serve URL and connects to Selkies directly for video/input.
+const STREAM_SYSTEMS = {
+  ps2: {
+    container: "selkies-ps2",
+    // Path as PCSX2 sees it *inside* the container (matches the -v mount in
+    // `docker run`) vs. where this Node process reads the same files from on
+    // the host, for listing — same drive, two different mount points.
+    containerRoot: "/home/ubuntu/Games/ps2",
+    hostRoot: path.join(os.homedir(), "Games", "roms", "ps2"),
+    exts: new Set([".iso", ".mdf", ".chd", ".cso", ".zso", ".gz", ".bin", ".nrg"]),
+    url: "https://retroverse.tail51f9d6.ts.net:8722/",
+  },
+};
+function listStreamGames(sys) {
+  const cfg = STREAM_SYSTEMS[sys];
+  if (!cfg) return [];
+  const out = [];
+  const walk = (dir, rel, depth) => {
+    if (depth > 3) return; // real discs aren't nested deep; cap runaway recursion
+    let entries;
+    try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return; }
+    for (const e of entries) {
+      const full = path.join(dir, e.name);
+      const relPath = rel ? rel + "/" + e.name : e.name;
+      if (e.isDirectory()) walk(full, relPath, depth + 1);
+      else if (cfg.exts.has(path.extname(e.name).toLowerCase())) {
+        out.push({ name: e.name.replace(/\.[^.]+$/, ""), file: relPath });
+      }
+    }
+  };
+  walk(cfg.hostRoot, "", 0);
+  out.sort((a, b) => a.name.localeCompare(b.name));
+  return out;
+}
+function serveStreamList(req, res, sys) {
+  const cfg = STREAM_SYSTEMS[sys];
+  if (!cfg) { res.writeHead(404, CORS).end("unknown stream system"); return; }
+  jsonRes(res, 200, { games: listStreamGames(sys), url: cfg.url });
+}
+function launchStreamGame(req, res, sys, body) {
+  const cfg = STREAM_SYSTEMS[sys];
+  if (!cfg) { res.writeHead(404, CORS).end("unknown stream system"); return; }
+  const rel = String(body?.file || "");
+  // Same traversal guard as serveRom — this path gets shell-quoted below.
+  if (!rel || rel.includes("..") || rel.startsWith("/") || rel.includes("'")) {
+    res.writeHead(400, CORS).end("bad file"); return;
+  }
+  const full = cfg.hostRoot + "/" + rel;
+  try { fs.accessSync(full); } catch { res.writeHead(404, CORS).end("not found"); return; }
+  const containerPath = cfg.containerRoot + "/" + rel;
+  // PCSX2 isn't confirmed single-instance-aware from a second CLI invocation
+  // (an earlier test launched a second window rather than messaging the
+  // running one) — kill-then-relaunch is what actually guarantees exactly
+  // one instance running the requested game, instead of windows piling up.
+  // A PID file (not `pkill -f pcsx2.appimage`) does the killing: this whole
+  // wrapper script's own command line contains the literal string
+  // "pcsx2.appimage" (it's right there in the nohup line below), so a
+  // pattern-matching pkill inside the same bash -c also matches — and
+  // kills — its own parent shell before the new launch ever runs. Exit 137
+  // (SIGKILL) on the very first attempt was this exact bug.
+  const script = `[ -f /tmp/pcsx2.pid ] && kill -9 "$(cat /tmp/pcsx2.pid)" 2>/dev/null; sleep 1; ` +
+    `DISPLAY=:20 nohup /opt/pcsx2.appimage --appimage-extract-and-run -fullscreen -batch -- '${containerPath}' ` +
+    `>/tmp/pcsx2-launch.log 2>&1 & echo $! > /tmp/pcsx2.pid; disown`;
+  execFile("docker", ["exec", cfg.container, "bash", "-c", script], { timeout: 10000 }, (err) => {
+    if (err) { res.writeHead(500, CORS).end("launch failed: " + err.message); return; }
+    jsonRes(res, 200, { ok: true, url: cfg.url });
+  });
+}
+
 // ---- server-side search over docs/data/search.json ----------------------
 let SEARCH = null;
 function loadSearch() {
@@ -1425,7 +1501,7 @@ const server = http.createServer(async (req, res) => {
     }
 
     const writeEP = req.method === "PUT" || req.method === "DELETE"
-      || (req.method === "POST" && (P === "/request" || P === "/report"));
+      || (req.method === "POST" && (P === "/request" || P === "/report" || P === "/stream/launch"));
     if (writeEP && rateLimited(req, res, 40, 60000)) return;
     // a valid account token also authorises writes when a writeToken is configured
     if (writeEP && !tokenOK(req) && !userByToken(req)) { res.writeHead(401, CORS).end("token required"); return; }
@@ -1460,6 +1536,16 @@ const server = http.createServer(async (req, res) => {
     const th = P.match(/^\/thumb\/(.+)$/);
     if (th && (req.method === "GET" || req.method === "HEAD")) { serveThumb(req, res, th[1]); return; }
     if (P === "/iptv/index.m3u" && (req.method === "GET" || req.method === "HEAD")) { serveIptv(req, res); return; }
+    const strList = P.match(/^\/stream\/([^/]+)\/list$/);
+    if (strList && req.method === "GET") { serveStreamList(req, res, decodeURIComponent(strList[1])); return; }
+    if (P === "/stream/launch" && req.method === "POST") {
+      readBody(req, 4096).then((buf) => {
+        let body = {};
+        try { body = JSON.parse(buf.toString() || "{}"); } catch { /* */ }
+        launchStreamGame(req, res, String(body?.sys || ""), body);
+      }).catch(() => res.writeHead(400, CORS).end("bad body"));
+      return;
+    }
     const jf = P.match(/^\/jellyfin\/(.*)$/);
     if (jf && (req.method === "GET" || req.method === "HEAD")) { jellyfinProxy(req, res, jf[1], u0); return; }
   }

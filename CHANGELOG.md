@@ -1,5 +1,23 @@
 # Changelog
 
+## 3.22
+- **PS2 is now playable from the site** — "Streamed consoles" shelf on Play
+  → PlayStation 2 → pick a game → boots directly on shadow's real PCSX2
+  (GPU-accelerated, native speed) and opens the live stream in a new tab.
+  This is a genuinely different system from EJS: no browser core, one game
+  runs at a time (picking a new one takes over whatever's running), reads
+  straight from shadow's own drive. Server: `serveStreamList`/
+  `launchStreamGame` in arcade-server.mjs (`/stream/<sys>/list`,
+  `/stream/launch`). Also fixed a self-inflicted bug found while wiring this
+  up — the container's kill-old-instance step used `pkill -f pcsx2.appimage`,
+  which also matched its own wrapper script's command line (that string is
+  right there in the script text) and killed itself before ever launching
+  anything; switched to a PID file. `tailscale serve` now exposes the
+  stream at a trusted-cert URL (`:8722`) instead of a self-signed one.
+- Same container shape (Dockerfile + one emulator + autostart entry)
+  documented as the template for GameCube/Xbox/WiiU/Switch in
+  `server/selkies-ps2/README.md` — none of those built yet.
+
 ## 3.21
 - **IPTV channel names were garbled** for any channel whose `#EXTINF` line
   included an `http-user-agent` attribute (very common — a real one reported:

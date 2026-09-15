@@ -6,6 +6,58 @@ agent can pick up context without re-deriving it. Read `AGENTS.md` first, then
 this. (Netplay internals: `NETPLAY-UI-CONTRACT.md`. Roadmap split:
 `FEATURE-BACKLOG.md`.)
 
+## Session 2026-09-16 (round 6) — PS2 wired into the site UI (3.22), netplay
+## for it investigated and genuinely unresolved
+- Owner: "finalize" the PS2 section, plus "I want the best possible
+  experience... even if it means to use my computer to run the games."
+- **UI integration shipped**: Play page gained a "Streamed consoles" shelf
+  (gated `STREAM_SYSTEMS`, self-hosted only, mirrors the netplay/movies/
+  music pattern of backend-dependent features) → `#/stream/ps2` lists the
+  197 real games straight off the mount, click one → `launchStream()` opens
+  a blank tab **synchronously at click time** (popup blockers kill
+  `window.open()` calls made after an `await`, and the launch call is
+  async) then points it at the stream once `/stream/launch` confirms.
+  Server side: `serveStreamList`/`launchStreamGame` + `STREAM_SYSTEMS`
+  config in `arcade-server.mjs`, routes `/stream/<sys>/list` (GET) and
+  `/stream/launch` (POST, added to the existing `writeEP` rate-limit gate).
+- **Found and fixed a self-inflicted bug while building the launch script**:
+  the kill-old-instance step used `pkill -9 -f pcsx2.appimage` inside a
+  `bash -c "<script>"` wrapper — but that wrapper's OWN command line
+  contains the literal string "pcsx2.appimage" (it's right there in the
+  `nohup .../pcsx2.appimage ...` line later in the same script), so the
+  pkill matched and killed its own parent shell. First manual test exited
+  137 (SIGKILL) before ever launching anything. Fixed with a PID file
+  (`/tmp/pcsx2.pid` inside the container) instead of pattern matching —
+  verified end-to-end afterward, screenshot confirmed `-fullscreen -batch`
+  boots directly into the requested game with no menu navigation needed.
+- **`tailscale serve --bg --https=8722 https+insecure://127.0.0.1:8090`** —
+  gives the stream a trusted-cert URL instead of Selkies' self-signed one.
+  Note for next time: `tailscale serve <target>` **without `--bg` runs in
+  the foreground and does NOT persist** — killing that process silently
+  drops the mapping. Always use `--bg` for anything meant to stick.
+  `https+insecure://` is the flag for proxying to a self-signed HTTPS
+  backend (plain `http://` against an HTTPS-only backend 502s).
+- **2-player netplay for PS2 — investigated, genuinely unresolved, said so
+  plainly rather than guessing**: Selkies is a 1:1 remote-desktop tool, not
+  built for multiple simultaneous controlling clients — confirmed via an
+  open, unresolved upstream issue about exactly this
+  ([selkies#39](https://github.com/selkies-project/selkies-gstreamer/issues/39)).
+  Whether two browsers on the same session get routed to different virtual
+  controllers or collide is unknown without an actual two-client test — not
+  something to infer from docs. Also reasoned through why the obvious
+  fallback (reuse this site's own N64-style host-authoritative-video
+  netplay: `captureStream()` the Selkies `<video>`, forward guest input over
+  the existing datachannel) doesn't actually close the loop: there's no way
+  to synthesize fake Gamepad API state from JS in a standard browser, so a
+  forwarded guest press can't be turned back into real input on the host's
+  own Selkies connection. Any real answer needs both players hitting the
+  *same* Selkies session directly, not routed through this site's browser-
+  side netplay layer — untested. Full detail in `server/selkies-ps2/
+  README.md`'s "Next steps" — read that before picking this up again.
+- Did **not** attempt Dolphin/Xemu/Cemu/Switch this round — noted as the
+  natural next candidates (same Dockerfile shape) per the owner's framing,
+  not started.
+
 ## Session 2026-09-16 (round 5) — mic permission race fixed (app), VLC intent
 ## bug fixed (app), IPTV name-parsing bug fixed (3.21), PS2-in-browser
 ## validated end-to-end (Selkies+PCSX2, not yet wired into the UI)

@@ -1,13 +1,18 @@
-# PS2-in-browser — validated proof of concept (2026-09-16)
+# PS2-in-browser (2026-09-16)
 
 Real PCSX2, GPU-accelerated (Vulkan via the RTX 5070), streamed to any
 browser tab over WebRTC by [Selkies](https://docs.selkies.io/) — no WASM
 port, no partial compatibility. Games are read directly from the host's own
 library; nothing is copied or re-downloaded.
 
-**Status: validated, not yet integrated into the site.** This is a
-standalone Docker container you reach directly; it is not linked from
-RetroVerse's UI yet. See "Next steps" below for what that would take.
+**Status: live on the site.** Play → "Streamed consoles" → PlayStation 2 in
+RetroVerse lists the library and launches a picked game directly on the
+container's PCSX2 (`serveStreamList`/`launchStreamGame` in
+`arcade-server.mjs`, routes `/stream/ps2/list` + `/stream/launch`). The
+stream itself is reachable at `https://retroverse.tail51f9d6.ts.net:8722/`
+(wired via `tailscale serve --bg --https=8722 https+insecure://127.0.0.1:8090`
+— a trusted tailnet cert instead of Selkies' own self-signed one). One game
+runs at a time; launching a new one kills whatever's running first.
 
 ## What's running
 
@@ -83,21 +88,36 @@ docker run --name selkies-ps2 -d --restart unless-stopped --shm-size=2g \
   before "Next" — clicking Next with nothing selected pops a warning and
   does not advance.
 
-## Next steps (not started)
+## Next steps
 
 - **Separate config volume** from the host's desktop PCSX2 (a named Docker
   volume, pre-seeded with just the BIOS) instead of sharing
   `~/.config/PCSX2` directly, so the two installs can't step on each other.
-- **`tailscale serve` wiring** for a proper URL instead of a raw
-  `https://<ip>:8090/` — same pattern already used for the main site
-  (:443), Jellyfin (:8443), and netplay (:8712).
-- **RetroVerse UI integration** — this is currently just a container you
-  reach directly; nothing in `app.js` links to it. Wiring it in means
-  deciding how a "PS2" entry in the library launches this stream instead of
-  an EJS player, and how/whether the existing host-authoritative-video
-  netplay pattern (`npStartHostStream`/`npShowHostVideo`) extends to a
-  Selkies stream instead of an EJS canvas capture — same idea, different
-  video source, not yet designed.
+- **Box art / real library metadata** — `serveStreamList` currently just
+  lists filenames off disk (name = filename minus extension). No build.py
+  integration, no box art, no per-game compatibility notes surfaced in the
+  UI (PCSX2 itself shows compatibility ratings once you're in its own list,
+  but RetroVerse's picker doesn't know about them).
+- **2-player netplay — investigated, not resolved.** Selkies is built as a
+  1:1 remote desktop tool (one controlling client), not a broadcast/
+  multiplayer platform — there's an open, unresolved upstream issue
+  ([selkies#39](https://github.com/selkies-project/selkies-gstreamer/issues/39))
+  about exactly this ("multiple users connected simultaneously... isolated
+  sessions"). It's genuinely unknown whether two separate browsers
+  connecting to the same Selkies session get input routed to *different*
+  virtual controllers or collide on the same one — that needs an actual
+  two-client test, not something inferable from the code or docs. The
+  obvious-looking fallback (reuse this site's own N64-style host-
+  authoritative-video netplay: capture the Selkies `<video>` element with
+  `captureStream()` and rebroadcast it, forward guest presses over the
+  existing datachannel) hits a real wall on the receiving end — there's no
+  way to synthesize fake Gamepad API state from JS in a standard browser,
+  so a guest's forwarded input can't be turned back into something the
+  *host's own* Selkies connection would inject. Any working answer likely
+  means both players' input reaching the **same** Selkies session directly
+  (server-side), not routed through RetroVerse's browser-side netplay layer
+  at all — untested, and the honest next step is trying it with two real
+  clients before designing further.
 - **Generalizes directly to other consoles** — same Dockerfile shape (base
   image + one emulator + one autostart entry) should work for Dolphin
   (GameCube/Wii, has real official netplay) and is worth trying for Xemu

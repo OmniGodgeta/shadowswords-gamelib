@@ -2328,6 +2328,70 @@ function openTvChannel(c) {
 // yielding zero channels with no visible error. Same SELF_HOSTED/TS fallback
 // pattern as VIDEO_BASE — the public GH Pages mirror has no dynamic backend.
 const IPTV_SRC = SELF_HOSTED ? "/iptv/index.m3u" : TS + "/iptv/index.m3u";
+
+// ---- streamed consoles (real emulator + GPU, via Selkies — not EJS) ------
+// PS2 today; the same container shape works for GameCube/Xbox/WiiU/Switch
+// (see server/selkies-ps2/README.md). Self-hosted only — the public mirror
+// has no dynamic backend for this, same as netplay/movies/music. One game
+// runs at a time on shadow's own GPU; clicking Play here boots that exact
+// game on the shared instance (arcade-server's /stream/launch), and the
+// browser is hooked up to a *different* stream (Selkies' own WebRTC, not
+// this site's netplay layer) for video/input.
+const STREAM_SYSTEMS = SELF_HOSTED ? [
+  { id: "ps2", name: "PlayStation 2", icon: "🎮" },
+] : [];
+async function routeStream(sys) {
+  const token = ++state.render;
+  const cfg = STREAM_SYSTEMS.find((s) => s.id === sys);
+  if (!cfg) { route404(); return; }
+  document.title = `${cfg.name} — RetroVerse`;
+  spinner();
+  let data = { games: [], url: null };
+  try { data = await fetch(`${API}/stream/${sys}/list`).then((r) => r.json()); } catch { /* offline */ }
+  if (token !== state.render) return;
+  const list = el("div", { className: "tile-grid" });
+  const draw = (q) => {
+    const ql = (q || "").trim().toLowerCase();
+    const games = data.games.filter((g) => !ql || g.name.toLowerCase().includes(ql));
+    list.replaceChildren(...games.map((g) => {
+      const a = el("a", { className: "tile wide", href: "javascript:void 0" },
+        coverArt({ name: g.name, sys }),
+        el("div", { className: "tile-cap" }, el("div", { className: "t", textContent: g.name }),
+          el("div", { className: "s", textContent: "Play on shadow" })));
+      a.onclick = (e) => { e.preventDefault(); launchStream(sys, g.file, data.url, g.name, cfg.name); };
+      return a;
+    }));
+    if (!games.length) list.replaceChildren(el("p", { className: "hint", textContent: q ? "No matches." : "No games found — is the drive connected on shadow?" }));
+  };
+  const search = el("input", { type: "search", className: "chat-input", placeholder: `Search ${cfg.name}…` });
+  search.oninput = () => draw(search.value);
+  view.replaceChildren(el("div", { className: "wrap" },
+    el("section", { className: "shelf", style: "padding:22px 0 8px" },
+      el("div", { className: "shelf-head" }, el("h1", { textContent: cfg.name })),
+      el("p", { className: "hint", textContent:
+        `${data.games.length.toLocaleString()} games, read straight off shadow's own drive — nothing to download. ` +
+        "The real emulator runs there and streams to you live; picking a game here takes over whatever's currently running." }),
+      search, list)));
+  draw("");
+}
+// Popup blockers kill window.open() calls that happen after an await — open
+// the tab synchronously on the click (blank), then point it at the stream
+// once the launch call actually succeeds. If launch fails, close it again
+// rather than leaving a blank tab behind.
+function launchStream(sys, file, url, gameName, sysName) {
+  const win = window.open("", "_blank");
+  if (win) { try { win.document.title = `Launching ${gameName}…`; } catch { /* cross-origin-safe no-op */ } }
+  toast(`Launching ${gameName} on ${sysName}…`);
+  fetch(`${API}/stream/launch`, { method: "POST", headers: { "content-type": "application/json", ...authHdr() },
+    body: JSON.stringify({ sys, file }) })
+    .then((r) => r.json())
+    .then((d) => {
+      if (!d?.ok || !d.url) throw new Error(d?.error || "launch failed");
+      if (win) win.location.href = d.url;
+      else location.href = d.url; // popup was blocked anyway — fall back to same-tab
+    })
+    .catch((e) => { try { win?.close(); } catch { /* */ } toast(`Couldn't launch — ${e?.message || "server unavailable"}`); });
+}
 let _iptvCatalog = null;
 function parseM3U(text) {
   const out = [];
@@ -3291,6 +3355,18 @@ async function routePlay() {
       const f = ev.dataTransfer?.files?.[0];
       if (f) startUpload(f);
     });
+  }
+  if (STREAM_SYSTEMS.length) {
+    frag.append(el("div", { className: "shelf" },
+      el("div", { className: "shelf-head" }, el("h2", { textContent: "Streamed consoles" }),
+        el("span", { className: "count", textContent: `${STREAM_SYSTEMS.length}` })),
+      el("p", { className: "hint", style: "margin:-6px 0 10px", textContent:
+        "Too heavy for a browser core — the real emulator runs on shadow's GPU and streams to you live." }),
+      el("div", { className: "tile-grid", style: "padding:0" },
+        ...STREAM_SYSTEMS.map((s) => el("a", { className: "tile wide", href: `#/stream/${s.id}` },
+          coverArt({ name: s.name, sys: s.id }),
+          el("div", { className: "tile-cap" }, el("div", { className: "t", textContent: s.name }),
+            el("div", { className: "s", textContent: "Real emulator · streamed" })))))));
   }
   frag.append(el("div", { className: "shelf" },
     el("div", { className: "shelf-head" }, el("h2", { textContent: "Playable consoles" }),
@@ -6050,6 +6126,7 @@ async function router() {
   if (a === "play" && b) { setNav("play"); return routePlaySystem(b); }
   if (a === "play") { setNav("play"); return routePlay(); }
   if (a === "netplay") { setNav("play"); return routeNetplay(); }
+  if (a === "stream" && b) { setNav("play"); return routeStream(b); }
   if (a === "watch" && b) { setNav("play"); return routeWatch(b); }
   if (a === "lounge") { setNav("lounge"); return routeLounge(); }
   if (a === "tv") { setNav("lounge"); return routeTv(); }
