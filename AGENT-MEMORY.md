@@ -37,8 +37,21 @@ this. (Netplay internals: `NETPLAY-UI-CONTRACT.md`. Roadmap split:
   2.5MB, correct content).
 - Bumped to 3.19. Owner said **"push the update on website and android app
   when done, double check for no bugs or errors"** — publish now authorized
-  (this and every 3.15-3.18 change from earlier today), see the wrap-up at
-  the end of this session for what actually got pushed/built/released.
+  (this and every 3.15-3.18 change from earlier today).
+- **Published**: verification pass first (`node --check` on app.js/sw.js/both
+  server copies, CSS brace balance, diff-scanned for stray debug code,
+  smoke-check, `flutter analyze`) — all clean. Committed `642344b` (all 8
+  changed files, 3.15-3.19 + the PS2/Xbox/GC research note) straight to
+  `main` and pushed — matches this repo's own documented ritual (§1 of
+  AGENTS.md says commit+push directly), not the general "branch first"
+  default. `./deploy.sh` ran clean (9211 files → `gh-pages`), mirror
+  confirmed serving `?v=3.19` after the usual GH Pages build lag. App repo:
+  committed `e777f52` (`AGENTS.md`+`lib/main.dart`+`pubspec.yaml` only — did
+  NOT stage the pre-existing untracked `NETWORK-INCIDENT-2026-09-11.md`,
+  not mine to commit), pushed, built `app-release.apk` (57.7MB, verified
+  signed with the real `CN=ShadowSwords` release key not a debug key),
+  tagged `v1.6.10`, published as a GitHub Release (the app's updater pulls
+  from GitHub Releases per that repo's AGENTS.md) with release notes.
 
 ## Session 2026-09-16 (round 2) — Android fullscreen/orientation, toolbar close,
 ## touch-pad z-index hardening, NDS touch confirmed-upstream (3.18)
