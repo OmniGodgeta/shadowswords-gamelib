@@ -1,5 +1,27 @@
 # Changelog
 
+## 3.26
+- **Fixed wildly inflated game counts** — Wii U "loadiine"-style folder
+  dumps (code/content/meta) weren't recognized by the library scanner, so
+  every data file inside `content/` got counted as its own "game" (Wii U
+  alone showed 2,070 "games" for a ~30-title library; a misplaced Wii U
+  dump sitting in the Switch folder inflated that count too). Site total:
+  77,415 → **73,914** games across the same 108 systems — a real accuracy
+  fix, home/play page totals now reflect it automatically (they were
+  already pulling live from `data/systems.json`, not hardcoded).
+- **Likely fix for the Android "update popup won't go away" report** — the
+  reload-on-update button fired a fixed 500ms fallback timer regardless of
+  whether the new service worker had actually finished taking over; on a
+  slower Android WebView that's not always enough time, so the reload
+  landed back on the *old* worker and showed the same prompt again. Bumped
+  to 6s so the real "worker actually took over" signal has room to win
+  first — the 500ms fallback was effectively the primary path, not the
+  rare-case backstop it was meant to be.
+- Confirmed the Wii console-photo fix is genuinely live (server-side hash
+  verified) — a report of it still looking broken was the browser's own
+  24h image cache; no further site-side fix needed there, a hard refresh
+  clears it.
+
 ## 3.25
 - **Wii U and 3DS joined the "Streamed consoles" shelf** — real Cemu
   (Wii U, official AppImage, verified Vulkan on the RTX 5070) and real

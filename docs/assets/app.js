@@ -6556,7 +6556,17 @@ if ("serviceWorker" in navigator) {
         btn.textContent = "Updating…";
         bar.hidden = false;
         try { (reg.waiting || worker).postMessage("skip"); } catch { /* */ }
-        setTimeout(doReload, 500);
+        // `controllerchange` (above) is the real signal that the new worker
+        // actually took over — this timeout is only a last-resort fallback
+        // for it never firing at all. It used to be 500ms, which on a
+        // slower Android WebView isn't enough time for skipWaiting() to
+        // reach activate+clients.claim(): the reload fired anyway, hit the
+        // page while the OLD worker was still in control, and reloaded
+        // straight back into "New version ready" — the exact "I keep
+        // pressing reload and it's still there" loop reported live. 500ms
+        // was effectively the primary path, not a fallback for the rare
+        // case; 6s actually leaves room for the real event to win first.
+        setTimeout(doReload, 6000);
       };
       uiRoot().append(t);
     };
