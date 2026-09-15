@@ -1,5 +1,41 @@
 # Changelog
 
+## 3.21
+- **IPTV channel names were garbled** for any channel whose `#EXTINF` line
+  included an `http-user-agent` attribute (very common — a real one reported:
+  "1+1 International" showed as "like Gecko) Chrome/130.0.0.0 Saf…").
+  `parseM3U()` took the display name as everything after the *first* comma
+  in the line, but user-agent strings always contain a comma of their own
+  ("KHTML, like Gecko"), so the split landed inside that attribute instead
+  of at the real name. Fixed: name is now everything after the *last* comma
+  (matches the actual `#EXTINF:duration [attrs],name` format). Verified
+  against the real 11k-channel catalog: 0 garbled names remain.
+
+## 3.20
+- **In-app `⋯` menu covered the corner FABs** on touch devices — was
+  anchored top-right at nearly full screen height, over `fab-exit`/
+  `fab-pad`/`fab-ctrl`. Now centered on screen in-app (reported "can we make
+  this ... menu in the middle instead").
+- **Live TV dead-link filtering**: `arcade-server.mjs` now runs a background
+  sweep (20 concurrent, HEAD-then-ranged-GET, once/day) over every channel
+  URL in the cached IPTV playlist and persists the results; `/iptv/index.m3u`
+  drops only entries a completed check found dead — anything not yet swept
+  passes through unchanged, so a slow first pass never hides a channel it
+  hasn't reached yet. First sweep runs ~3 min after server start.
+- **Netplay sheet gained an "⚙ Audio settings" shortcut** next to Voice
+  chat, opening Sound settings directly (mic mode/noise/voice polish were
+  reachable but not discoverable from where you'd actually want them).
+  Note: open-mic (voice-activated) has been the default mic mode all along
+  (`PREF_DEFAULTS.micMode = "open"`) — nothing changed there, just easier
+  to find now.
+- Android voice chat reported not working — **investigated, not fixed**:
+  reviewed the whole capture → WebRTC → playback chain end to end (mic
+  permission retry loop, WebView permission grant, remote `<audio>`
+  autoplay) and found nothing obviously broken; the remote-audio autoplay
+  path should already benefit from 3.18's WebView fix. Need more from the
+  owner (does it fail at the permission prompt, or connect silently with no
+  sound?) before guessing further — see AGENT-MEMORY.md.
+
 ## 3.19
 - **Live TV loaded no channels**: the browser fetched iptv-org's ~2.5MB
   playlist directly, cross-origin, from the *viewer's* own network — some

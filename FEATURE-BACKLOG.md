@@ -178,11 +178,75 @@ simulateInput(player, retropadId, value)` contract this app currently hooks
 everywhere (netplay input included) — each would need its own input-binding
 translation layer written from its own JS API outward.
 
-**Bottom line**: PS2 (via Play!) is the only one worth a real prototype spike
-if this is pursued — partial compatibility and real integration work, but
-real. GameCube (via wasm-dolphin) is a maybe, gated on Android WebView WebGPU
-support actually being there when tested on-device. Xbox isn't actionable
-with current browser technology. None of the three have any existing netplay
-to build on — that part would be built from scratch on each project's own
-API, reusing only the *design* (not the code) of the existing EJS netplay
-layer.
+**Bottom line (superseded below)**: PS2 (via Play!) is the only one worth a
+real prototype spike if pursued via WASM — partial compatibility and real
+integration work, but real. GameCube (via wasm-dolphin) is a maybe, gated on
+Android WebView WebGPU support. Xbox isn't actionable with current browser
+technology. None of the three have any existing netplay to build on that way.
+
+### Revised direction (2026-09-16, owner's idea): run the real emulators on
+### `shadow`, stream to the browser — this beats WASM across the board
+
+Owner asked "wouldn't there be a way to run these consoles from my own
+computer" instead of chasing partial WASM ports. **This is the better path.**
+`shadow` has an **RTX 5070 (12GB)** — comfortably enough GPU for PCSX2,
+Dolphin, and Xemu at full speed, and very likely Cemu (WiiU) and
+Ryujinx-family (Switch) too for a lot of the library. That changes the whole
+calculus versus the WASM research above:
+
+- **Compatibility**: real PCSX2/Dolphin/Xemu/Cemu/Ryujinx instead of Play!'s
+  ~49% or wasm-dolphin's one-well-supported-game state. This is the actual
+  emulator, full stop.
+- **How to get it into a browser tab**: [Selkies-GStreamer](https://github.com/selkies-project/selkies-gstreamer)
+  — a real, actively maintained, GPU-accelerated Linux-desktop-to-browser
+  WebRTC streaming platform (started at Google; the project's own pitch is
+  "self-hosted GeForce Now/Stadia/Moonlight+Sunshine, but browser-based, no
+  client install"). **We already have its one hard prerequisite**: a TURN
+  server (`server/turn/`, set up for netplay). This is the concrete next
+  step if this is pursued — a proof of concept would be: install one
+  emulator (PCSX2 first, most requested), get Selkies streaming its window
+  to a browser tab over the tailnet, confirm input round-trips.
+- **Netplay, solved uniformly, independent of what each emulator supports
+  natively**: this app already built (and just fixed the lag on) exactly the
+  mechanism needed — host captures its own output, streams it over WebRTC,
+  guest forwards input back (`npStartHostStream`/`npShowHostVideo`, N64's
+  video-mirror mode). The *same trick* works for a native emulator's window
+  instead of an EJS canvas: whoever's actually running PCSX2/Dolphin/Xemu on
+  `shadow` is "host", everyone else watches that stream and forwards input,
+  same as N64 does today. This sidesteps needing each emulator's own netplay
+  entirely — important because it varies a lot:
+  - **Dolphin's netplay is official, mature, and widely used** (the
+    competitive Melee scene runs on it) — confirmed the owner's framing here.
+  - **PCSX2's netplay is NOT what the owner assumed** — worth correcting:
+    it was never officially merged; an unofficial fork exists, is limited to
+    roughly seven fighting games, and the project is abandoned. For PS2,
+    the host-stream approach isn't just the *easier* path, it's closer to
+    the *only* general-purpose one.
+  - **Xemu has no netplay feature at all.** Same conclusion — host-stream is
+    the path, not "wait for Xemu to add it."
+  - Two people who *both* separately install Dolphin (or PCSX2, for the
+    handful of games its fork supports) can still use the emulator's own
+    native netplay directly, peer to peer, with no involvement from this
+    site at all — that's simply a "how to play" answer, not something to
+    build, and stays the lower-latency option when both sides have it set up.
+- **WiiU/Switch**: no WASM path exists for either (more demanding than
+  GameCube/PS2, nobody's attempted it) — but the Selkies-streaming answer
+  applies identically. Cemu and Switch emulators are both GPU-heavy;
+  whether "most of the library at full speed" holds on an RTX 5070 needs
+  actually trying it, but it's a plausible target, not a stretch.
+
+**Update (2026-09-16, same day): validated, not just proposed.** Owner said
+go ahead. Installed `nvidia-container-toolkit`, configured Docker's NVIDIA
+runtime, built a Selkies+PCSX2 container
+(`server/selkies-ps2/`, Dockerfile + README with full details and gotchas).
+**Confirmed working end-to-end**: PCSX2 auto-detected the real BIOS and
+scanned 400+ real games straight from the owner's own mounted game drive
+(no copy/download step — this was an explicit requirement), and a launched
+game (Bully) ran at native 640x448 / Vulkan / **60 FPS / 100% speed**,
+reachable over the tailnet. This is no longer "maybe" — it works, on this
+hardware, today. **Still not done**: wiring it into RetroVerse's UI (right
+now it's a standalone container reached directly, nothing in `app.js` links
+to it), a `tailscale serve` URL, and a separate config volume instead of
+sharing the host desktop's PCSX2 config. See the README for the full list.
+The same container shape should generalize to Dolphin/Xemu/Cemu/Switch —
+untried so far, PS2 was the one proven end-to-end.

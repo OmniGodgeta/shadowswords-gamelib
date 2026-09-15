@@ -1406,6 +1406,14 @@ html.playing .party-chat-fab { display: none; }
     position: fixed; top: 62px; left: auto; right: 10px; min-width: 190px;
     max-height: calc(100dvh - 78px); overflow-y: auto;
   }
+  /* In-app the top-right corner drop covered the fab-exit/fab-pad/fab-ctrl
+     FABs anchored around the screen edges (reported: "... menu goes over the
+     buttons overlay"). Center it instead — nothing else lives there. */
+  .player.in-app-player .more-group .more-menu {
+    position: fixed; top: 50%; left: 50%; right: auto;
+    transform: translate(-50%, -50%);
+    width: min(220px, calc(100vw - 32px)); max-height: min(360px, calc(100dvh - 32px));
+  }
 }
 
 /* Touch pad: larger hit targets, press glow, visible analog stick.

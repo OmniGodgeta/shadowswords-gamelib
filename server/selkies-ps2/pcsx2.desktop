@@ -1,0 +1,5 @@
+[Desktop Entry]
+Type=Application
+Name=PCSX2
+Exec=/opt/pcsx2.appimage --appimage-extract-and-run
+X-GNOME-Autostart-enabled=true

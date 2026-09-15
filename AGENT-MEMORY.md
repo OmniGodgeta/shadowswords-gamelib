@@ -6,6 +6,143 @@ agent can pick up context without re-deriving it. Read `AGENTS.md` first, then
 this. (Netplay internals: `NETPLAY-UI-CONTRACT.md`. Roadmap split:
 `FEATURE-BACKLOG.md`.)
 
+## Session 2026-09-16 (round 5) — mic permission race fixed (app), VLC intent
+## bug fixed (app), IPTV name-parsing bug fixed (3.21), PS2-in-browser
+## validated end-to-end (Selkies+PCSX2, not yet wired into the UI)
+- **Mic bug root cause found**: owner's exact words — "I see the popup, I
+  allow every time, and then it tells me permissions denied" — was the tell.
+  `MainActivity.kt`'s native `requestMic` method has TWO independent call
+  sites (the WebView's own `onPlatformPermissionRequest`, triggered by
+  `getUserMedia()`; and a fire-and-forget `SSNotify{mic:true}` ping the site
+  sends to nudge the OS dialog open early) sharing ONE `pendingMicResult`
+  slot with no queueing. Whichever call registered second resolved the
+  first with `success(false)` **before the user had answered anything** —
+  the dialog the user actually saw and allowed belonged to whichever call
+  registered last, while the earlier call (often the one that actually
+  decides `request.grant()`/`deny()`) was already dead. Fixed: queue
+  (`pendingMicResults: MutableList`), resolve all queued callers with the
+  real answer once `onRequestPermissionsResult` actually fires, never
+  clobber early. `flutter build apk --release` confirms it compiles;
+  **not yet tested on a real device** — next session should confirm this
+  actually fixes it, not just that the race theory sounds right.
+- **Live TV "VLC: Multiple media cannot be played" found from a
+  screenshot**: `_openLiveTv` built `Uri.parse('vlc://$url')` — literally
+  prefixing `vlc://` onto the channel's own `https://` URL, producing a
+  garbled nested URI. Fixed: just call the existing `_openExternal(url)`
+  helper (the same one every other external link on the site already uses)
+  with the raw stream URL — Android's own app-chooser routes it to VLC
+  correctly without any scheme trickery needed.
+- **Same screenshot also showed a channel named "like Gecko) Chrome/…"** —
+  a real `parseM3U()` bug (client-side, `docs/assets/app.js`): the channel
+  name was taken as everything after the *first* comma in the `#EXTINF`
+  line, but `http-user-agent` attribute values always contain a comma
+  ("KHTML, like Gecko"), so on any channel with that attribute the name
+  parse landed inside the user-agent string instead of at the real name.
+  Fixed: last comma, not first (matches the actual
+  `#EXTINF:duration [attrs],name` format) — verified against the real
+  11,033-channel catalog, 0 garbled names remain. Shipped as 3.21.
+- **PS2-in-browser: validated end-to-end, this session, for real** — not
+  research, an actual working proof of concept. Full writeup + gotchas in
+  `server/selkies-ps2/README.md` (read that before touching this again, it
+  documents two real traps: root-owned parent dirs from partial bind
+  mounts, and the base image's entrypoint ignoring passed commands). Short
+  version: `nvidia-container-toolkit` installed + Docker GPU runtime
+  configured, Selkies base image + PCSX2 AppImage in a custom Dockerfile,
+  BIOS + the owner's real game drive (`~/Games/roms/ps2`, external drive,
+  **must be connected** — showed empty when it wasn't) both mounted
+  straight from the host per the owner's explicit requirement ("let's not
+  make users download the files, it should play directly from my PC").
+  Clicked through PCSX2's setup wizard via `xdotool` (screenshotted via
+  `docker exec ... import -window root`, copied out with `docker cp`) —
+  BIOS auto-detected (2 valid images), library auto-scanned (400+ real
+  games, correct titles/compatibility ratings), launched **Bully**: Vulkan,
+  640x448 native res, **60 FPS / 100% speed**. Reachable over the tailnet
+  (`https://100.65.133.127:8090/`, password-gated, 401 confirmed).
+  Container is `--restart unless-stopped`, so it survives a reboot.
+  **Not done yet**: no RetroVerse UI integration (it's a container you hit
+  directly, nothing in `app.js` links to it), no `tailscale serve` URL, PCSX2
+  config is shared with the host's own desktop install rather than separated
+  — see the README's "Next steps". Owner's framing — "this should be true
+  for any consoles that can benefit from performance gains using this
+  method" — means Dolphin/Xemu/Cemu/Switch are the natural next candidates
+  using the same Dockerfile shape; none of those attempted yet.
+- Owner corrected the netplay assumption last round was right to flag:
+  Dolphin's netplay actually is official/mature (owner had this right);
+  PCSX2's isn't (unofficial fork, ~7 games, abandoned — owner's original
+  framing assumed otherwise, now corrected in both this log and
+  FEATURE-BACKLOG.md).
+
+## Session 2026-09-16 (round 4) — owner confirmed 3.15-3.19 all fixed; more-menu
+## position, IPTV dead-link filtering, audio-settings shortcut (3.20); PS2
+## streaming research refined; voice chat on Android still open
+- Owner confirmed: Live TV works, netplay input lag gone, netplay video good
+  quality — the 3.15-3.19 fixes landed cleanly. Also confirmed watch-party
+  fully works now (the black-screen report resolved itself / was transient).
+- **New research direction, owner's own idea, and it's better than the WASM
+  one**: run the *real* PCSX2/Dolphin/Xemu on `shadow` and stream to the
+  browser instead of chasing partial WASM ports. `shadow` has an **RTX 5070
+  (12GB)** — plenty of GPU. [Selkies-GStreamer](https://github.com/selkies-project/selkies-gstreamer)
+  is a real, maintained GPU-accelerated Linux-desktop-to-browser WebRTC
+  streaming platform (Google-originated); we already have its one hard
+  prerequisite, a TURN server. Netplay for these becomes free-ish: the
+  N64-video-mirror trick already built (`npStartHostStream`/
+  `npShowHostVideo`) generalizes to any native emulator's window, independent
+  of whether that emulator has its own netplay. Corrected the owner on one
+  point: **PCSX2's netplay is NOT official** — unofficial fork, ~7 fighting
+  games, abandoned. **Dolphin's is** official/mature (the owner had this
+  right). **Xemu has none.** Full writeup + the "not started, PCSX2+Selkies
+  PoC is the concrete next step" framing is in FEATURE-BACKLOG.md. Owner said
+  "go ahead" — see whatever the next log entry says for what was attempted.
+- **More-menu covered the FABs in-app** — `@media (pointer:coarse)` had it
+  fixed top-right, `max-height: calc(100dvh - 78px)`, tall enough to cover
+  `fab-exit`/`fab-pad`/`fab-ctrl` on a short landscape-phone viewport. Added
+  a `.player.in-app-player .more-group .more-menu` override (same media
+  query) that centers it instead — higher specificity than the general rule
+  so it wins without touching np-menu/save-menu or mobile-web (no FABs there
+  to collide with in the first place).
+- **IPTV dead-link filtering shipped**: `sweepIptvHealth()` in
+  `arcade-server.mjs` — HEAD (falls back to a ranged GET for hosts that
+  reject HEAD) every URL in the cached playlist, 20 concurrent, persisted to
+  `~/.local/share/ssw-arcade/iptv-health.json` so a restart doesn't lose
+  progress, one full pass/day (re-checks entries older than ~20h). `/iptv/
+  index.m3u` now filters through `filterDeadIptvEntries()` — drops only
+  entries with a **confirmed** `ok:false`; never-checked entries pass
+  through untouched (don't want a slow first sweep hiding good channels).
+  First sweep fires 3 min after boot. **Caveat to remember**: this only
+  catches unreachable hosts/timeouts — a stream that connects fine but is
+  geo-blocked, DRM'd, or in a codec the player can't decode will still show
+  as "working" here and fail on actual playback. Applied to both the tracked
+  and live server copies, restarted, verified `/iptv/index.m3u` still serves
+  (200, ~2.4MB) post-restart. Haven't verified a completed sweep yet — that
+  takes a while on ~11k channels; check `iptv-health.json`'s size/mtime or
+  the service journal (`iptv health sweep done: N checked, M dead`) next
+  session to confirm it actually ran to completion.
+- **Netplay sheet**: added "⚙ Audio settings" next to Voice chat →
+  `soundPanel()`. Had to `o.remove()` the netplay sheet first — `soundPanel()`
+  builds its own `id="help-overlay"` and the netplay sheet already uses that
+  same id for itself; two live at once would confuse each one's
+  tap-backdrop-to-dismiss handler (`e.target.id === "help-overlay"`). This is
+  a real trap for anyone adding more overlay-launches-overlay flows — always
+  close the source overlay first.
+- **Voice-activate default**: already true — `PREF_DEFAULTS.micMode = "open"`
+  has been the default all along (voice-activity-gated in `micProcess()`).
+  Nothing to change there; just made it reachable from where you'd look.
+- **Android voice chat "doesn't work" — investigated, not fixed.** Traced
+  the whole chain: `npGetMic()`'s Android-aware permission retry loop,
+  `main.dart`'s `onPlatformPermissionRequest` → native `requestMic` →
+  `onRequestPermissionsResult` (Kotlin side checked too, looks structurally
+  correct), the remote `<audio>` autoplay path in `npAttachRemoteAudio`
+  (this one should already be helped by 3.18's WebView
+  `setMediaPlaybackRequiresUserGesture(false)` fix, since that applies
+  WebView-wide, not just to watch video). Nothing jumped out as an obvious
+  bug on read-through. **Need from the owner before guessing further**:
+  does it fail at the OS mic-permission prompt (or show the "Mic permission
+  denied" toast), or does the mic show as live/connected with genuinely no
+  sound either direction? Also worth them checking Android Settings → Apps →
+  RetroVerse → Permissions → Microphone directly — if it was denied twice,
+  Android silently blocks future re-prompts and the app has no way to force
+  it back open, only Settings can.
+
 ## Session 2026-09-16 (round 3) — Live TV proxy fix (3.19)
 - Owner: "In the lounge section, the Live TV doesn't load any channels."
 - Diagnosed by testing each layer in isolation rather than guessing: the

@@ -1357,6 +1357,14 @@ function openNetplaySheet(sys, file, name) {
       toast(on ? "Voice chat on" : "Voice chat off");
     };
     kids.push(vb);
+    // All mic/voice tuning (open-mic vs PTT, noise cancelling, voice polish)
+    // lives in one place — Sound settings — rather than scattered controls.
+    // Close this sheet first: soundPanel() builds its own #help-overlay, and
+    // two elements sharing that id at once would confuse the backdrop-tap
+    // dismiss handlers (each checks e.target.id === "help-overlay").
+    kids.push(el("button", { className: "btn btn-ghost", style: "width:100%;margin:6px 0",
+      textContent: "⚙ Audio settings", title: "Microphone mode, noise cancelling, voice polish",
+      onclick: () => { o.remove(); soundPanel(); } }));
     const rb = el("button", { className: "btn " + (NP.meReady ? "btn-primary" : "btn-ghost"), style: "width:100%;margin:6px 0",
       textContent: NP.meReady ? "✓ Ready — waiting for " + (NP.role === "host" ? "P2" : "P1") : "I'm ready",
       title: "Tell the other player you're set" });
@@ -2329,7 +2337,13 @@ function parseM3U(text) {
     if (!line) continue;
     if (line.startsWith("#EXTINF")) {
       const attr = (k) => { const m = line.match(new RegExp(k + '="([^"]*)"', "i")); return m ? m[1] : ""; };
-      const name = (line.split(",").slice(1).join(",") || attr("tvg-name") || "").trim();
+      // The display name is everything after the LAST comma (per the EXTINF
+      // spec: #EXTINF:duration [attrs],name) — splitting on every comma and
+      // taking from the first one broke as soon as an attribute value itself
+      // contained a comma, which http-user-agent strings always do ("KHTML,
+      // like Gecko"): the name came out as a chunk of that user-agent string
+      // instead of the actual channel name.
+      const name = (line.slice(line.lastIndexOf(",") + 1) || attr("tvg-name") || "").trim();
       cur = { name: name || attr("tvg-name") || "Channel", logo: attr("tvg-logo") || null,
         group: attr("group-title") || "Other", id: attr("tvg-id") || null };
     } else if (!line.startsWith("#") && cur) {

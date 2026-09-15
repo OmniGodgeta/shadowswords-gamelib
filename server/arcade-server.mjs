@@ -741,6 +741,98 @@ function serveThumb(req, res, rel) {
 const IPTV_SRC = "https://iptv-org.github.io/iptv/index.m3u";
 const IPTV_CACHE = path.join(DATA, "iptv-index.m3u");
 const IPTV_TTL = 30 * 60 * 1000; // upstream sends its own max-age=600; we don't need to hammer it that often
+
+// ---- dead-link filtering -------------------------------------------------
+// Public IPTV links rot constantly. A background sweep HEAD/range-checks
+// every URL currently in the cached playlist (low concurrency, generous
+// timeout, results persisted so a restart doesn't lose recent work) and
+// serveIptv drops only entries a completed check found dead — anything not
+// yet swept passes through untouched, so a slow first pass never hides a
+// channel that just hasn't been reached yet.
+const IPTV_HEALTH_FILE = path.join(DATA, "iptv-health.json");
+const IPTV_SWEEP_EVERY = 24 * 60 * 60 * 1000;   // link rot is slow; one full pass/day is plenty
+const IPTV_RECHECK_AGE = 20 * 60 * 60 * 1000;   // don't re-check a URL within a sweep more than ~once/20h
+let iptvHealth = {};
+try { iptvHealth = JSON.parse(fs.readFileSync(IPTV_HEALTH_FILE, "utf8")); } catch { iptvHealth = {}; }
+let iptvHealthDirty = false;
+function saveIptvHealth() {
+  if (!iptvHealthDirty) return;
+  try { fs.writeFileSync(IPTV_HEALTH_FILE, JSON.stringify(iptvHealth)); iptvHealthDirty = false; } catch { /* rw */ }
+}
+function iptvUrls(text) {
+  const out = [];
+  for (const raw of String(text).split(/\r?\n/)) {
+    const line = raw.trim();
+    if (/^https?:\/\//i.test(line)) out.push(line);
+  }
+  return [...new Set(out)];
+}
+async function checkIptvUrl(url) {
+  try {
+    let r = await fetch(url, { method: "HEAD", redirect: "follow", signal: AbortSignal.timeout(7000) });
+    if (r.status === 405 || r.status === 501) {
+      // Some IPTV origins reject HEAD outright — retry with a tiny ranged GET.
+      r = await fetch(url, { method: "GET", redirect: "follow", headers: { range: "bytes=0-2047" },
+        signal: AbortSignal.timeout(7000) });
+    }
+    return r.ok || r.status === 206;
+  } catch { return false; }
+}
+let iptvSweeping = false;
+async function sweepIptvHealth() {
+  if (iptvSweeping) return;
+  iptvSweeping = true;
+  try {
+    let text = "";
+    try { text = fs.readFileSync(IPTV_CACHE, "utf8"); } catch { return; }
+    const urls = iptvUrls(text);
+    const now = Date.now();
+    const todo = urls.filter((u) => !iptvHealth[u] || (now - iptvHealth[u].t) > IPTV_RECHECK_AGE);
+    console.log(`iptv health sweep: ${todo.length}/${urls.length} channels to check`);
+    let idx = 0, checked = 0, dead = 0;
+    const worker = async () => {
+      while (idx < todo.length) {
+        const url = todo[idx++];
+        const ok = await checkIptvUrl(url);
+        iptvHealth[url] = { ok, t: Date.now() };
+        iptvHealthDirty = true;
+        checked++; if (!ok) dead++;
+        if (checked % 200 === 0) saveIptvHealth();
+      }
+    };
+    await Promise.all(Array.from({ length: 20 }, worker));
+    saveIptvHealth();
+    console.log(`iptv health sweep done: ${checked} checked, ${dead} dead`);
+  } catch (e) { console.warn("iptv health sweep failed:", e.message); }
+  finally { iptvSweeping = false; }
+}
+// First pass a few minutes after boot (let the playlist cache populate),
+// then daily. Runs entirely in the background — never blocks a request.
+setTimeout(() => { sweepIptvHealth().catch(() => {}); }, 3 * 60 * 1000);
+setInterval(() => { sweepIptvHealth().catch(() => {}); }, IPTV_SWEEP_EVERY);
+
+function filterDeadIptvEntries(text) {
+  const out = [];
+  let pending = null; // lines belonging to the entry currently being read (EXTINF + any #EXTVLCOPT etc.)
+  for (const raw of text.split(/\r?\n/)) {
+    const trimmed = raw.trim();
+    if (trimmed.startsWith("#EXTINF")) { pending = [raw]; continue; }
+    if (pending) {
+      if (/^https?:\/\//i.test(trimmed)) {
+        pending.push(raw);
+        const h = iptvHealth[trimmed];
+        if (!(h && h.ok === false)) out.push(...pending);
+        pending = null;
+      } else {
+        pending.push(raw); // e.g. #EXTVLCOPT between EXTINF and the URL
+      }
+      continue;
+    }
+    out.push(raw);
+  }
+  return out.join("\n");
+}
+
 async function serveIptv(req, res) {
   let fresh = false;
   try { fresh = (Date.now() - fs.statSync(IPTV_CACHE).mtimeMs) < IPTV_TTL; } catch { /* no cache yet */ }
@@ -754,7 +846,8 @@ async function serveIptv(req, res) {
     } catch { /* upstream unreachable this round — fall through to whatever's cached */ }
   }
   try {
-    const buf = fs.readFileSync(IPTV_CACHE);
+    const raw = fs.readFileSync(IPTV_CACHE, "utf8");
+    const buf = Buffer.from(filterDeadIptvEntries(raw), "utf8");
     res.writeHead(200, { ...CORS, "content-type": "audio/x-mpegurl", "content-length": buf.length,
       "cache-control": "public, max-age=1800" }).end(req.method === "HEAD" ? undefined : buf);
   } catch { res.writeHead(502, CORS).end("iptv catalog unavailable — no cache and upstream unreachable"); }
