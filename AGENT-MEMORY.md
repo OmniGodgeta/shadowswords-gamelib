@@ -82,6 +82,21 @@ this. (Netplay internals: `NETPLAY-UI-CONTRACT.md`. Roadmap split:
   Windows binary under Wine+GPU passthrough inside Selkies, a genuinely
   new pattern deserving focused effort rather than a rushed tail-end
   addition to an already very long session.
+  - **Concrete next step**: build `server/selkies-citron/`. Owner's exact
+    install: `/run/media/shadowswords/Programs and OS/Emulators/Nintendo
+    Switch/Citron-Windows-Canary-Refresh_0.6.1/` — a portable folder
+    (`citron.exe` + DLLs, no installer), copy it into the image rather than
+    re-downloading. Needs Wine + likely DXVK (D3D→Vulkan) in the
+    Dockerfile so it isn't stuck on software rendering like xemu/Panda3DS
+    ended up. CLI args unknown yet — discover the same empirical way every
+    other emulator's launch syntax was found here (`--help`, or read
+    source if that hangs, as with Panda3DS this round). ROM library:
+    `~/Games/roms/switch` (id `switch`, 114 real games after round 10's
+    count fix removed a misplaced Wii U dump). Next free `tailscale serve`
+    port in sequence (8722=ps2, 8723=dolphin, 8724=xemu, 8725=cemu,
+    8726=azahar/stopped, 8727=panda3ds) is **8728**. Same outer shape as
+    every other container: autostart `.desktop` entry, `pkill -f` relaunch,
+    `fullscreenForcer()` from `arcade-server.mjs`, embedded Basic-Auth.
 - **Likely fix for the Android "update popup won't go away" report**:
   traced the reload flow (`docs/assets/app.js`, the `#sw-toast` logic) and
   found the reload fired on a **hardcoded 500ms fallback timer** regardless
