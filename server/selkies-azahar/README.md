@@ -1,3 +1,12 @@
+**SUPERSEDED as the n3ds backend — see `server/selkies-panda3ds/README.md`.**
+Azahar's refusal of every encrypted ROM described below turned out to be a
+permanent policy of its whole codebase lineage (confirmed via its own
+GitHub release history — present in the very first `azahar-emu/azahar`
+release), not a config gap. Panda3DS, a from-scratch reimplementation, does
+support the owner's real encrypted library. This container is still built
+and documented below in case Azahar's situation changes, but it's stopped
+(`docker stop selkies-azahar`) rather than deleted.
+
 # 3DS-in-browser (2026-09-15)
 
 Real Azahar, streamed to any browser tab over WebRTC by

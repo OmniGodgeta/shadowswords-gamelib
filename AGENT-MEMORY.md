@@ -6,6 +6,108 @@ agent can pick up context without re-deriving it. Read `AGENTS.md` first, then
 this. (Netplay internals: `NETPLAY-UI-CONTRACT.md`. Roadmap split:
 `FEATURE-BACKLOG.md`.)
 
+## Session 2026-09-16 (round 10) — real fix for 3DS decryption (Panda3DS),
+## inflated game-count bug found+fixed, Android SW-update race fixed,
+## Switch plan settled (Wine, not yet built) (3.27, + unreleased build.py
+## count fix already shipped as part of this same session)
+- Owner, in one message: "3DS tells me encrypted games are not supported,
+  yet my other emulator can run it fine. Add switch using my existing
+  emulator. Wii image is still broken. Home/play page game counts, unsure
+  if accurate." Mid-turn follow-ups: Android update popup persists through
+  repeated Reload taps; PS2/GC streams still show no touch controls on
+  Android; rotating the phone doesn't reorient the stream (stays vertical).
+- **Wii image: confirmed already fixed, not a new bug.** `curl` + sha256
+  against the live self-hosted server proved it's serving the exact
+  already-fixed file from round 9 — the report was the browser's own 24h
+  `/media/` cache showing a stale copy. No further site-side change; a hard
+  refresh clears it.
+- **Game counts: found and fixed a real, large bug** (independent of the
+  3DS/Switch work) — `scan_system()` in `build.py` didn't know Wii U
+  "loadiine"-style dumps are one game spread across code/content/meta
+  folders; `content/` alone routinely holds a dozen+ files, each miscounted
+  as its own "game" (wiiu alone: **2,070** "games" for a ~30-title
+  library). A misplaced Wii U dump sitting in the *Switch* romset folder
+  hit the same bug there too. Site total: **77,415 → 73,914** games across
+  the same 108 systems, home/play totals already pull live from
+  `data/systems.json` so no frontend change was needed. Spot-checked
+  several unrelated systems' counts were unchanged (gc/ps2/wii/xbox/n3ds/
+  psx/nes) before trusting the fix. Shipped as its own commit ahead of
+  everything else this round since it was fully self-contained.
+- **3DS decryption: root-caused for real this time, and fixed.** Tried the
+  owner's own `aes_keys.txt` (found sitting right in their `Nintendo 3DS`
+  emulator folder, next to an older Azahar Windows installer) mounted at
+  Azahar's documented `sysdata/aes_keys.txt` path on BOTH the latest
+  Azahar (2126.1.1) and the exact older version next to that key file
+  (2126.0, downloaded fresh and tested directly, digest-verified) —
+  **identical refusal on both.** Checked azahar-emu/azahar's own release
+  history (`gh api .../releases`) and found "Support for encrypted
+  applications has been dropped" in **`2120-rc1`, the very first release
+  in that repo's entire history** — this was never a config problem, it
+  predates the repo. Asked the owner directly rather than keep guessing
+  further; they said "any emulator, just want it to work." Researched and
+  found **Panda3DS** (wheremyfoodat/Panda3DS) — a from-scratch
+  reimplementation, NOT a Citra fork, so not subject to whatever legal
+  reasoning drove that lineage's decision — confirmed it still reads a
+  classic `sysdata/aes_keys.txt` (verified via its own source,
+  `src/core/loader/ncch.cpp`). Built `server/selkies-panda3ds/`, mounted
+  the same real key file at the (empirically-confirmed, source-verified)
+  correct path `~/.local/share/Alber/sysdata/aes_keys.txt`, and **the same
+  ROM that Azahar refused reached the genuine 3DS "AUTOSAVE WARNING" boot
+  screen** — unambiguous proof of real decryption. Verified again through
+  the actual `/stream/launch` API, not just a manual docker exec. Switched
+  `STREAM_SYSTEMS.n3ds` to this container; stopped (not deleted)
+  `selkies-azahar` since it's fully superseded but might be worth
+  revisiting if that project's policy ever changes.
+  - **Honest limitation, not glossed over**: renders in software (llvmpipe)
+    like xemu's known issue (`GLXBadFBConfig` error right before the
+    fallback, on the same GPU/base-image that gives PCSX2/Dolphin/Cemu real
+    hardware rendering — something about this Qt build's GLX negotiation,
+    not a driver problem) — and a later screenshot of the same session
+    (and a second game, Resident Evil: Revelations) showed a solid black
+    screen rather than confirmed sustained gameplay. Documented as "boot/
+    decryption confirmed, sustained gameplay NOT yet confirmed" rather than
+    claiming full verification the way PS2/GC/Xbox/WiiU got — a real,
+    deliberate distinction, not an oversight.
+- **Switch: existing-emulator plan settled, not yet built.** Owner's own
+  install is Citron (Windows Canary build, `Citron-Windows-Canary-Refresh_
+  0.6.1`) found under their `Nintendo Switch` emulator folder. Citron's own
+  official site (`git.citron-emu.org`) doesn't even resolve (DNS failure)
+  right now — consistent with reported Nintendo DMCA takedown activity
+  against Citron specifically. Asked the owner how to proceed rather than
+  pick unilaterally; they chose running their existing Windows build via
+  Wine inside a new Selkies container over sourcing anything new — the
+  right call given there's no live official source to verify against
+  anyway, and it needs no new download at all (uses exactly what they
+  already have). **Not built yet** — first time this repo would run a
+  Windows binary under Wine+GPU passthrough inside Selkies, a genuinely
+  new pattern deserving focused effort rather than a rushed tail-end
+  addition to an already very long session.
+- **Likely fix for the Android "update popup won't go away" report**:
+  traced the reload flow (`docs/assets/app.js`, the `#sw-toast` logic) and
+  found the reload fired on a **hardcoded 500ms fallback timer** regardless
+  of whether `controllerchange` (the real "new worker took over" signal)
+  had actually fired — on a slower Android WebView that's plausibly not
+  enough time for `skipWaiting()` → activate → `clients.claim()` to
+  complete, so the reload lands back on the OLD worker and re-shows the
+  same prompt. Bumped the fallback to 6s. Reasoned fix based on the
+  described symptom, not something live-verified against a real Android
+  device this session — worth confirming it's actually gone next time an
+  update lands.
+- **Android touch controls + phone-rotation-doesn't-reorient: still
+  unresolved.** The browser automation tool was disconnected the entire
+  session (`tabs_context_mcp` returned "extension is not connected" on
+  every retry) — couldn't visually verify either on a real mobile
+  viewport. Selkies' own settings confirmed correct via `docker inspect`
+  (no `SELKIES_UI_*` overrides hiding anything) and via reading
+  `settings.md` directly (`SELKIES_ENABLE_RESIZE` defaults `true`), so the
+  server-side config isn't the problem — but couldn't get further without
+  either a working browser tool or a screenshot/recording from the owner.
+  Flagged rather than guessed at further.
+- Bumped CHANGELOG to 3.27 (server-only changes this round — no app.js/css
+  touch, so no SW `VERSION`/`?v=` bump needed; the count-accuracy fix
+  landed under 3.26 in the same session, tied to the SW-update-race fix
+  which DID touch app.js).
+
 ## Session 2026-09-15 (round 9) — Wii U (Cemu) + 3DS (Azahar) added, phone-
 ## rotation fullscreen fixed, Selkies watch/Player-2 links wired in, a
 ## genuinely broken Wii photo fixed (3.25)

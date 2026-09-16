@@ -1,5 +1,25 @@
 # Changelog
 
+## 3.27
+- **3DS games actually play now.** Root-caused why Azahar refused every
+  encrypted ROM even with the owner's own real `aes_keys.txt` in place:
+  it's a permanent policy of that entire codebase lineage (Citra → Lime3DS
+  → Mandarine → Azahar), present since the very first `azahar-emu/azahar`
+  release — not a config gap, not fixable by trying an older/newer version.
+  Switched the n3ds backend to **Panda3DS**, a from-scratch (non-Citra)
+  reimplementation unaffected by that decision — verified live: the
+  owner's real key file + a real encrypted `.3ds` dump reached the genuine
+  3DS "AUTOSAVE WARNING" boot screen. Known open issue: renders in software
+  (llvmpipe) rather than GPU-accelerated on this build, and sustained
+  gameplay (past that boot screen) isn't confirmed yet — see
+  `server/selkies-panda3ds/README.md` for the honest state of it.
+- Switch: found the owner's own existing emulator (Citron, Windows Canary
+  build) — Citron's own official site doesn't currently resolve at all
+  (consistent with reported Nintendo DMCA activity against it). Decided:
+  run the owner's existing Windows build via Wine rather than source
+  anything new. Not built yet this round — a bigger, first-of-its-kind
+  pattern for this project, still in progress.
+
 ## 3.26
 - **Fixed wildly inflated game counts** — Wii U "loadiine"-style folder
   dumps (code/content/meta) weren't recognized by the library scanner, so

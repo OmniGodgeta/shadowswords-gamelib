@@ -871,7 +871,9 @@ const PS2_URL = "https://ShadowSwords:Allo1234@retroverse.tail51f9d6.ts.net:8722
 const DOLPHIN_URL = "https://ShadowSwords:Allo1234@retroverse.tail51f9d6.ts.net:8723/";
 const XEMU_URL = "https://ShadowSwords:Allo1234@retroverse.tail51f9d6.ts.net:8724/";
 const CEMU_URL = "https://ShadowSwords:Allo1234@retroverse.tail51f9d6.ts.net:8725/";
-const AZAHAR_URL = "https://ShadowSwords:Allo1234@retroverse.tail51f9d6.ts.net:8726/";
+// selkies-azahar (was going to be n3ds's backend) is built but stopped —
+// see PANDA3DS_URL below and server/selkies-azahar/README.md for why.
+const PANDA3DS_URL = "https://ShadowSwords:Allo1234@retroverse.tail51f9d6.ts.net:8727/";
 // `killPattern` + `launch` let launchStreamGame stay one generic function
 // across different emulators with different CLIs. gc/wii intentionally
 // share one container — one Dolphin instance handles both, so launching a
@@ -981,16 +983,25 @@ const STREAM_SYSTEMS = {
     },
     launch: (p) => `DISPLAY=:20 nohup /opt/cemu-extracted/AppRun -g '${p}' -f >/tmp/cemu-launch.log 2>&1 & disown; ${fullscreenForcer('cemu-extracted')}`,
   },
+  // Azahar (Citra's actual successor) refuses every encrypted ROM as a
+  // matter of deliberate, permanent project policy (dropped in the very
+  // first azahar-emu/azahar release, confirmed via that repo's own
+  // changelogs — not something a newer/older version or a key file fixes).
+  // Panda3DS is a from-scratch reimplementation, unaffected by that
+  // lineage's decision, and boots the owner's real encrypted library with
+  // their own aes_keys.txt (confirmed live — see server/selkies-panda3ds/).
   n3ds: {
-    container: "selkies-azahar",
+    container: "selkies-panda3ds",
     containerRoot: "/home/ubuntu/Games/n3ds",
     hostRoot: path.join(os.homedir(), "Games", "roms", "n3ds"),
     exts: new Set([".3ds", ".cci", ".cia", ".3dsx"]),
-    url: AZAHAR_URL,
-    // AppRun exec-replaces itself in place (confirmed via `ps auxf`), same
-    // as PCSX2/xemu/Cemu.
-    killPattern: "azahar-extracted",
-    launch: (p) => `DISPLAY=:20 nohup /opt/azahar-extracted/AppRun -f '${p}' >/tmp/azahar-launch.log 2>&1 & disown; ${fullscreenForcer('azahar-extracted')}`,
+    url: PANDA3DS_URL,
+    // AppRun.wrapped stays under its own extracted path rather than
+    // relocating elsewhere (confirmed via `ps auxf`), so `killPattern`
+    // matching that path is stable — same shape as Cemu, not Dolphin's
+    // relocate case despite the similar ".wrapped" naming.
+    killPattern: "panda3ds-extracted",
+    launch: (p) => `DISPLAY=:20 nohup /opt/panda3ds-extracted/AppRun '${p}' >/tmp/panda3ds-launch.log 2>&1 & disown; ${fullscreenForcer('panda3ds-extracted')}`,
   },
 };
 function listStreamGames(sys) {

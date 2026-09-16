@@ -1,0 +1,5 @@
+[Desktop Entry]
+Type=Application
+Name=Panda3DS
+Exec=/opt/panda3ds-extracted/AppRun
+X-GNOME-Autostart-enabled=true
