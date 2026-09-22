@@ -1,3 +1,16 @@
+## Status-check note (2026-09-22, cross-project audit)
+
+The public GitHub Pages mirror (`gh-pages`) was stale — last deployed
+2026-09-11, while `main`/self-hosted had moved through 3.20 → 3.27 since.
+**Fixed same day**: ran `./deploy.sh`, which succeeded (exit 0) and pushed
+73,914 games / 108 systems, 462 game videos, 12,405 files total to
+`https://omnigodgeta.github.io/shadowswords-gamelib/`. Mirror is current as
+of this note. Everything else in this file's most recent session
+(2026-09-16, round 10: Panda3DS 3DS fix, game-count bug fix, Switch/Citron
+plan) checked out as accurate and current.
+
+---
+
 # AGENT-MEMORY.md — session log & handoff for future agents
 
 Long-form memory for people/agents working on **RetroVerse**. `AGENTS.md` is the
