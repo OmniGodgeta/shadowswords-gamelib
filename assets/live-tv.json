@@ -1,0 +1,6 @@
+[
+  {"number":"00","name":"IPTV-org global playlist","url":"https://iptv-org.github.io/iptv/index.m3u","note":"Thousands of publicly listed channels; VLC can browse the playlist"},
+  {"number":"01","name":"00s Replay","url":"https://jmp2.uk/plu-62ba60f059624e000781c436.m3u8","note":"Movies · supplied by iptv-org"},
+  {"number":"02","name":"1+1 International HD","url":"https://dash2.antik.sk/live/test_one_plus_one_int_tizen/playlist.m3u8","note":"General · supplied by iptv-org"},
+  {"number":"03","name":"NASA TV","url":"https://ntv1.akamaized.net/hls/live/2035655/NASA-TV1-HLS/master.m3u8","note":"Science and space"}
+]
