@@ -96,7 +96,7 @@
         <TVVolume>50</TVVolume>
         <PadVolume>0</PadVolume>
         <InputVolume>50</InputVolume>
-        <TVDevice>default</TVDevice>
+        <TVDevice></TVDevice>
         <PadDevice></PadDevice>
         <InputDevice></InputDevice>
     </Audio>

@@ -916,6 +916,26 @@ const CITRON_URL = "https://ShadowSwords:Allo1234@retroverse.tail51f9d6.ts.net:8
 // real leak over many relaunches).
 const fullscreenForcer = (killPattern) =>
   `(sleep 4; while pgrep -f '${killPattern}' >/dev/null; do DISPLAY=:20 wmctrl -r :ACTIVE: -b add,fullscreen 2>/dev/null; sleep 3; done) & disown`;
+// Prepended to every launch. The streamed desktop session gets Selkies'
+// input interposer + fake libudev via LD_PRELOAD (that's how its virtual
+// Xbox 360 pads reach applications) and its PulseAudio socket, but a
+// `docker exec` starts from the bare container env and gets none of that.
+// So until 2026-10-02 every game launched from the site saw no controller at
+// all, whatever its bindings, and may have had no audio route. Confirmed: a
+// launched PCSX2 had no LD_PRELOAD and ignored the pad; with this prefix the
+// pad's Guide button opened PCSX2's pause menu. Absolute paths, not the
+// session's own `/usr/$LIB/...`: several emulators here (Dolphin's AppImage
+// at least) run through their own bundled ld.so, which expands $LIB
+// differently, so the preload silently loaded nothing and Dolphin saw no
+// pads. The fake libudev's SONAME is libudev.so.1, so SDL's own
+// dlopen("libudev.so.1") reuses it once it's preloaded. Dolphin's AppImage
+// is "sharun"-packed, and sharun drops LD_PRELOAD unless
+// SHARUN_ALLOW_LD_PRELOAD=1 (its --help says so). Harmless for the rest.
+const SESSION_ENV =
+  "export SHARUN_ALLOW_LD_PRELOAD=1 " +
+  "LD_PRELOAD=/usr/lib/x86_64-linux-gnu/selkies_input_interposer.so:/usr/lib/x86_64-linux-gnu/libudev.so.1.0.0-fake " +
+  "PULSE_SERVER=unix:/tmp/runtime-ubuntu/pulse/native XDG_RUNTIME_DIR=/tmp/runtime-ubuntu " +
+  "PIPEWIRE_RUNTIME_DIR=/tmp/runtime-ubuntu; ";
 const STREAM_SYSTEMS = {
   ps2: {
     container: "selkies-ps2",
@@ -1015,6 +1035,15 @@ const STREAM_SYSTEMS = {
     containerRoot: "/home/ubuntu/Games/switch",
     hostRoot: path.join(os.homedir(), "Games", "roms", "switch"),
     exts: new Set([".nsp", ".xci"]),
+    // The 33 .nsz in the main library are decompressed (lossless, `nsz -D`)
+    // into this second folder on the Game SSD, because the NTFS drive is 95%
+    // full. Listed under "Decompressed/…" and mounted read-only into the
+    // container (see server/selkies-citron/README.md).
+    extraRoots: [{
+      prefix: "Decompressed",
+      hostRoot: "/run/media/shadowswords/Game SSD/Switch (decompressed NSZ)",
+      containerRoot: "/home/ubuntu/Games/switch-nsp",
+    }],
     url: CITRON_URL,
     // Wine runs the PE image as a process whose cmdline is the .exe path,
     // so this matches the real emulator (and nothing else in the container).
@@ -1053,6 +1082,7 @@ function listStreamGames(sys) {
     }
   };
   walk(cfg.hostRoot, "", 0);
+  for (const extra of cfg.extraRoots || []) walk(extra.hostRoot, extra.prefix, 0);
   out.sort((a, b) => a.name.localeCompare(b.name));
   return out;
 }
@@ -1077,9 +1107,12 @@ function launchStreamGame(req, res, sys, body) {
   if (!rel || rel.includes("..") || rel.startsWith("/")) {
     res.writeHead(400, CORS).end("bad file"); return;
   }
-  const full = cfg.hostRoot + "/" + rel;
+  // A "Decompressed/…" path lives in one of cfg.extraRoots, not hostRoot.
+  const extra = (cfg.extraRoots || []).find((r) => rel.startsWith(r.prefix + "/"));
+  const sub = extra ? rel.slice(extra.prefix.length + 1) : rel;
+  const full = (extra ? extra.hostRoot : cfg.hostRoot) + "/" + sub;
   try { fs.accessSync(full); } catch { res.writeHead(404, CORS).end("not found"); return; }
-  let containerPath = cfg.containerRoot + "/" + rel;
+  let containerPath = (extra ? extra.containerRoot : cfg.containerRoot) + "/" + sub;
   // Folder-based dumps (WiiU loadiine-style) resolve to the actual launch
   // file inside; every other system's hook is absent and this is a no-op.
   if (cfg.resolveLaunchPath) containerPath = cfg.resolveLaunchPath(containerPath, full);
@@ -1092,7 +1125,7 @@ function launchStreamGame(req, res, sys, body) {
   // Every cfg.launch wraps the path in '...' inside `bash -c`; close the
   // quote, emit an escaped ', reopen — the standard POSIX-safe form.
   const shellPath = containerPath.replace(/'/g, `'\\''`);
-  execFile("docker", ["exec", cfg.container, "bash", "-c", cfg.launch(shellPath)], { timeout: 10000 }, (err) => {
+  execFile("docker", ["exec", cfg.container, "bash", "-c", SESSION_ENV + cfg.launch(shellPath)], { timeout: 10000 }, (err) => {
     if (err) { res.writeHead(500, CORS).end("launch failed: " + err.message); return; }
     streamNowPlaying[cfg.container] = { name: full.split("/").pop().replace(/\.[^.]+$/, ""), who: String(body?.who || "").slice(0, 40) || "Someone", since: now() };
     jsonRes(res, 200, { ok: true, url: cfg.url });

@@ -50,6 +50,10 @@ RUN mkdir -p /home/ubuntu/.config/Cemu/keys /home/ubuntu/.local/share/Cemu/keys 
 # clicking through it once and copying the result — see README.
 RUN mkdir -p /home/ubuntu/.config/Cemu
 COPY settings.xml /home/ubuntu/.config/Cemu/settings.xml
+# Player 1 = Wii U GamePad, 2-4 = Pro Controller, on Selkies' virtual Xbox
+# 360 pads (SDL GUID 030081b85e0400008e02000014010000). Codes cross-checked
+# against EmuDeck's Cemu profiles. Wii U A is the right face button (Xbox B).
+COPY controllerProfiles/ /home/ubuntu/.config/Cemu/controllerProfiles/
 
 RUN chown -R ubuntu:ubuntu /home/ubuntu/.config
 

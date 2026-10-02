@@ -1,5 +1,26 @@
 # Changelog
 
+## 3.29 (server + stream containers only; no app.js change, so no version bump)
+- **Controllers work in every stream.** They never had: arcade-server's
+  `docker exec` launches didn't get Selkies' input interposer, so no game
+  could see the virtual pads. Fixed with `SESSION_ENV` (absolute preload
+  paths, `SHARUN_ALLOW_LD_PRELOAD=1` for sharun AppImages like Dolphin, and
+  the PulseAudio socket). Bindings added for each emulator.
+  - PS2: Guide opens the pause menu. Verified.
+  - GameCube/Wii: 4 GC ports and Wii Remote + Nunchuk, background input on. Verified.
+  - Switch: Toad walks. Verified.
+  - 3DS: menu navigation. Verified.
+  - Xbox: the bindings already matched the pad's GUID; it just needed the env.
+  - Wii U: GamePad + Pro profiles written; not button-tested, because Mario
+    Kart 8 hangs on its loading spinner in the container (separate open issue).
+  Tested by driving a virtual pad over Selkies' websocket, not by guessing.
+- Wii U: Cemu had no TV audio ("failed to find selected device"). Device id
+  is now empty (= default).
+- Switch: the 33 `.nsz` (unreadable by Citron, Canary and Nightly alike)
+  are decompressed losslessly onto the Game SSD and listed as
+  `Decompressed/…` (new `extraRoots` in arcade-server).
+- 3DS: confirmed playable past the boot screen (Kirby's Adventure menu).
+
 ## 3.28
 - **Nintendo Switch is playable via live stream.** New `server/selkies-citron/`:
   the owner's own Citron (Windows build) under Wine 10, GPU-accelerated on the

@@ -139,14 +139,23 @@ docker run --name selkies-ps2 -d --restart unless-stopped --shm-size=2g \
 
 ## Known issues (open, from live user testing)
 
-- **Controller not detected.** Root-caused by inspecting
-  `~/.config/PCSX2/inis/PCSX2.ini`'s `[Pad1]` section inside the running
-  container — it only has keyboard bindings (`Up = Keyboard/Up`, etc.), zero
-  SDL/gamepad bindings. This is a real, unfixed gap: PCSX2 (and Dolphin) need
-  actual SDL controller-binding config written in, and that needs validating
-  against a real controller — not something to fake from code alone without
-  a way to confirm button-mapping correctness live. Deferred rather than
-  guessed at.
+- ~~Controller not detected.~~ **Fixed 2026-10-02, for every stream.** It was
+  two bugs, not just missing bindings:
+  1. arcade-server launches games with `docker exec`, which never got the
+     session's `LD_PRELOAD` (Selkies' input interposer + fake libudev). So no
+     launched game could see Selkies' virtual pads at all. Fixed by
+     `SESSION_ENV` in `arcade-server.mjs`. It uses **absolute** library paths
+     plus `SHARUN_ALLOW_LD_PRELOAD=1`, because sharun-packed AppImages
+     (Dolphin) drop `LD_PRELOAD` and expand `$LIB` differently.
+  2. Bindings. `[Pad1]` in the host's `~/.config/PCSX2/inis/PCSX2.ini`
+     (shared with the desktop PCSX2) now has an `SDL-0/...` line next to each
+     keyboard line. Face buttons are `FaceSouth/East/West/North`; plain A/B/X/Y
+     are rejected as "Invalid binding". Guide opens PCSX2's pause menu (save
+     states), via `[Hotkeys] OpenPauseMenu = SDL-0/Guide`. Backup:
+     `PCSX2.ini.bak-2026-10-02`.
+  Verified by driving a virtual pad over Selkies' websocket (`js,c` / `js,b`
+  messages; browser button 16 = Guide, 9 = Start, 12-15 = D-pad), not
+  guessed: Guide opened the pause menu in a running game.
 - **No on-screen touch controls, unlike the EmulatorJS-based emulators.**
   Selkies actually ships one already: a **"Universal Touch Gamepad" overlay**
   (Ctrl+Shift+G, or the hamburger side menu inside the stream itself) — it's

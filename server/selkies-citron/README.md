@@ -39,6 +39,7 @@ docker run --name selkies-citron -d --restart unless-stopped --shm-size=2g \
   -v "$U/nand:/opt/citron/user/nand" \
   -v "$U/keys:/opt/citron/user/keys:ro" \
   -v "$HOME/Games/roms/switch:/home/ubuntu/Games/switch:ro" \
+  -v "/run/media/shadowswords/Game SSD/Switch (decompressed NSZ):/home/ubuntu/Games/switch-nsp:ro" \
   selkies-citron:test
 tailscale serve --bg --https=8731 https+insecure://127.0.0.1:8098
 ```
@@ -71,7 +72,14 @@ tailscale serve --bg --https=8731 https+insecure://127.0.0.1:8098
    `citron.exe` with `WINEDLLOVERRIDES=…=n,b`. `winetricks vcrun2022`
    failed here: its pinned checksum is stale (Microsoft updates the
    permalink in place) and its 32-bit installer exits 126.
-3. **`.nsz`/`.xcz` aren't supported by this Citron build.** Its own game
+3. **`.nsz`/`.xcz` aren't supported by this Citron build** (nor by the
+   owner's newer Citron "Nightly 21.0.0", tested 2026-10-02: also 74/74).
+   All 33 are decompressed losslessly (`nsz -D --keys <owner's prod.keys>`,
+   venv `~/.local/share/nsz-venv`) into `/run/media/shadowswords/Game
+   SSD/Switch (decompressed NSZ)/`. It's mounted read-only at
+   `/home/ubuntu/Games/switch-nsp` and listed as `Decompressed/…` via
+   `extraRoots` in arcade-server. The NTFS library is untouched; it's 95%
+   full, so the copies live on the Game SSD. Earlier note: Its own game
    list shows 74 of the 107 files and skips all 33 `.nsz`. arcade-server
    lists only `.nsp`/`.xci`. To play those, decompress them with
    `nsz -D` (needs `prod.keys`) into `.nsp`.
@@ -80,13 +88,18 @@ tailscale serve --bg --https=8731 https+insecure://127.0.0.1:8098
 
 ## Not done yet
 
-- **Controller input from the stream is unverified**, the same open gap as
-  PS2/GC/Wii/Wii U (see the PS2 README). Player 1 in the copied config is
-  bound to the owner's desktop **Switch Pro Controller** (SDL GUID
-  `…7e0500000920…`). Selkies presents a virtual **Xbox 360 pad** through its
-  LD_PRELOAD interposer, so binding it needs one session with a real
-  controller in the browser: open Citron's Controls in the stream, bind,
-  then copy the resulting `player_0_*` lines back into `qt-config.ini` and
-  rebuild.
+- ~~Controller input unverified.~~ **Works (2026-10-02).** Toad walked when
+  the virtual pad's stick was held. Chain: Selkies pad, interposer
+  (`SESSION_ENV`), Wine's winebus SDL backend, XInput, then Citron's SDL2.
+  Citron turns SDL **RawInput off**, so it sees the XInput driver, and it
+  writes the GUID with the name-CRC bytes zeroed:
+  **`030000005e0400008e02000014017801`**, players told apart by `port:0-3`.
+  Raw indices: buttons A0 B1 X2 Y3 LB4 RB5 Back6 Start7 LS8 RS9 Guide10,
+  D-pad `hat:0`, axes LX0 LY1 **LT2** RX3 RY4 RT5. All 4 players are bound,
+  Pro Controller type, player 1 connected. Gotcha: every key has a
+  `key\default=true` companion that makes Citron ignore your value, and it
+  re-saves the whole file on each boot. Edit a value and its `\default=false`
+  together. Pokémon Let's Go rejects the Pro Controller (Joy-Con/handheld
+  only). That's the game, not the setup.
 - Sustained-play performance through Wine hasn't been measured (it boots
   and renders smoothly at the title, but not benchmarked).

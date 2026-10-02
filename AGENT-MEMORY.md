@@ -1,3 +1,25 @@
+## Session 2026-10-02 (part 2): controllers fixed for every stream (3.29)
+
+- **Why no stream ever had working controllers:** launches via `docker exec`
+  lacked Selkies' `LD_PRELOAD` (input interposer + fake libudev). See
+  `SESSION_ENV` in arcade-server. Watch out: sharun AppImages (Dolphin)
+  ignore `LD_PRELOAD` without `SHARUN_ALLOW_LD_PRELOAD=1` and mis-expand
+  `$LIB`, so use absolute paths. **To check any emulator:**
+  `grep interposer /proc/<pid>/maps` must show the .so.
+- **How to test pads without hardware:** send `js,c,0,<b64 name>,4,17`
+  then `js,b,0,<btn>,1/0` over `wss://127.0.0.1:8080/api/websockets`
+  (basic auth) from inside the container. Script:
+  `aiohttp` client, browser standard mapping (0 A, 1 B, 9 Start, 12-15
+  D-pad, 16 Guide). Virtual pad = "Microsoft X-Box 360 pad" 045e:028e,
+  SDL2 GUID `030081b85e0400008e02000014010000` on Linux.
+- Per-emulator details are in each `server/selkies-*/README.md` and the
+  Citron one. The Citron GUID (Wine/XInput, CRC zeroed) was found by
+  cross-compiling Windows SDL probes with zig.
+- Open: Wii U Mario Kart 8 hangs on its loading spinner; `.wux` games
+  need disc keys (known).
+
+---
+
 ## Session 2026-10-02 — streams were all down (boot race, fixed); Switch built (3.28)
 
 - **All 5 Selkies containers had been Exited(255) since 09-25**:

@@ -40,6 +40,13 @@ RUN wget -q -O /opt/dolphin.appimage \
 # Autostart Dolphin's own game browser in the streamed desktop session (LXQt
 # honours XDG autostart) — launchStreamGame (arcade-server.mjs) relaunches it
 # batch-mode with -e <path> to boot a specific game on demand.
+# Controller config for Selkies' 4 virtual Xbox 360 pads (GC ports 1-4 and
+# Wii Remotes + Nunchuk on SDL/0-3, all ports enabled, BackgroundInput on so
+# the pad works whatever window has focus). Verified 2026-10-02: Dolphin
+# lists SDL/0-3 "Xbox 360 Controller" and reacts to the pad. Needs the
+# launch env from arcade-server's SESSION_ENV (SHARUN_ALLOW_LD_PRELOAD=1).
+COPY --chown=ubuntu:ubuntu config/ /home/ubuntu/.config/dolphin-emu/
+
 COPY dolphin.desktop /etc/xdg/autostart/dolphin.desktop
 
 USER ubuntu
