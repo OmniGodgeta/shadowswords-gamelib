@@ -2330,7 +2330,7 @@ function openTvChannel(c) {
 const IPTV_SRC = SELF_HOSTED ? "/iptv/index.m3u" : TS + "/iptv/index.m3u";
 
 // ---- streamed consoles (real emulator + GPU, via Selkies — not EJS) ------
-// PS2 today; the same container shape works for GameCube/Xbox/WiiU/Switch
+// PS2/GC/Wii/Xbox/WiiU/3DS/Switch, one Selkies container each
 // (see server/selkies-ps2/README.md). Self-hosted only — the public mirror
 // has no dynamic backend for this, same as netplay/movies/music. One game
 // runs at a time on shadow's own GPU; clicking Play here boots that exact
@@ -2344,6 +2344,7 @@ const STREAM_SYSTEMS = SELF_HOSTED ? [
   { id: "xbox", name: "Xbox", icon: "🎮" },
   { id: "wiiu", name: "Wii U", icon: "🎮" },
   { id: "n3ds", name: "Nintendo 3DS", icon: "🎮" },
+  { id: "switch", name: "Nintendo Switch", icon: "🎮" },
 ] : [];
 async function routeStream(sys) {
   const token = ++state.render;
@@ -5836,7 +5837,7 @@ function settingsCard() {
         };
         return el("div", {},
           el("p", { className: "hint", style: "margin:10px 0 0", textContent: "Netplay relay (optional) — a TURN server on the tailnet helps when direct peer-to-peer ICE fails." }),
-          mk("npTurnUrl", "TURN URL", "e.g. turn:shadow-1.tail51f9d6.ts.net:3478"),
+          mk("npTurnUrl", "TURN URL", "e.g. turn:retroverse.tail51f9d6.ts.net:3478"),
           mk("npTurnUser", "TURN username", ""),
           mk("npTurnPass", "TURN password", ""));
       })(),

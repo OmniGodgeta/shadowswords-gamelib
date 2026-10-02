@@ -1,5 +1,25 @@
 # Changelog
 
+## 3.28
+- **Nintendo Switch is playable via live stream.** New `server/selkies-citron/`:
+  the owner's own Citron (Windows build) under Wine 10, GPU-accelerated on the
+  RTX 5070 via Vulkan. Verified: Captain Toad booted into gameplay through
+  `/stream/launch`. 77 `.nsp`/`.xci` games listed; the 33 `.nsz` aren't
+  readable by this Citron build (see its README). Tailnet port 8731.
+  Controller input from the stream still unverified (same as PS2/GC/Wii U).
+- **Every stream had been down since 2026-09-25.** At boot, Docker restarted
+  the selkies-* containers before the ROM drive was mounted, so the
+  `~/Games/roms/*` symlinks dangled and it gave up. New
+  `server/selkies-start.service` (user unit, installed + enabled) waits for
+  the drive, then starts them. All five restarted; PS2 verified booting a game.
+- Launching a game whose filename has an apostrophe (`Pokemon Let's Go Eevee`)
+  was refused outright on every system. It's now shell-escaped instead.
+  Server-side, live copy updated.
+- Host was renamed `shadow-1` → `retroverse` on the tailnet; the code already
+  used the new name, but the docs (AGENTS.md, READMEs, setup script, TURN
+  placeholder) still pointed at the dead one. Fixed.
+- sw.js `ssw-v3.28`, `?v=3.28`.
+
 ## 3.27
 - **3DS games actually play now.** Root-caused why Azahar refused every
   encrypted ROM even with the owner's own real `aes_keys.txt` in place:

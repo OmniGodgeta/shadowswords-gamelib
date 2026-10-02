@@ -44,7 +44,7 @@ sudo tailscale serve --help >/dev/null   # (informational)
 
 | Field | Value |
 |---|---|
-| TURN URL | `turn:shadow-1.tail51f9d6.ts.net:3478` |
+| TURN URL | `turn:retroverse.tail51f9d6.ts.net:3478` |
 | TURN username | `retroverse` |
 | TURN password | the value from step 2 |
 

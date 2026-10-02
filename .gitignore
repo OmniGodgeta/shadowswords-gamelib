@@ -7,3 +7,4 @@ docs/media/
 .lr-cache/
 node_modules/
 server/arcade-netplay/package-lock.json
+server/selkies-citron/citron/

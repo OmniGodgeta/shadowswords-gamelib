@@ -1,0 +1,5 @@
+[Desktop Entry]
+Type=Application
+Name=Citron
+Exec=env WINEPREFIX=/opt/wineprefix WINEDEBUG=-all wine /opt/citron/citron.exe
+X-GNOME-Autostart-enabled=true

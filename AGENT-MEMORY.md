@@ -1,3 +1,22 @@
+## Session 2026-10-02 — streams were all down (boot race, fixed); Switch built (3.28)
+
+- **All 5 Selkies containers had been Exited(255) since 09-25**:
+  `error while creating mount source path ... ~/Games/roms/ps2: file exists`.
+  These are symlinks into the NTFS "Programs and OS" drive, so Docker's own
+  `--restart` fired at boot before udisks mounted it. Docker never retries
+  that. Fix: `server/selkies-start.service` (copied to
+  `~/.config/systemd/user/`, enabled) waits up to 10 min for the drive, then
+  `docker start`s them. **If streams are "down", check `docker ps -a` first.**
+- **Switch built**: `server/selkies-citron/` (README has all the gotchas:
+  root-owned Wine prefix, VC++ DLLs for `__std_tzdb_get_time_zones`, never
+  mount `user/load` read-only, no `.nsz`). Used the owner's Canary 0.6.1, the
+  one with the real 62 GB NAND; the newer `Citron-windows-stable_0.11.0`
+  folder only has 1.3 GB of data. Port 8731 (8728 and 8729 are other services).
+- Apostrophe filenames now launch (escaped, not refused).
+- Open: controller bindings for every stream; `.nsz` decompression if wanted.
+
+---
+
 ## Status-check note (2026-09-22, cross-project audit)
 
 The public GitHub Pages mirror (`gh-pages`) was stale — last deployed

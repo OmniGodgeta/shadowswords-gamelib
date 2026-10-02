@@ -26,8 +26,8 @@ Dark 10-foot UI, hash-routed vanilla JS, no frontend build step.
 
 | URL | Serves | Notes |
 |-----|--------|-------|
-| `https://shadow-1.tail51f9d6.ts.net/` | the arcade + ROMs (same origin) | **primary.** tailnet always; public if Funnel is on |
-| `https://shadow-1.tail51f9d6.ts.net:8443/` | Jellyfin (movies) | ditto |
+| `https://retroverse.tail51f9d6.ts.net/` | the arcade + ROMs (same origin) | **primary.** tailnet always; public if Funnel is on |
+| `https://retroverse.tail51f9d6.ts.net:8443/` | Jellyfin (movies) | ditto |
 | `https://omnigodgeta.github.io/shadowswords-gamelib/` | public mirror (browse only) | Play needs Funnel; Movies needs Funnel |
 
 The Android app (`~/Work/shadowswords`, another repo) is a WebView wrapper

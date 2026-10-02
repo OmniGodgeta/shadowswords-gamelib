@@ -1,0 +1,20 @@
+[Unit]
+# Every selkies-* container bind-mounts ~/Games/roms/<sys>, which are symlinks
+# into the "Programs and OS" NTFS drive. Docker's own --restart policy fires at
+# boot before udisks has mounted that drive, the symlinks dangle, the start
+# fails ("mkdir ...: file exists") and Docker never retries — every stream was
+# silently down for a week (2026-09-25 -> 10-02) because of exactly this.
+# This waits for the drive, then starts them. selkies-azahar is deliberately
+# left out (stopped on purpose, see selkies-azahar/README.md).
+Description=RetroVerse — start Selkies emulator streams once the ROM drive is mounted
+After=default.target
+
+[Service]
+Type=oneshot
+# Up to 10 min for the drive (it mounts when the desktop session comes up).
+ExecStartPre=/usr/bin/bash -c 'for i in $(seq 120); do [ -d "/run/media/%u/Programs and OS/Emulators" ] && exit 0; sleep 5; done; echo "ROM drive never mounted"; exit 1'
+ExecStart=/usr/bin/docker start selkies-ps2 selkies-dolphin selkies-xemu selkies-cemu selkies-panda3ds selkies-citron
+RemainAfterExit=yes
+
+[Install]
+WantedBy=default.target

@@ -874,6 +874,8 @@ const CEMU_URL = "https://ShadowSwords:Allo1234@retroverse.tail51f9d6.ts.net:872
 // selkies-azahar (was going to be n3ds's backend) is built but stopped —
 // see PANDA3DS_URL below and server/selkies-azahar/README.md for why.
 const PANDA3DS_URL = "https://ShadowSwords:Allo1234@retroverse.tail51f9d6.ts.net:8727/";
+// 8728/8729 belong to other tailnet services on this host, not RetroVerse.
+const CITRON_URL = "https://ShadowSwords:Allo1234@retroverse.tail51f9d6.ts.net:8731/";
 // `killPattern` + `launch` let launchStreamGame stay one generic function
 // across different emulators with different CLIs. gc/wii intentionally
 // share one container — one Dolphin instance handles both, so launching a
@@ -1003,6 +1005,22 @@ const STREAM_SYSTEMS = {
     killPattern: "panda3ds-extracted",
     launch: (p) => `DISPLAY=:20 nohup /opt/panda3ds-extracted/AppRun '${p}' >/tmp/panda3ds-launch.log 2>&1 & disown; ${fullscreenForcer('panda3ds-extracted')}`,
   },
+  // The owner's own Citron (Windows build) under Wine — see
+  // server/selkies-citron/README.md. Wine wants a Windows path; Z: is its
+  // mapping of /. Only .nsp/.xci: this Citron build doesn't read .nsz/.xcz
+  // (its own game list skips all 33 of them), so listing them would only
+  // offer games that crash on launch.
+  switch: {
+    container: "selkies-citron",
+    containerRoot: "/home/ubuntu/Games/switch",
+    hostRoot: path.join(os.homedir(), "Games", "roms", "switch"),
+    exts: new Set([".nsp", ".xci"]),
+    url: CITRON_URL,
+    // Wine runs the PE image as a process whose cmdline is the .exe path,
+    // so this matches the real emulator (and nothing else in the container).
+    killPattern: "citron.exe",
+    launch: (p) => `DISPLAY=:20 nohup wine /opt/citron/citron.exe -f -g 'Z:${p}' >/tmp/citron-launch.log 2>&1 & disown; ${fullscreenForcer('citron.exe')}`,
+  },
 };
 function listStreamGames(sys) {
   const cfg = STREAM_SYSTEMS[sys];
@@ -1054,8 +1072,9 @@ function launchStreamGame(req, res, sys, body) {
   const cfg = STREAM_SYSTEMS[sys];
   if (!cfg) { res.writeHead(404, CORS).end("unknown stream system"); return; }
   const rel = String(body?.file || "");
-  // Same traversal guard as serveRom — this path gets shell-quoted below.
-  if (!rel || rel.includes("..") || rel.startsWith("/") || rel.includes("'")) {
+  // Same traversal guard as serveRom. Apostrophes are allowed (real titles
+  // have them: "Pokemon Let's Go Eevee") — escaped below instead of refused.
+  if (!rel || rel.includes("..") || rel.startsWith("/")) {
     res.writeHead(400, CORS).end("bad file"); return;
   }
   const full = cfg.hostRoot + "/" + rel;
@@ -1070,7 +1089,10 @@ function launchStreamGame(req, res, sys, body) {
   // normal outcome, not an error.
   execFile("docker", ["exec", cfg.container, "pkill", "-9", "-f", cfg.killPattern], { timeout: 8000 }, () => {
   setTimeout(() => {
-  execFile("docker", ["exec", cfg.container, "bash", "-c", cfg.launch(containerPath)], { timeout: 10000 }, (err) => {
+  // Every cfg.launch wraps the path in '...' inside `bash -c`; close the
+  // quote, emit an escaped ', reopen — the standard POSIX-safe form.
+  const shellPath = containerPath.replace(/'/g, `'\\''`);
+  execFile("docker", ["exec", cfg.container, "bash", "-c", cfg.launch(shellPath)], { timeout: 10000 }, (err) => {
     if (err) { res.writeHead(500, CORS).end("launch failed: " + err.message); return; }
     streamNowPlaying[cfg.container] = { name: full.split("/").pop().replace(/\.[^.]+$/, ""), who: String(body?.who || "").slice(0, 40) || "Someone", since: now() };
     jsonRes(res, 200, { ok: true, url: cfg.url });
