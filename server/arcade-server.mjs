@@ -1120,6 +1120,12 @@ function launchStreamGame(req, res, sys, body) {
   // command — see the STREAM_SYSTEMS comment for why that matters), then
   // launch. Exit code from pkill is ignored — "nothing was running" is a
   // normal outcome, not an error.
+  // Ask the running emulator to quit (SIGTERM) and give it 3 s to flush saves
+  // and caches before SIGKILL. A straight -9 killed Cemu mid-write and left
+  // Mario Kart 8's shader cache "corrupted (incomplete file table)", which
+  // hung the game on its loading spinner on every later boot (2026-10-02).
+  execFile("docker", ["exec", cfg.container, "pkill", "-TERM", "-f", cfg.killPattern], { timeout: 8000 }, () => {
+  setTimeout(() => {
   execFile("docker", ["exec", cfg.container, "pkill", "-9", "-f", cfg.killPattern], { timeout: 8000 }, () => {
   setTimeout(() => {
   // Every cfg.launch wraps the path in '...' inside `bash -c`; close the
@@ -1131,6 +1137,8 @@ function launchStreamGame(req, res, sys, body) {
     jsonRes(res, 200, { ok: true, url: cfg.url });
   });
   }, 1200); // give the killed process a moment to actually release the display/audio device
+  });
+  }, 3000);
   });
 }
 

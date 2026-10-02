@@ -1,5 +1,19 @@
 # Changelog
 
+## 3.30 (server + stream containers only)
+- **Wii U works end to end.** Mario Kart 8's "hang" was a corrupted shader
+  cache ("incomplete file table"), left by force-killing Cemu mid-write.
+  Moved aside (kept in `~/.cache/Cemu/shaderCache/corrupt-2026-10-02/` in the
+  container), and the game boots. Controls verified: A left the demo, then
+  opened the main menu.
+- **Wii U sound:** Cemu's settings had audio `<api>0</api>`, which Cemu's own
+  log reports as DirectSound ("not supported"), so there was no sound even
+  with the right device. Now Cubeb (3) with device `default`. Verified: a
+  "Cemu Cubeb" stream plays into Selkies' capture sink.
+- **Stream relaunch is gentler:** SIGTERM, 3 s grace, then SIGKILL (was an
+  immediate `pkill -9`), so emulators can flush saves and caches before a
+  game switch.
+
 ## 3.29 (server + stream containers only; no app.js change, so no version bump)
 - **Controllers work in every stream.** They never had: arcade-server's
   `docker exec` launches didn't get Selkies' input interposer, so no game

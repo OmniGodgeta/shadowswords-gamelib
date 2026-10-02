@@ -88,7 +88,7 @@
         </Notification>
     </Graphic>
     <Audio>
-        <api>0</api>
+        <api>3</api>
         <delay>2</delay>
         <TVChannels>1</TVChannels>
         <PadChannels>1</PadChannels>
@@ -96,7 +96,7 @@
         <TVVolume>50</TVVolume>
         <PadVolume>0</PadVolume>
         <InputVolume>50</InputVolume>
-        <TVDevice></TVDevice>
+        <TVDevice>default</TVDevice>
         <PadDevice></PadDevice>
         <InputDevice></InputDevice>
     </Audio>
