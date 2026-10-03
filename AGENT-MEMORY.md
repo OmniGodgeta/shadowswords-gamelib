@@ -1,3 +1,28 @@
+## Session 2026-10-03: streamed games quit when nobody is watching (3.31)
+
+- **Symptom:** Citron (Breath of the Wild), Xemu and Panda3DS had been
+  burning CPU/GPU for ~19 h with nobody in the stream. The containers
+  autostart the emulator (`/etc/xdg/autostart`), and closing the RetroVerse
+  app or the browser tab never stopped a launched game. The next launch was
+  the only thing that sent `pkill`.
+- **Fix:** `watchIdleStreams` in `server/arcade-server.mjs` (and the live
+  `~/arcade-server.mjs`). A viewer is an established TCP connection on
+  `hostPort` (8090 PS2, 8092 Dolphin, 8093 Xemu, 8094 Cemu, 8097 Panda3DS,
+  8098 Citron). 45 s at zero viewers → SIGTERM, 3 s, SIGKILL. A launch holds
+  that off for 60 s so the phone can open the stream. The container
+  healthcheck is inside the container and does not count.
+- **Rotation is not in this repo.** The Android app locks portrait except
+  on `#/play/…`. Stream URLs are the same host on :8722–8731, so they stayed
+  portrait-locked. Fixed in `shadowswords` 1.6.16 (`_streaming` follows the
+  sensor). Needs an APK on the phone; the site cannot override it.
+- **Checked:** idle Xemu started with `docker exec -d` died on its own
+  after the watcher was live, with `stream idle: stopping selkies-xemu` in
+  the arcade-server journal. Do not `docker restart` the selkies containers
+  to "apply" this — the watcher is in arcade-server, and a container restart
+  just autostarts the emulators again until the watcher stops them.
+
+---
+
 ## Session 2026-10-02 (part 2): controllers fixed for every stream (3.29)
 
 - **Why no stream ever had working controllers:** launches via `docker exec`

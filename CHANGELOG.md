@@ -1,5 +1,16 @@
 # Changelog
 
+## 3.31 (server only — no app.js change, so no version bump)
+- **A streamed game now quits when the last viewer leaves.** Closing the
+  phone app or the browser tab used to leave Citron, Xemu, Panda3DS and the
+  others running (they also autostart with the container and never exited).
+  arcade-server watches the Selkies websocket's TCP connection on each
+  container's published port and, after 45 s with nobody connected, SIGTERMs
+  the emulator and then SIGKILLs it. A launch waits up to 60 s for the
+  viewer to connect before that clock starts. Restart `arcade-server.service`
+  to pick this up. The phone still needs RetroVerse **1.6.16** before a
+  streamed console rotates with the device — that lock lives in the app.
+
 ## 3.30 (server + stream containers only)
 - **Wii U works end to end.** Mario Kart 8's "hang" was a corrupted shader
   cache ("incomplete file table"), left by force-killing Cemu mid-write.

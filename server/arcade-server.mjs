@@ -939,6 +939,10 @@ const SESSION_ENV =
 const STREAM_SYSTEMS = {
   ps2: {
     container: "selkies-ps2",
+    // Published on this host. Tailscale serve sends :8722 here. A viewer is
+    // an established TCP connection (Selkies' websocket). The container's own
+    // healthcheck never shows up on this port.
+    hostPort: 8090,
     // Path as PCSX2 sees it *inside* the container (matches the -v mount in
     // `docker run`) vs. where this Node process reads the same files from on
     // the host, for listing — same drive, two different mount points.
@@ -951,6 +955,7 @@ const STREAM_SYSTEMS = {
   },
   gc: {
     container: "selkies-dolphin",
+    hostPort: 8092,
     containerRoot: "/home/ubuntu/Games/gc",
     hostRoot: path.join(os.homedir(), "Games", "roms", "gc"),
     exts: new Set([".iso", ".rvz", ".gcz", ".ciso", ".wbfs"]),
@@ -960,6 +965,7 @@ const STREAM_SYSTEMS = {
   },
   wii: {
     container: "selkies-dolphin",
+    hostPort: 8092,
     containerRoot: "/home/ubuntu/Games/wii",
     hostRoot: path.join(os.homedir(), "Games", "roms", "wii"),
     exts: new Set([".iso", ".rvz", ".gcz", ".ciso", ".wbfs"]),
@@ -969,6 +975,7 @@ const STREAM_SYSTEMS = {
   },
   xbox: {
     container: "selkies-xemu",
+    hostPort: 8093,
     containerRoot: "/home/ubuntu/Games/xbox",
     hostRoot: path.join(os.homedir(), "Games", "roms", "xbox"),
     exts: new Set([".iso"]),
@@ -983,6 +990,7 @@ const STREAM_SYSTEMS = {
   },
   wiiu: {
     container: "selkies-cemu",
+    hostPort: 8094,
     containerRoot: "/home/ubuntu/Games/wiiu",
     hostRoot: path.join(os.homedir(), "Games", "roms", "wiiu"),
     exts: new Set([".wud", ".wux", ".iso"]),
@@ -1014,6 +1022,7 @@ const STREAM_SYSTEMS = {
   // their own aes_keys.txt (confirmed live — see server/selkies-panda3ds/).
   n3ds: {
     container: "selkies-panda3ds",
+    hostPort: 8097,
     containerRoot: "/home/ubuntu/Games/n3ds",
     hostRoot: path.join(os.homedir(), "Games", "roms", "n3ds"),
     exts: new Set([".3ds", ".cci", ".cia", ".3dsx"]),
@@ -1032,6 +1041,7 @@ const STREAM_SYSTEMS = {
   // offer games that crash on launch.
   switch: {
     container: "selkies-citron",
+    hostPort: 8098,
     containerRoot: "/home/ubuntu/Games/switch",
     hostRoot: path.join(os.homedir(), "Games", "roms", "switch"),
     exts: new Set([".nsp", ".xci"]),
@@ -1101,6 +1111,10 @@ function serveStreamList(req, res, sys) {
 function launchStreamGame(req, res, sys, body) {
   const cfg = STREAM_SYSTEMS[sys];
   if (!cfg) { res.writeHead(404, CORS).end("unknown stream system"); return; }
+  // Hold the idle-stop watcher until this launch's viewer connects, so it
+  // doesn't quit the emulator during the few seconds the phone takes to open
+  // the stream.
+  streamArmLaunch(cfg.container);
   const rel = String(body?.file || "");
   // Same traversal guard as serveRom. Apostrophes are allowed (real titles
   // have them: "Pokemon Let's Go Eevee") — escaped below instead of refused.
@@ -1141,6 +1155,111 @@ function launchStreamGame(req, res, sys, body) {
   }, 3000);
   });
 }
+
+// The desktop session autostarts every emulator, and a launched game used to
+// keep running after the last person left (closing the phone app or the
+// browser tab never told us). Selkies' session is one websocket per viewer,
+// which is an established TCP connection on cfg.hostPort. When that stays
+// at zero, quit the emulator the same way a new launch does: SIGTERM, then
+// SIGKILL, so a save can flush. A launch arms a hold so the phone has time
+// to open the stream before we decide nobody came.
+const STREAM_IDLE_MS = 45000;
+const STREAM_LAUNCH_HOLD_MS = 60000;
+const streamWatch = new Map();
+function streamSlot(container) {
+  let s = streamWatch.get(container);
+  if (!s) {
+    s = { holdUntil: 0, sawViewer: false, idleSince: 0, stopping: false };
+    streamWatch.set(container, s);
+  }
+  return s;
+}
+function streamArmLaunch(container) {
+  const s = streamSlot(container);
+  s.holdUntil = Date.now() + STREAM_LAUNCH_HOLD_MS;
+  s.sawViewer = false;
+  s.idleSince = 0;
+  s.stopping = false;
+}
+function establishedToPort(port) {
+  let n = 0;
+  for (const file of ["/proc/net/tcp", "/proc/net/tcp6"]) {
+    let text;
+    try { text = fs.readFileSync(file, "utf8"); } catch { continue; }
+    for (const line of text.split("\n").slice(1)) {
+      const parts = line.trim().split(/\s+/);
+      if (parts.length < 4 || parts[3] !== "01") continue;
+      const lp = parts[1].split(":").pop();
+      if (parseInt(lp, 16) === port) n++;
+    }
+  }
+  return n;
+}
+function streamContainers() {
+  const out = [];
+  const seen = new Set();
+  for (const cfg of Object.values(STREAM_SYSTEMS)) {
+    if (!cfg.hostPort || seen.has(cfg.container)) continue;
+    seen.add(cfg.container);
+    out.push(cfg);
+  }
+  return out;
+}
+function stopStreamEmulator(cfg, why) {
+  const s = streamSlot(cfg.container);
+  if (s.stopping) return;
+  s.stopping = true;
+  console.log(`stream idle: stopping ${cfg.container} (${why})`);
+  execFile("docker", ["exec", cfg.container, "pkill", "-TERM", "-f", cfg.killPattern], { timeout: 8000 }, () => {
+    setTimeout(() => {
+      execFile("docker", ["exec", cfg.container, "pkill", "-KILL", "-f", cfg.killPattern], { timeout: 8000 }, () => {
+        delete streamNowPlaying[cfg.container];
+        s.stopping = false;
+        s.idleSince = 0;
+        s.sawViewer = false;
+        // Brief hold so a slow exit isn't treated as a brand-new idle run.
+        s.holdUntil = Date.now() + 15000;
+      });
+    }, 3000);
+  });
+}
+function watchIdleStreams() {
+  const t = Date.now();
+  for (const cfg of streamContainers()) {
+    const s = streamSlot(cfg.container);
+    if (s.stopping) continue;
+    let viewers = 0;
+    try { viewers = establishedToPort(cfg.hostPort); } catch { continue; }
+    if (viewers > 0) {
+      s.sawViewer = true;
+      s.idleSince = 0;
+      s.holdUntil = 0;
+      continue;
+    }
+    if (!s.sawViewer && t < s.holdUntil) continue;
+    execFile("docker", ["exec", cfg.container, "pgrep", "-f", cfg.killPattern], { timeout: 8000 }, (err, stdout) => {
+      if (s.stopping) return;
+      if (err || !String(stdout || "").trim()) {
+        s.idleSince = 0;
+        if (streamNowPlaying[cfg.container]) delete streamNowPlaying[cfg.container];
+        return;
+      }
+      try {
+        if (establishedToPort(cfg.hostPort) > 0) {
+          s.sawViewer = true;
+          s.idleSince = 0;
+          s.holdUntil = 0;
+          return;
+        }
+      } catch { return; }
+      const nowT = Date.now();
+      if (!s.sawViewer && nowT < s.holdUntil) return;
+      if (!s.idleSince) { s.idleSince = nowT; return; }
+      if (nowT - s.idleSince >= STREAM_IDLE_MS) stopStreamEmulator(cfg, "no viewers");
+    });
+  }
+}
+setInterval(watchIdleStreams, 10000).unref?.();
 
 // ---- server-side search over docs/data/search.json ----------------------
 let SEARCH = null;
